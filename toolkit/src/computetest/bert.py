@@ -79,6 +79,7 @@ class BertResult:
 def run_bert(backend: Backend, bdf: str, *, target_ber: float = 1e-12,
              confidence: float = 0.95, max_seconds: float = 30.0,
              poll_s: float = 0.002, engine: str = "python",
+             margin: float = 1.2, extend_budget: float = 3.0, c_runner=None,
              clock: Callable[[], float] = time.monotonic,
              sleep: Callable[[float], None] = time.sleep) -> BertResult:
     """Run the BERT on one BDF and return a verdict.
@@ -100,8 +101,9 @@ def run_bert(backend: Backend, bdf: str, *, target_ber: float = 1e-12,
     ``clock``/``sleep`` are injectable so tests can drive the loop deterministically.
     """
     if engine == "c":
-        return _run_c_engine(backend, bdf, target_ber=target_ber,
-                             confidence=confidence, seconds=max_seconds)
+        return run_conductor(backend, bdf, target_ber=target_ber, confidence=confidence,
+                             max_seconds=max_seconds, margin=margin,
+                             extend_budget=extend_budget, c_runner=c_runner)
 
     dev = backend.get_device(bdf)
     bps = link_bits_per_second(dev.current_link_speed, dev.current_link_width)
@@ -189,12 +191,15 @@ def run_bert(backend: Backend, bdf: str, *, target_ber: float = 1e-12,
                       aer_source=source, note=note)
 
 
-def _run_c_engine(backend: Backend, bdf: str, *, target_ber: float,
-                  confidence: float, seconds: float,
-                  binary: str = "c/pcie_bert") -> BertResult:
-    """Run the compiled C engine for one fixed window, then assess in Python."""
+def default_c_runner(bdf: str, seconds: float, binary: str = "c/pcie_bert") -> dict:
+    """Run the compiled C counter for one window and return its parsed JSON.
+
+    Contract (the C engine's only job — count fast, accurately, for ``seconds``):
+      {source, link_speed_code, link_width, link_unknown, bits,
+       correctable, uncorrectable, uncorrectable_bits, per_correctable:{name:count}}
+    """
     try:
-        proc = subprocess.run([binary, "-d", bdf, "-t", str(seconds), "--json"],
+        proc = subprocess.run([binary, "-d", bdf, "-t", f"{seconds:.4f}", "--json"],
                               capture_output=True, text=True, timeout=seconds + 30)
     except FileNotFoundError as e:
         raise RuntimeError(f"C engine not found: {binary} (build it with: make -C c)") from e
@@ -203,18 +208,111 @@ def _run_c_engine(backend: Backend, bdf: str, *, target_ber: float,
     if proc.returncode not in (0, 3):   # 0 = clean, 3 = uncorrectable seen (valid data)
         raise RuntimeError(f"C engine failed (rc={proc.returncode}): {proc.stderr.strip()}")
     try:
-        data = json.loads(proc.stdout)
+        return json.loads(proc.stdout)
     except json.JSONDecodeError as e:
         raise RuntimeError(f"C engine produced invalid JSON: {proc.stdout!r}") from e
-    verdict = ber.assess(data["correctable"], data["bits"], target_ber,
-                         confidence, data["uncorrectable"])
-    unc_decode = [n for _, n, _ in aer.decode_uncorrectable(data.get("uncorrectable_bits", 0))]
-    return BertResult(
-        data["bdf"], data["seconds"], data["bits"], data["correctable"],
-        data["uncorrectable"], data.get("per_correctable", {}),
-        data["link_speed_code"], data["link_width"], verdict,
-        bool(data.get("stuck_correctable") or data.get("stuck_uncorrectable")),
-        unc_decode)
+
+
+def run_conductor(backend: Backend, bdf: str, *, target_ber: float = 1e-12,
+                  confidence: float = 0.95, max_seconds: float = 30.0,
+                  margin: float = 1.2, extend_budget: float = 3.0, c_runner=None) -> BertResult:
+    """The Python conductor for the real (fast) path. C is a dumb counter; Python:
+
+      1. reads the error registers at IDLE (begin) — no traffic,
+      2. runs the C counter for an increment while the link is exercised,
+      3. applies the sequential decision (pass / reject / continue),
+      4. EXTENDS (re-runs C) while undecided, bounded by a takt budget
+         (``extend_budget`` x the zero-error target, and a hard ``max_seconds``),
+      5. reads the error registers at IDLE (end) — a bit set at idle = constant fault.
+
+    Errors and bits accumulate across the C increments. A high error rate is COUNTED
+    (and rejected fast); a stray early error can be out-run within budget; a fault
+    present at idle fails regardless. The C engine never decides how long to run.
+    """
+    runner = c_runner or default_c_runner
+    dev = backend.get_device(bdf)
+    bps = link_bits_per_second(dev.current_link_speed, dev.current_link_width)
+    gen_note = ("Gen6+ FLIT/FEC: AER LCRC-retry counting under-measures BER; "
+                "use FEC/symbol statistics") if dev.current_link_speed >= 6 else ""
+
+    source = aer.error_source(backend, bdf)
+    if source == "none":
+        v = ber.BertVerdict(0, 0.0, target_ber, confidence, 0.0,
+                            float("inf"), float("inf"), "skip")
+        return BertResult(bdf, 0.0, 0.0, 0, 0, {}, dev.current_link_speed,
+                          dev.current_link_width, v, aer_available=False,
+                          aer_source="none",
+                          note="no PCIe error source (neither AER nor Device Status)")
+
+    # 1. Idle baseline (begin): quiesce, read what's set with no traffic.
+    backend.set_exercising(bdf, False)
+    aer.clear_errors(backend, bdf, source)
+    idle0 = aer.read_errors(backend, bdf, source)
+    idle_cor, idle_unc = idle0.correctable_raw, idle0.uncorrectable_raw
+    idle_cor_names = {n for _, n, _ in aer.ErrorReading(idle_cor, 0, source).correctable}
+
+    n0 = ber.bits_for_confidence(target_ber, confidence, 0)   # zero-error target bits
+    budget_bits = n0 * extend_budget
+    max_bits_by_time = bps * max_seconds if bps > 0 else float("inf")
+
+    # 2-4. Exercise + sequential decision + bounded extend.
+    backend.set_exercising(bdf, True)
+    per: dict[str, int] = {}
+    cor_total = unc_total = unc_bits_seen = 0
+    n = elapsed = 0.0
+    next_bits = n0 * margin                  # first window: target + margin
+    status, out = "continue", {}
+    while True:
+        secs = (next_bits / bps) if bps > 0 else max_seconds
+        secs = max(0.05, min(secs, max(0.05, max_seconds - elapsed)))
+        out = runner(bdf, secs)
+        for name, cnt in out.get("per_correctable", {}).items():
+            if name in idle_cor_names:        # constant/idle fault — not a rate, don't count
+                continue
+            per[name] = per.get(name, 0) + cnt
+            cor_total += cnt
+        unc_total += out.get("uncorrectable", 0)
+        unc_bits_seen |= out.get("uncorrectable_bits", 0)
+        n += out.get("bits", 0.0)
+        elapsed += secs
+
+        if unc_total > 0:
+            status = "fail"; break            # any uncorrectable = immediate fail
+        decision = ber.sequential_decision(cor_total, n, target_ber, confidence)
+        if decision in ("pass", "reject"):
+            status = "pass" if decision == "pass" else "fail"
+            break
+        if n >= budget_bits or n >= max_bits_by_time or elapsed >= max_seconds:
+            status = "fail"; break            # budget/takt exhausted, target not proven
+        need = ber.bits_for_confidence(target_ber, confidence, cor_total)
+        next_bits = max(n0 * 0.25, need - n)  # extend toward the bits the current E needs
+
+    # 5. Idle baseline (end): errors persisting with no traffic = a constant fault.
+    backend.set_exercising(bdf, False)
+    aer.clear_errors(backend, bdf, source)
+    idle1 = aer.read_errors(backend, bdf, source)
+    idle_cor |= idle1.correctable_raw
+    idle_unc |= idle1.uncorrectable_raw
+    idle_fault = bool(idle_cor or idle_unc)
+    if idle_fault and status != "fail":
+        status = "fail"
+
+    note = gen_note
+    if idle_fault:
+        names = ([nm for _, nm, _ in aer.ErrorReading(idle_cor, 0, source).correctable]
+                 + [nm for _, nm, _ in aer.ErrorReading(0, idle_unc, source).uncorrectable])
+        note = ((note + "; ") if note else "") + \
+               "errors present at idle (constant fault): " + ",".join(names)
+
+    verdict = ber.assess(cor_total, max(n, 1.0), target_ber, confidence, unc_total)
+    verdict.status = status
+    unc_decode = [nm for _, nm, _ in
+                  aer.ErrorReading(0, unc_bits_seen | idle_unc, source).uncorrectable]
+    return BertResult(bdf, elapsed, n, cor_total, unc_total, per,
+                      out.get("link_speed_code", dev.current_link_speed),
+                      out.get("link_width", dev.current_link_width), verdict,
+                      stuck=idle_fault, uncorrectable_decode=unc_decode,
+                      aer_source=source, note=note)
 
 
 def run_many(backend: Backend, bdfs: list[str], **kw) -> list[BertResult]:

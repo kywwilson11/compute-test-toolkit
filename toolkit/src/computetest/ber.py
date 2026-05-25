@@ -181,6 +181,40 @@ def ber_upper_bound(bits: float, errors: int, confidence: float) -> float:
     return reg_lower_gamma_inv(errors + 1, confidence) / bits
 
 
+def ber_lower_bound(bits: float, errors: int, confidence: float) -> float:
+    """Lower one-sided confidence bound on the true BER, given E errors in n bits.
+
+    Used for the fail-fast *reject* test: if even this optimistic bound on the BER
+    already exceeds the target, the link's measured error rate disproves "BER <=
+    target" at the given confidence — no amount of extra runtime will rescue it.
+    Equivalent to chi2inv(1-CL, 2E) / (2n); zero for E=0 (can never reject on no data).
+    """
+    if errors < 0:
+        raise ValueError("errors must be >= 0")
+    if not 0.0 < confidence < 1.0:
+        raise ValueError("confidence must be in (0, 1)")
+    if bits <= 0 or errors == 0:
+        return 0.0
+    return reg_lower_gamma_inv(errors, 1.0 - confidence) / bits
+
+
+def sequential_decision(errors: int, bits: float, target_ber: float = 1e-12,
+                        confidence: float = 0.95) -> str:
+    """One step of a sequential BERT, given the accumulated (errors, bits):
+
+    * "pass"     — proved BER <= target at the confidence level (enough clean bits).
+    * "reject"   — proved BER > target (fail fast; the rate can't meet the target).
+    * "continue" — undecided; extend the run if the time/bit budget allows.
+
+    (Uncorrectable errors are handled by the caller as an immediate fail.)
+    """
+    if confidence_le(errors, bits, target_ber) >= confidence:
+        return "pass"
+    if ber_lower_bound(bits, errors, confidence) > target_ber:
+        return "reject"
+    return "continue"
+
+
 @dataclass
 class BertVerdict:
     """Result of assessing a (errors, bits) measurement against a target."""
