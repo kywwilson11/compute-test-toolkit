@@ -36,3 +36,11 @@ def test_list_human_output(capsys):
     rc = cli.main(["--backend", "mock", "list"])
     out = capsys.readouterr().out
     assert rc == cli.EXIT_PASS and "0000:03:00.0" in out
+
+
+def test_chain_command_runs(capsys):
+    # Flat sample board: chain degenerates to the endpoint, but the command must run cleanly.
+    rc = cli.main(["--backend", "mock", "chain", "0000:03:00.0",
+                   "--target-ber", "1e-9", "--max-seconds", "2"])
+    out = capsys.readouterr().out
+    assert rc == cli.EXIT_PASS and "chain to 0000:03:00.0" in out

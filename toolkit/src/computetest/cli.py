@@ -31,6 +31,7 @@ _EXAMPLES = """\
 examples:
   computetest list
   computetest diagnose                       # full PCIe diagnostic, every device
+  computetest chain 0000:04:00.0             # every link in the endpoint's path
   computetest bert -d 0000:03:00.0 --target-ber 1e-12
   computetest nvme /dev/nvme0 --json | jq .  # --json is stdout-pure, pipeable
   computetest plan configs/example_plan.json --db results.db --serial SN123
@@ -69,6 +70,15 @@ def _build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--no-bert", action="store_true")
     sp.add_argument("--no-margin", action="store_true")
     sp.add_argument("--max-seconds", type=float, default=30.0)
+
+    sp = sub.add_parser("chain", parents=[common],
+                        help="diagnose every link in an endpoint's path (root..endpoint)")
+    sp.add_argument("endpoint", help="endpoint BDF; expands to its full PCIe path")
+    sp.add_argument("--target-ber", type=float, default=1e-12)
+    sp.add_argument("--confidence", type=float, default=0.95)
+    sp.add_argument("--max-seconds", type=float, default=30.0)
+    sp.add_argument("--expected-speed", type=int, default=None, help="expected Gen (1-6)")
+    sp.add_argument("--expected-width", type=int, default=None, help="expected lane width")
 
     for name, help_ in [("nvme", "NVMe SMART health"), ("gpu", "GPU health"),
                         ("gmsl", "GMSL link+video"), ("eth", "Ethernet link"),
@@ -135,6 +145,14 @@ def _run(args) -> int:
         human = "\n".join(d.summary() for d in results)
         _emit(human, [d.to_dict() for d in results], args.json)
         return EXIT_PASS if all(d.status == "pass" for d in results) else EXIT_FAIL
+
+    if args.cmd == "chain":
+        d = diagnostics.diagnose_chain(
+            backend, args.endpoint, target_ber=args.target_ber, confidence=args.confidence,
+            max_seconds=args.max_seconds, expected_speed=args.expected_speed,
+            expected_width=args.expected_width)
+        _emit(d.summary(), d.to_dict(), args.json)
+        return EXIT_PASS if d.status == "pass" else EXIT_FAIL
 
     if args.cmd in ("nvme", "gpu", "gmsl", "eth", "can"):
         h = {"nvme": lambda: nvme.check_nvme(args.target),
