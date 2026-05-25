@@ -21,10 +21,11 @@ def test_nvme_limits_catch_media_errors():
     assert h.smart["media_errors"] > 0
 
 
-def test_gpu_catches_uncorrected_ecc_and_throttle():
+def test_gpu_catches_volatile_ecc_and_throttle():
     h = gpu.check_gpu(99)
-    assert h.checks["ecc_uncorrected==0"] is False
-    assert h.checks["no_thermal_throttle"] is False
+    assert h.checks["ecc_volatile_uncorrected==0"] is False
+    assert h.checks["no_bad_throttle"] is False
+    assert h.checks["no_row_remap_failure"] is False
 
 
 def test_can_bus_off_detected():
