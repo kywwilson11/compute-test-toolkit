@@ -1,22 +1,32 @@
 /*
- * pcie_bert — exercise/monitor a PCIe link and count AER errors over a window.
+ * pcie_bert — the dumb, fast PCIe error counter.
  *
- * The C half of the BERT (the Python half, computetest/ber.py, turns the counts
- * into a confidence level). This program:
- *   1. Finds the AER extended capability for a BDF (walks the ext-cap list).
- *   2. Arms the link: write-1-to-clear ONLY the set AER status bits, then verify.
- *   3. For the test duration, polls the correctable/uncorrectable status as fast
- *      as it can; the instant a bit latches it records the event and re-clears it
- *      (W1C) so the next error can latch. (A latch is "an error happened", not a
- *      count — clearing fast is how you actually count, and why slow clearing
- *      undercounts. This is the requirement the tool is built around.)
- *   4. Accounts bits transferred from link_speed x link_width x elapsed time.
- *   5. Prints a JSON record for the orchestrator to consume.
+ * This program has exactly ONE job: for the number of seconds Python hands it,
+ * count PCIe errors as fast and as accurately as possible, then print the totals
+ * as JSON. It decides nothing else. The Python conductor (computetest/bert.py)
+ * owns everything that is NOT speed-critical: how long to run (and whether to
+ * extend), the idle baseline that distinguishes a stuck bit from a high error
+ * rate, link-downgrade monitoring, and the confidence math. Keeping this loop
+ * minimal is the point — every microsecond of loop latency merges error latches
+ * and undercounts.
+ *
+ * What it does:
+ *   1. Pick the error source: AER (per-type, preferred) else the Device Status
+ *      register (coarse correctable/uncorrectable, present on every PCIe function).
+ *   2. Arm: write-1-to-clear the handled status bits.
+ *   3. Tight loop for the given duration: poll CORRECTABLE every iteration (read,
+ *      count each set bit, W1C-clear) and sample UNCORRECTABLE periodically (its
+ *      latch persists, so this loses nothing and keeps the hot path one config read
+ *      per iteration). A latch means ">=1 error of that type"; counting set bits per
+ *      poll is the tightest count the registers allow.
+ *   4. Account bits from link_speed x link_width x elapsed time.
+ *   5. Print JSON: {source, link_speed_code, link_width, link_unknown, bits,
+ *      correctable, uncorrectable, uncorrectable_bits, per_correctable}.
  *
  * Linux only (reads /sys/bus/pci). Config-space writes (the W1C clear) need root.
  *
  * Build:  cc -O2 -Wall -Wextra -std=c11 -o pcie_bert pcie_bert.c
- * Usage:  sudo ./pcie_bert -d 0000:03:00.0 -t 12 --json
+ * Usage:  ./pcie_bert -d 0000:03:00.0 -t 12 --json   (Python normally calls this)
  */
 #define _POSIX_C_SOURCE 200809L
 #include <stdint.h>
@@ -30,16 +40,21 @@
 
 #define SYS_PCI "/sys/bus/pci/devices"
 
-/* AER register offsets relative to the AER capability base. */
+/* AER extended-cap register offsets (relative to the AER base). */
 enum { AER_UNCORR_STATUS = 0x04, AER_CORR_STATUS = 0x10 };
 enum { ECAP_AER = 0x0001 };
 
-/* Correctable status bit positions we name (see computetest/aer.py for full map). */
-static const struct { int bit; const char *name; } COR_BITS[] = {
+/* Legacy PCIe cap + Device Status (the no-AER fallback error source). */
+enum { CAP_PCIE = 0x10, PCIE_DEV_STATUS = 0x0A };
+enum { DEVSTA_CORR = 1u << 0, DEVSTA_NONFATAL = 1u << 1, DEVSTA_FATAL = 1u << 2 };
+
+/* Named correctable bits per source (see computetest/aer.py for the full AER map). */
+struct cor_bit { int bit; const char *name; };
+static const struct cor_bit AER_COR_BITS[] = {
     {0, "RxErr"}, {6, "BadTLP"}, {7, "BadDLLP"}, {8, "RollOver"},
     {12, "ReplayTO"}, {13, "AdvNonFatal"}, {14, "CorrIntErr"}, {15, "HdrLogOvf"},
 };
-#define N_COR_BITS ((int)(sizeof(COR_BITS) / sizeof(COR_BITS[0])))
+static const struct cor_bit DEVSTA_COR_BITS[] = { {0, "CorrErrDetected"} };
 
 static double now_sec(void) {
     struct timespec ts;
@@ -79,20 +94,30 @@ static off_t find_ext_cap(int fd, uint16_t cap_id) {
     return 0;
 }
 
-/* W1C: read status; if non-zero, write back exactly the set bits; verify.
- * Returns bits that were set (the "events" seen); sets *stuck to any that
- * refused to clear (a persistent/sticky hardware error worth reporting). */
-static uint32_t clear_set_bits(int fd, off_t reg, uint32_t *stuck) {
+/* Read a status register and write-1-to-clear the bits in `mask` that are set.
+ * Returns the set (masked) bits. Stuck-bit interpretation is the Python conductor's
+ * job (via an idle baseline) — this counter just reads, counts, and clears, fast. */
+static uint32_t read_and_clear(int fd, off_t reg, uint32_t mask) {
     uint32_t s = 0;
-    if (cfg_read(fd, reg, 4, &s) != 0) { *stuck = 0; return 0; }
-    if (s == 0) { *stuck = 0; return 0; }
-    if (cfg_write(fd, reg, 4, s) != 0) {   /* write failed (e.g. EACCES) -> can't clear */
-        *stuck = s; return s;              /* treat all set bits as stuck */
-    }
-    uint32_t after = 0;
-    if (cfg_read(fd, reg, 4, &after) != 0) { *stuck = 0; return s; }
-    *stuck = after & s;                    /* bits that refused to clear */
+    if (cfg_read(fd, reg, 4, &s) != 0) return 0;
+    s &= mask;
+    if (s) cfg_write(fd, reg, 4, s);       /* W1C only the bits we handle */
     return s;
+}
+
+/* Walk the legacy capability list (from the 0x34 pointer) for a capability ID. */
+static off_t find_cap(int fd, uint8_t cap_id) {
+    uint32_t p = 0;
+    if (cfg_read(fd, 0x34, 1, &p) != 0) return 0;
+    off_t ptr = p & 0xFC;
+    for (int guard = 0; guard < 48 && ptr; guard++) {
+        uint32_t id = 0, nxt = 0;
+        if (cfg_read(fd, ptr, 1, &id) != 0) return 0;
+        if ((id & 0xff) == cap_id) return ptr;
+        if (cfg_read(fd, ptr + 1, 1, &nxt) != 0) return 0;
+        ptr = nxt & 0xFC;
+    }
+    return 0;
 }
 
 /* Read e.g. "16.0 GT/s" -> speed code; returns 0 if unknown. */
@@ -171,40 +196,74 @@ int main(int argc, char **argv) {
         return 1;
     }
 
+    /* Pick the error source: AER (per-type, preferred) else Device Status (coarse). */
     off_t aer = find_ext_cap(fd, ECAP_AER);
-    if (!aer) { fprintf(stderr, "error: no AER capability on %s\n", bdf); close(fd); return 1; }
+    off_t pcie_cap = find_cap(fd, CAP_PCIE);
+    const char *source;
+    off_t cor_off, unc_off;
+    uint32_t cor_mask, unc_mask;
+    const struct cor_bit *cor_tbl;
+    int n_cor;
+    if (aer) {
+        source = "aer";
+        cor_off = aer + AER_CORR_STATUS;
+        unc_off = aer + AER_UNCORR_STATUS;
+        cor_mask = 0xFFFFFFFFu;
+        unc_mask = 0xFFFFFFFFu;
+        cor_tbl = AER_COR_BITS;
+        n_cor = (int)(sizeof AER_COR_BITS / sizeof AER_COR_BITS[0]);
+    } else if (pcie_cap) {
+        source = "devstatus";
+        cor_off = unc_off = pcie_cap + PCIE_DEV_STATUS;
+        cor_mask = DEVSTA_CORR;                       /* bit 0 */
+        unc_mask = DEVSTA_NONFATAL | DEVSTA_FATAL;    /* bits 1, 2 */
+        cor_tbl = DEVSTA_COR_BITS;
+        n_cor = (int)(sizeof DEVSTA_COR_BITS / sizeof DEVSTA_COR_BITS[0]);
+    } else {
+        fprintf(stderr, "error: no AER or PCIe capability on %s\n", bdf);
+        close(fd);
+        return 1;
+    }
 
     int code = read_link_speed_code(bdf), width = read_link_width(bdf);
     double bps = link_bits_per_sec(code, width);
 
-    /* Arm: clear both status latches before measuring. */
-    uint32_t stuck_c = 0, stuck_u = 0;
-    clear_set_bits(fd, aer + AER_CORR_STATUS, &stuck_c);
-    clear_set_bits(fd, aer + AER_UNCORR_STATUS, &stuck_u);
+    /* Arm: clear the handled status bits before counting. */
+    read_and_clear(fd, cor_off, cor_mask);
+    read_and_clear(fd, unc_off, unc_mask);
 
-    long cor_events[N_COR_BITS] = {0};
+    long cor_events[16] = {0};
     long cor_total = 0, unc_total = 0;
     uint32_t unc_seen = 0;
-    /* Once a bit refuses to clear it is "stuck": count it once, then ignore it so a
-     * sticky hardware fault cannot inflate the count into the millions (A-P0-1). A
-     * genuinely recurring error clears each poll and is recounted; a stuck one isn't. */
-    uint32_t cor_stuck = stuck_c, unc_stuck = stuck_u;
 
+    /* The tight loop. The bottleneck is the config-space read (a real PCIe config
+     * transaction through the kernel, ~us; config space can't be mmap'd), so we
+     * minimize transactions per iteration: poll CORRECTABLE every iteration (that's
+     * the count the BER needs), and sample UNCORRECTABLE only every UNC_EVERY
+     * iterations. Uncorrectable is a rare, binary fail-flag whose latch persists
+     * until read, so periodic sampling loses no information — it just halves the
+     * hot-path config reads, doubling the correctable poll rate (tighter clear
+     * windows => fewer merged latches => more accurate counting where it matters).
+     * No sleep, no stuck logic, no idle baseline, no confidence — Python owns those. */
+    const long UNC_EVERY = 64;
+    long iters = 0;
     double t0 = now_sec();
     while (now_sec() - t0 < duration) {
-        uint32_t st = 0;
-        uint32_t set = clear_set_bits(fd, aer + AER_CORR_STATUS, &st);  /* read+clear */
-        uint32_t newly = set & ~cor_stuck;     /* exclude already-known-stuck bits */
-        for (int i = 0; i < N_COR_BITS; i++)   /* each distinct bit = >=1 error of that type */
-            if (newly & (1u << COR_BITS[i].bit)) { cor_events[i]++; cor_total++; }
-        cor_stuck |= st;
-
-        uint32_t su = 0;
-        uint32_t setu = clear_set_bits(fd, aer + AER_UNCORR_STATUS, &su);
-        if (setu & ~unc_seen) unc_total++;      /* count each uncorrectable type once */
-        unc_seen |= setu;
-        unc_stuck |= su;
-        /* No sleep: poll fast so distinct error events latch separately, not merged. */
+        uint32_t cs = read_and_clear(fd, cor_off, cor_mask);   /* hot path: 1 read when clean */
+        for (int i = 0; i < n_cor; i++)
+            if (cs & (1u << cor_tbl[i].bit)) { cor_events[i]++; cor_total++; }
+        if (++iters % UNC_EVERY == 0) {
+            uint32_t us = read_and_clear(fd, unc_off, unc_mask);
+            unc_total += __builtin_popcount(us & ~unc_seen);   /* count each type once */
+            unc_seen |= us;
+        }
+    }
+    /* Final uncorrectable sample — the latch persists, so this catches anything since
+     * the last periodic check (and handles very short runs that never hit UNC_EVERY). */
+    {
+        uint32_t us = read_and_clear(fd, unc_off, unc_mask);
+        unc_total += __builtin_popcount(us & ~unc_seen);
+        unc_seen |= us;
     }
     double elapsed = now_sec() - t0;
     double bits = bps * elapsed;
@@ -214,24 +273,22 @@ int main(int argc, char **argv) {
     close(fd);
 
     if (json) {
-        printf("{\"bdf\":\"%s\",\"seconds\":%.3f,\"link_speed_code\":%d,"
+        printf("{\"bdf\":\"%s\",\"seconds\":%.3f,\"source\":\"%s\",\"link_speed_code\":%d,"
                "\"link_width\":%d,\"link_unknown\":%s,\"bits\":%.6e,\"correctable\":%ld,"
-               "\"uncorrectable\":%ld,\"uncorrectable_bits\":%u,"
-               "\"stuck_correctable\":%u,\"stuck_uncorrectable\":%u,"
-               "\"per_correctable\":{",
-               bdf, elapsed, code, width, link_unknown ? "true" : "false",
-               bits, cor_total, unc_total, unc_seen, cor_stuck, unc_stuck);
+               "\"uncorrectable\":%ld,\"uncorrectable_bits\":%u,\"per_correctable\":{",
+               bdf, elapsed, source, code, width, link_unknown ? "true" : "false",
+               bits, cor_total, unc_total, unc_seen);
         int first = 1;
-        for (int i = 0; i < N_COR_BITS; i++) {
+        for (int i = 0; i < n_cor; i++) {
             if (cor_events[i]) {
-                printf("%s\"%s\":%ld", first ? "" : ",", COR_BITS[i].name, cor_events[i]);
+                printf("%s\"%s\":%ld", first ? "" : ",", cor_tbl[i].name, cor_events[i]);
                 first = 0;
             }
         }
         printf("}}\n");
     } else {
-        printf("BDF %s: %.3fs, Gen%d x%d, bits=%.3e, correctable=%ld, uncorrectable=%ld\n",
-               bdf, elapsed, code, width, bits, cor_total, unc_total);
+        printf("BDF %s: %.3fs, %s, Gen%d x%d, bits=%.3e, correctable=%ld, uncorrectable=%ld\n",
+               bdf, elapsed, source, code, width, bits, cor_total, unc_total);
     }
     return (unc_total > 0) ? 3 : 0;  /* nonzero exit if any uncorrectable error */
 }
