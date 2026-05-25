@@ -29,9 +29,12 @@ import glob
 import math
 import os
 import random
+import re
 import struct
 import time
 from dataclasses import dataclass, field
+
+_BDF_RE = re.compile(r"^[0-9a-fA-F]{4}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2}\.[0-7]$")
 
 # --- PCIe physical-layer facts (used by the mock to accrue bits over time) ------
 
@@ -73,6 +76,15 @@ PCIE_DEV_CONTROL = 0x08   # relative to the PCIe capability base
 PCIE_DEV_STATUS = 0x0A    # Device Status: error-detected bits, present on EVERY PCIe fn
 PCIE_LINK_CONTROL = 0x10
 PCIE_LINK_STATUS = 0x12   # current speed/width + training + bandwidth-change latches
+PCIE_CAP_FLAGS = 0x02     # PCI Express Capabilities Register; Device/Port Type in bits 7:4
+
+# PCIe Device/Port Type — tells which side a port's receiver faces, i.e. which link its
+# AER reports, and which ports are the link-owning downstream ports (for downgrade checks).
+PORT_ENDPOINT = 0x0
+PORT_ROOT = 0x4
+PORT_SWITCH_UPSTREAM = 0x5
+PORT_SWITCH_DOWNSTREAM = 0x6
+DOWNSTREAM_PORTS = (PORT_ROOT, PORT_SWITCH_DOWNSTREAM)   # receiver faces the leaf; owns the link below
 
 # Device Status error bits (W1C) — the no-AER fallback error source.
 DEVSTA_CORR = 1 << 0      # Correctable Error Detected
@@ -169,6 +181,18 @@ class Backend(abc.ABC):
         """Tell the backend whether the link is being exercised (driving traffic).
         On real hardware the stress workload is external, so this is a no-op; the mock
         uses it to gate error generation, enabling a true idle baseline (begin/end)."""
+
+    def link_chain(self, bdf: str) -> list[str]:
+        """Return the ordered BDFs in the PCIe path to ``bdf`` (root port ... endpoint).
+        Every BDF is one end of a link; reading AER on all of them covers both
+        directions of every link in the path. Base default: just the device itself."""
+        return [bdf]
+
+    def read_port_type(self, bdf: str) -> int:
+        """PCIe Device/Port Type (PORT_* ): endpoint / root / switch up / switch down.
+        Determines which link a BDF's AER reports and which ports own a link's downgrade
+        state. Base default: endpoint."""
+        return PORT_ENDPOINT
 
     def is_mock(self) -> bool:
         return isinstance(self, MockBackend)
@@ -293,6 +317,19 @@ class RealBackend(Backend):
         if cap is not None:
             self.write_config(bdf, cap + PCIE_LINK_STATUS, LNKSTA_LBMS | LNKSTA_LABS, 2)
 
+    def link_chain(self, bdf: str) -> list[str]:
+        # The sysfs realpath nests each upstream bridge: the BDF-shaped path
+        # components ARE the chain, ordered root-port -> ... -> endpoint.
+        real = os.path.realpath(f"{self.SYS}/{bdf}")
+        chain = [p for p in real.split(os.sep) if _BDF_RE.match(p)]
+        return chain or [bdf]
+
+    def read_port_type(self, bdf: str) -> int:
+        cap = self.find_cap(bdf, CAP_PCIE)
+        if cap is None:
+            return PORT_ENDPOINT
+        return (self.read_config(bdf, cap + PCIE_CAP_FLAGS, 2) >> 4) & 0xF
+
 
 # ----------------------------------------------------------------------------- #
 # Mock backend — simulates a board with injectable errors
@@ -322,6 +359,8 @@ class MockDevice:
     inject_retrains_per_sec: float = 0.0   # >0 = link keeps re-entering Recovery
     inject_downtrain_per_sec: float = 0.0  # >0 = link transiently downgrades speed under load
     has_pcie_cap: bool = True    # False simulates a (legacy) device with no PCIe capability
+    parent: str | None = None    # BDF of the upstream port (for chain/topology modeling)
+    port_type: int = PORT_ENDPOINT  # PCIe Device/Port Type (root/switch-up/switch-down/endpoint)
     optimal_preset: int = 4      # TX preset that minimizes errors (for the eq sweep)
     # Internal latch/accounting state:
     _cor_status: int = 0
@@ -471,6 +510,17 @@ class MockBackend(Backend):
         d = self._dev(bdf)
         d._exercising = active
         d._accrual_t = time.monotonic()          # reset the accrual window on state change
+
+    def link_chain(self, bdf: str) -> list[str]:
+        chain, seen, cur = [], set(), bdf
+        while cur and cur in self._devs and cur not in seen:
+            chain.append(cur)
+            seen.add(cur)
+            cur = self._dev(cur).parent
+        return list(reversed(chain)) or [bdf]      # root port ... endpoint
+
+    def read_port_type(self, bdf: str) -> int:
+        return self._dev(bdf).port_type
 
     # Test helpers (not part of the Backend interface) --------------------------
     def true_error_count(self, bdf: str) -> int:

@@ -24,7 +24,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass, field
 
-from .backend import Backend
+from .backend import Backend, DOWNSTREAM_PORTS
 
 
 @dataclass
@@ -126,3 +126,52 @@ def enumerate_against(backend: Backend, config: TopologyConfig) -> EnumerationRe
             missing.append(f"{exp.name} (found {len(matched[exp.name])}/{exp.count})")
     unexpected = [bdf for bdf in devs if bdf not in claimed]
     return EnumerationReport(matched, missing, unexpected)
+
+
+# --- PCIe chain analysis (every link in an endpoint's path) -------------------- #
+@dataclass
+class ChainMember:
+    """One BDF in the path. Its AER reports ONE direction of ONE link (its receiver
+    side), so bit errors are evaluated per-BDF — 4 BDFs => 4 independent error counts."""
+    bdf: str
+    port_type: int
+    peer: str | None        # the device at the other end of this BDF's receiver-side link
+    direction: str          # e.g. "0000:03:00.0->0000:04:00.0" (peer -> this BDF)
+
+
+@dataclass
+class ChainLink:
+    """One external link. Speed/width (and LBMS/LABS) are a per-LINK property — both ends
+    report the same negotiated state — so a downgrade is evaluated ONCE here, at the
+    downstream port that owns the link, never double-counted across its two BDFs."""
+    downstream_bdf: str     # root port / switch-downstream port (owns the link + LBMS/LABS)
+    upstream_bdf: str       # the device below it (switch-upstream port / endpoint)
+
+    @property
+    def name(self) -> str:
+        return f"{self.downstream_bdf}<->{self.upstream_bdf}"
+
+
+def analyze_chain(backend: Backend, endpoint_bdf: str) -> tuple[list[ChainMember], list[ChainLink]]:
+    """Decompose an endpoint's path into per-BDF error directions and per-link downgrade
+    targets. The switch-internal upstream<->downstream connection is excluded: only a
+    downstream port (root / switch-downstream) owns an external link."""
+    chain = backend.link_chain(endpoint_bdf)
+    types = {b: backend.read_port_type(b) for b in chain}
+
+    members: list[ChainMember] = []
+    for i, b in enumerate(chain):
+        # A downstream port's receiver faces its child; everyone else faces its parent.
+        if types[b] in DOWNSTREAM_PORTS:
+            peer = chain[i + 1] if i + 1 < len(chain) else None
+        else:
+            peer = chain[i - 1] if i > 0 else None
+        direction = f"{peer}->{b}" if peer else f"{b} (no upstream link)"
+        members.append(ChainMember(b, types[b], peer, direction))
+
+    links: list[ChainLink] = []
+    for i in range(1, len(chain)):
+        parent, child = chain[i - 1], chain[i]
+        if types[parent] in DOWNSTREAM_PORTS:        # parent owns an external link to child
+            links.append(ChainLink(parent, child))   # (else parent is a switch-up port: internal)
+    return members, links

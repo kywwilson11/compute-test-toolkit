@@ -74,3 +74,37 @@ def test_example_yaml_loads_if_pyyaml_present():
     cfg = topology.load_config(path)
     assert len(cfg.devices) == 3
     assert cfg.devices[0].match["vendor_id"] == 0x10DE   # 0x-string parsed to int
+
+
+def test_link_chain_walks_switch_topology():
+    from computetest.backend import MockDevice
+    # Root Port -> Switch Upstream -> Switch Downstream -> Endpoint (4 BDFs).
+    be = MockBackend([
+        MockDevice("0000:00:1c.0", parent=None),
+        MockDevice("0000:02:00.0", parent="0000:00:1c.0"),
+        MockDevice("0000:03:00.0", parent="0000:02:00.0"),
+        MockDevice("0000:04:00.0", parent="0000:03:00.0"),
+    ])
+    assert be.link_chain("0000:04:00.0") == [
+        "0000:00:1c.0", "0000:02:00.0", "0000:03:00.0", "0000:04:00.0"]
+    assert be.link_chain("0000:00:1c.0") == ["0000:00:1c.0"]   # standalone / root
+
+
+def test_analyze_chain_errors_per_bdf_downgrades_per_link():
+    from computetest.backend import (MockDevice, PORT_ROOT, PORT_SWITCH_UPSTREAM,
+                                      PORT_SWITCH_DOWNSTREAM, PORT_ENDPOINT)
+    be = MockBackend([
+        MockDevice("0000:00:1c.0", parent=None, port_type=PORT_ROOT),
+        MockDevice("0000:02:00.0", parent="0000:00:1c.0", port_type=PORT_SWITCH_UPSTREAM),
+        MockDevice("0000:03:00.0", parent="0000:02:00.0", port_type=PORT_SWITCH_DOWNSTREAM),
+        MockDevice("0000:04:00.0", parent="0000:03:00.0", port_type=PORT_ENDPOINT),
+    ])
+    members, links = topology.analyze_chain(be, "0000:04:00.0")
+    # 4 BDFs => 4 independent per-direction error counts
+    assert len(members) == 4
+    dirs = {m.bdf: m.direction for m in members}
+    assert dirs["0000:02:00.0"] == "0000:00:1c.0->0000:02:00.0"   # link A, Root->SwUp
+    assert dirs["0000:00:1c.0"] == "0000:02:00.0->0000:00:1c.0"   # link A, SwUp->Root (other dir)
+    # only 2 external links; the switch-internal up<->down pair is excluded
+    assert len(links) == 2
+    assert {l.downstream_bdf for l in links} == {"0000:00:1c.0", "0000:03:00.0"}
