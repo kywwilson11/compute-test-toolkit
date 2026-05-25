@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from . import aer, bert, linkstate, margining
+from . import aer, bert, linkstate, margining, topology
 from .backend import Backend
 from .topology import DeviceExpectation
 
@@ -96,3 +96,122 @@ def diagnose_all(backend: Backend, bdfs: list[str] | None = None, **kw) -> list[
     """Diagnose every device (or a given list)."""
     targets = bdfs if bdfs is not None else backend.list_devices()
     return [diagnose(backend, bdf, **kw) for bdf in targets]
+
+
+# --- Whole-chain diagnostic: every link in an endpoint's path ------------------ #
+@dataclass
+class ChainSegmentResult:
+    """A monitored BDF: its AER reports ONE direction of ONE link (per the receiver)."""
+    bdf: str
+    direction: str                      # e.g. "0000:00:1c.0->0000:02:00.0"
+    correctable_types: list[str]        # correctable bit names seen this direction
+    uncorrectable_types: list[str]      # uncorrectable bit names seen this direction
+    status: str                         # "pass" | "fail"
+
+
+@dataclass
+class ChainLinkResult:
+    """A per-link downgrade result (speed/width is a link property, read once)."""
+    name: str
+    downstream_bdf: str
+    speed: int
+    width: int
+    expected_speed: int | None
+    expected_width: int | None
+    bw_changed: bool
+    status: str                         # "pass" | "fail"
+
+
+@dataclass
+class ChainDiagnostic:
+    endpoint: str
+    bert: bert.BertResult               # confidence BERT on the endpoint link
+    segments: list[ChainSegmentResult]  # upstream BDFs, monitored by direction
+    links: list[ChainLinkResult]        # per-link downgrade results
+
+    @property
+    def status(self) -> str:
+        if (self.bert.status == "fail" or any(s.status == "fail" for s in self.segments)
+                or any(li.status == "fail" for li in self.links)):
+            return "fail"
+        return self.bert.status         # "pass" (or "skip" if the endpoint had no AER)
+
+    def reasons(self) -> list[str]:
+        r = []
+        if self.bert.status == "fail":
+            r.append(f"endpoint {self.endpoint}: {self.bert.verdict.summary()}")
+        for s in self.segments:
+            if s.status == "fail":
+                r.append(f"errors {s.direction}: "
+                         + ",".join(s.uncorrectable_types + s.correctable_types))
+        for li in self.links:
+            if li.status == "fail":
+                r.append(f"downgrade {li.name}: Gen{li.speed} x{li.width}"
+                         + (" (LBMS/LABS latched)" if li.bw_changed else ""))
+        return r
+
+    def summary(self) -> str:
+        lines = [f"[{self.status.upper()}] chain to {self.endpoint} "
+                 f"({len(self.links)} link(s), {len(self.segments) + 1} BDF(s))",
+                 f"      endpoint  {self.bert.summary()}"]
+        for s in self.segments:
+            detail = "OK" if s.status == "pass" else \
+                "FAIL " + ",".join(s.uncorrectable_types + s.correctable_types)
+            lines.append(f"      seg  {s.direction}: {detail}")
+        for li in self.links:
+            state = "OK" if li.status == "pass" else "DOWNGRADE"
+            lines.append(f"      link {li.name}: Gen{li.speed} x{li.width} -> {state}")
+        return "\n".join(lines)
+
+    def to_dict(self) -> dict:
+        return {"endpoint": self.endpoint, "status": self.status,
+                "reasons": self.reasons(), "bert": self.bert.to_dict(),
+                "segments": [vars(s) for s in self.segments],
+                "links": [vars(li) for li in self.links]}
+
+
+def diagnose_chain(backend: Backend, endpoint_bdf: str, *, expected_speed: int | None = None,
+                   expected_width: int | None = None, target_ber: float = 1e-12,
+                   confidence: float = 0.95, max_seconds: float = 30.0,
+                   upstream_correctable_ok: int = 0, **bert_kw) -> ChainDiagnostic:
+    """Test EVERY link in an endpoint's path. One stress window (the endpoint BERT;
+    its traffic traverses every link): a confidence BERT on the endpoint link, AER
+    monitored per-direction on every other BDF, and a per-link downgrade check read at
+    each link's downstream port. Any error/downgrade/uncorrectable on any segment fails
+    the chain, pinned to the exact BDF+direction or link."""
+    members, links = topology.analyze_chain(backend, endpoint_bdf)
+    upstream = [m for m in members if m.bdf != endpoint_bdf]
+
+    # Arm the monitored upstream BDFs and the links' bandwidth-change latches.
+    for m in upstream:
+        backend.set_exercising(m.bdf, True)
+        aer.clear_errors(backend, m.bdf, aer.error_source(backend, m.bdf))
+    for li in links:
+        backend.clear_link_bw_status(li.downstream_bdf)
+
+    # The one stress window: traffic to the endpoint traverses the whole chain.
+    bert_res = bert.run_bert(backend, endpoint_bdf, target_ber=target_ber,
+                             confidence=confidence, max_seconds=max_seconds, **bert_kw)
+
+    # Read each upstream BDF's accrued errors (one direction of one link).
+    segments = []
+    for m in upstream:
+        r = aer.read_errors(backend, m.bdf, aer.error_source(backend, m.bdf))
+        backend.set_exercising(m.bdf, False)
+        cor = [n for _, n, _ in r.correctable]
+        unc = [n for _, n, _ in r.uncorrectable]
+        ok = not unc and len(cor) <= upstream_correctable_ok
+        segments.append(ChainSegmentResult(m.bdf, m.direction, cor, unc,
+                                            "pass" if ok else "fail"))
+
+    # Per-link downgrade, read once at the downstream port (both ends agree on speed/width).
+    link_results = []
+    for li in links:
+        ls = backend.read_link_status(li.downstream_bdf)
+        bw = ls.bw_changed or ls.autonomous_bw
+        downgraded = bool((expected_speed and ls.speed < expected_speed)
+                          or (expected_width and ls.width < expected_width) or bw)
+        link_results.append(ChainLinkResult(li.name, li.downstream_bdf, ls.speed, ls.width,
+                                             expected_speed, expected_width, bw,
+                                             "fail" if downgraded else "pass"))
+    return ChainDiagnostic(endpoint_bdf, bert_res, segments, link_results)
