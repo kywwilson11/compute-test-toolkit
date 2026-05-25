@@ -86,10 +86,12 @@ static uint32_t clear_set_bits(int fd, off_t reg, uint32_t *stuck) {
     uint32_t s = 0;
     if (cfg_read(fd, reg, 4, &s) != 0) { *stuck = 0; return 0; }
     if (s == 0) { *stuck = 0; return 0; }
-    cfg_write(fd, reg, 4, s);              /* write back the set bits only */
+    if (cfg_write(fd, reg, 4, s) != 0) {   /* write failed (e.g. EACCES) -> can't clear */
+        *stuck = s; return s;              /* treat all set bits as stuck */
+    }
     uint32_t after = 0;
-    cfg_read(fd, reg, 4, &after);
-    *stuck = after & s;
+    if (cfg_read(fd, reg, 4, &after) != 0) { *stuck = 0; return s; }
+    *stuck = after & s;                    /* bits that refused to clear */
     return s;
 }
 
@@ -124,18 +126,41 @@ static double link_bits_per_sec(int code, int width) {
     return gtps[code] * (double)width * eff;
 }
 
+/* Strict BDF grammar DDDD:BB:DD.F (hex; function 0-7). Rejects junk and path
+ * traversal before the value reaches snprintf()/JSON. */
+static int valid_bdf(const char *s) {
+    int n = 0;
+    sscanf(s, "%*4[0-9a-fA-F]:%*2[0-9a-fA-F]:%*2[0-9a-fA-F].%*1[0-7]%n", &n);
+    return n == 12 && s[n] == '\0';
+}
+
 int main(int argc, char **argv) {
     const char *bdf = NULL;
     double duration = 12.0;
     int json = 0;
 
     for (int i = 1; i < argc; i++) {
-        if (!strcmp(argv[i], "-d") && i + 1 < argc) bdf = argv[++i];
-        else if (!strcmp(argv[i], "-t") && i + 1 < argc) duration = atof(argv[++i]);
-        else if (!strcmp(argv[i], "--json")) json = 1;
-        else { fprintf(stderr, "usage: %s -d <bdf> -t <sec> [--json]\n", argv[0]); return 2; }
+        if (!strcmp(argv[i], "-d") && i + 1 < argc) {
+            bdf = argv[++i];
+        } else if (!strcmp(argv[i], "-t") && i + 1 < argc) {
+            char *end = NULL;
+            duration = strtod(argv[++i], &end);
+            if (end == argv[i] || *end != '\0' || duration <= 0) {
+                fprintf(stderr, "error: -t needs a positive number of seconds\n");
+                return 2;
+            }
+        } else if (!strcmp(argv[i], "--json")) {
+            json = 1;
+        } else {
+            fprintf(stderr, "usage: %s -d <bdf> -t <sec> [--json]\n", argv[0]);
+            return 2;
+        }
     }
     if (!bdf) { fprintf(stderr, "error: -d <bdf> required\n"); return 2; }
+    if (!valid_bdf(bdf)) {
+        fprintf(stderr, "error: malformed BDF '%s' (expected e.g. 0000:03:00.0)\n", bdf);
+        return 2;
+    }
 
     char cfgpath[256];
     snprintf(cfgpath, sizeof cfgpath, SYS_PCI "/%s/config", bdf);
@@ -160,36 +185,45 @@ int main(int argc, char **argv) {
     long cor_events[N_COR_BITS] = {0};
     long cor_total = 0, unc_total = 0;
     uint32_t unc_seen = 0;
+    /* Once a bit refuses to clear it is "stuck": count it once, then ignore it so a
+     * sticky hardware fault cannot inflate the count into the millions (A-P0-1). A
+     * genuinely recurring error clears each poll and is recounted; a stuck one isn't. */
+    uint32_t cor_stuck = stuck_c, unc_stuck = stuck_u;
 
-    double t0 = now_sec(), t = t0;
-    while ((t = now_sec()) - t0 < duration) {
-        uint32_t s = 0;
-        if (cfg_read(fd, aer + AER_CORR_STATUS, 4, &s) == 0 && s) {
+    double t0 = now_sec();
+    while (now_sec() - t0 < duration) {
+        uint32_t st = 0;
+        uint32_t set = clear_set_bits(fd, aer + AER_CORR_STATUS, &st);  /* read+clear */
+        uint32_t newly = set & ~cor_stuck;     /* exclude already-known-stuck bits */
+        if (newly) {
+            cor_total++;                        /* one clear-recount EVENT */
             for (int i = 0; i < N_COR_BITS; i++)
-                if (s & (1u << COR_BITS[i].bit)) { cor_events[i]++; cor_total++; }
-            uint32_t junk;
-            clear_set_bits(fd, aer + AER_CORR_STATUS, &junk);  /* re-arm fast */
+                if (newly & (1u << COR_BITS[i].bit)) cor_events[i]++;
         }
-        uint32_t u = 0;
-        if (cfg_read(fd, aer + AER_UNCORR_STATUS, 4, &u) == 0 && u) {
-            unc_seen |= u; unc_total++;
-            uint32_t junk;
-            clear_set_bits(fd, aer + AER_UNCORR_STATUS, &junk);
-        }
-        /* No sleep: poll as fast as possible so latches are counted, not merged. */
+        cor_stuck |= st;
+
+        uint32_t su = 0;
+        uint32_t setu = clear_set_bits(fd, aer + AER_UNCORR_STATUS, &su);
+        if (setu & ~unc_seen) unc_total++;      /* count each uncorrectable type once */
+        unc_seen |= setu;
+        unc_stuck |= su;
+        /* No sleep: poll fast so distinct error events latch separately, not merged. */
     }
     double elapsed = now_sec() - t0;
     double bits = bps * elapsed;
+    int link_unknown = (bps <= 0);              /* couldn't read link speed/width */
+    if (link_unknown)
+        fprintf(stderr, "warning: link speed/width unknown for %s; bits=0\n", bdf);
     close(fd);
 
     if (json) {
         printf("{\"bdf\":\"%s\",\"seconds\":%.3f,\"link_speed_code\":%d,"
-               "\"link_width\":%d,\"bits\":%.6e,\"correctable\":%ld,"
+               "\"link_width\":%d,\"link_unknown\":%s,\"bits\":%.6e,\"correctable\":%ld,"
                "\"uncorrectable\":%ld,\"uncorrectable_bits\":%u,"
                "\"stuck_correctable\":%u,\"stuck_uncorrectable\":%u,"
                "\"per_correctable\":{",
-               bdf, elapsed, code, width, bits, cor_total, unc_total,
-               unc_seen, stuck_c, stuck_u);
+               bdf, elapsed, code, width, link_unknown ? "true" : "false",
+               bits, cor_total, unc_total, unc_seen, cor_stuck, unc_stuck);
         int first = 1;
         for (int i = 0; i < N_COR_BITS; i++) {
             if (cor_events[i]) {

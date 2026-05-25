@@ -60,3 +60,33 @@ def test_pure_python_fallback_matches_scipy(monkeypatch):
     for a, y in [(1, 0.95), (6, 0.95), (21, 0.99)]:
         assert ber.reg_lower_gamma_inv(a, y) == pytest.approx(
             float(scipy.gammaincinv(a, y)), rel=1e-6)
+
+
+def test_poisson_tail_no_cancellation():
+    # Regression: poisson_cdf(0, 100) must be ~e^-100, not 0.0 (the 1-gcf cancellation).
+    expected = math.exp(-100)
+    assert ber.poisson_cdf(0, 100) == pytest.approx(expected, rel=1e-9)
+
+
+def test_poisson_tail_no_cancellation_pure(monkeypatch):
+    monkeypatch.setattr(ber, "_HAVE_SCIPY", False)
+    assert ber.poisson_cdf(0, 100) == pytest.approx(math.exp(-100), rel=1e-9)
+
+
+def test_large_a_gamma_converges(monkeypatch):
+    # Regression: the pure-Python series must converge (not truncate) for large a.
+    sp = pytest.importorskip("scipy.special")
+    monkeypatch.setattr(ber, "_HAVE_SCIPY", False)
+    for a in (1e3, 1e5):
+        assert ber.reg_lower_gamma(a, a) == pytest.approx(float(sp.gammainc(a, a)), rel=1e-6)
+
+
+def test_invalid_inputs_raise():
+    with pytest.raises(ValueError):
+        ber.confidence_le(-1, 1e12, 1e-12)          # negative errors
+    with pytest.raises(ValueError):
+        ber.bits_for_confidence(0.0, 0.95)          # target_ber == 0
+    with pytest.raises(ValueError):
+        ber.ber_upper_bound(1e12, -1, 0.95)         # negative errors
+    with pytest.raises(ValueError):
+        ber.assess(0, 1e13, 1e-12, confidence_target=1.0)   # unattainable confidence

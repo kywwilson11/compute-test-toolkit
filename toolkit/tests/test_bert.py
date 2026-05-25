@@ -29,3 +29,19 @@ def test_uncorrectable_fails_immediately_with_decode():
     r = bert.run_bert(be, "0000:05:00.0", target_ber=1e-9, confidence=0.95, max_seconds=1.5)
     assert r.status == "fail"
     assert "CmplTO" in r.uncorrectable_decode
+
+
+def test_deterministic_clock_injection():
+    # An injected clock makes the clean-link run deterministic (no wall-clock dependence).
+    be = MockBackend([MockDevice("0000:03:00.0", 0x10DE, 0x2204, 0x030000, 4, 16, 4, 16)])
+    t = [0.0]
+
+    def clock():
+        t[0] += 0.01
+        return t[0]
+
+    r = bert.run_bert(be, "0000:03:00.0", target_ber=1e-9, confidence=0.95,
+                      max_seconds=5, clock=clock, sleep=lambda _s: None)
+    assert r.ok and r.seconds > 0
+    # Reported bits equal the bits the verdict was decided on (P0-2 consistency).
+    assert r.bits == r.verdict.bits

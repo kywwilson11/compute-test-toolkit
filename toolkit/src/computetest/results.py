@@ -43,6 +43,12 @@ class ResultStore:
         self.conn.executescript(SCHEMA)
         self.station, self.dut_serial, self.program_version = station, dut_serial, program_version
 
+    def __enter__(self) -> "ResultStore":
+        return self
+
+    def __exit__(self, *exc) -> None:
+        self.close()
+
     def record(self, rec: TestRecord) -> None:
         self.conn.execute(
             "INSERT INTO results (ts, station, dut_serial, program_version, subsystem, "

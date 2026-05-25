@@ -266,28 +266,30 @@ class MockDevice:
     # Internal latch/accounting state:
     _cor_status: int = 0
     _uncor_status: int = 0
-    _last_clear_t: float = field(default_factory=time.monotonic)
+    _accrual_t: float = field(default_factory=time.monotonic)   # window-baseline for errors
     _last_ls_poll: float = field(default_factory=time.monotonic)
-    _true_errors: int = 0        # ground-truth error count (for test assertions)
+    _true_errors: int = 0        # ground-truth PHYSICAL error count (>= observable events)
     _ext_caps: dict[int, int] = field(default_factory=lambda: {
         ECAP_AER: 0x100, ECAP_SECONDARY_PCIE: 0x140, ECAP_LANE_MARGINING: 0x180})
 
     def _accrue_and_latch(self, rng: random.Random) -> None:
-        """Model errors accumulating on the link since the last clear."""
+        """Model real PCIe AER physics: errors arrive as a Poisson process; the status
+        register is a LATCH (set if >=1 error occurred), not a counter. Each read
+        consumes its window [last read, now] so windows never overlap (no double count).
+        A fast poller observes ~every error (windows hold 0/1); a slow poller undercounts
+        (windows hold >1 but still latch one bit) — exactly the real undercounting."""
         if self.injected_ber <= 0:
             return
         now = time.monotonic()
-        bits = link_bits_per_second(self.link_speed, self.link_width) * (now - self._last_clear_t)
-        # Expected errors over the elapsed window; draw an actual count (Poisson).
-        lam = bits * self.injected_ber
+        dt = now - self._accrual_t
+        self._accrual_t = now                       # consume this window
+        lam = link_bits_per_second(self.link_speed, self.link_width) * dt * self.injected_ber
         if lam <= 0:
             return
         n = _poisson(rng, lam)
         if n > 0:
-            self._true_errors += n
-            # A real status bit only latches "happened", not a count.
-            self._cor_status |= _COR_BAD_TLP | _COR_REPLAY_TIMER
-            self._last_clear_t = now  # latched; counter "resets" until cleared
+            self._true_errors += n                  # physical errors in this window
+            self._cor_status |= _COR_BAD_TLP        # latch ONE representative bit
 
 
 class MockBackend(Backend):
@@ -358,7 +360,7 @@ class MockBackend(Backend):
         if aer is not None and offset == aer + AER_CORR_STATUS:
             # Write-1-to-clear: clear exactly the bits set in ``value``.
             d._cor_status &= ~(value & _mask(size))
-            d._last_clear_t = time.monotonic()
+            d._accrual_t = time.monotonic()      # restart the error-accrual window
         elif aer is not None and offset == aer + AER_UNCORR_STATUS:
             d._uncor_status &= ~(value & _mask(size))
 

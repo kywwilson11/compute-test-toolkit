@@ -19,6 +19,7 @@ from __future__ import annotations
 import json
 import subprocess
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 
 from . import aer, ber
@@ -42,6 +43,10 @@ class BertResult:
     @property
     def status(self) -> str:
         return self.verdict.status
+
+    @property
+    def ok(self) -> bool:
+        return self.status == "pass"
 
     def to_dict(self) -> dict:
         return {
@@ -67,11 +72,22 @@ class BertResult:
 
 def run_bert(backend: Backend, bdf: str, *, target_ber: float = 1e-12,
              confidence: float = 0.95, max_seconds: float = 30.0,
-             poll_s: float = 0.002, engine: str = "python") -> BertResult:
+             poll_s: float = 0.002, engine: str = "python",
+             clock: Callable[[], float] = time.monotonic,
+             sleep: Callable[[float], None] = time.sleep) -> BertResult:
     """Run the BERT on one BDF and return a verdict.
 
     PASS  = reached the confidence target with no uncorrectable errors.
     FAIL  = any uncorrectable error, OR ran out of time without reaching confidence.
+
+    ``correctable`` is counted as clear-recount EVENTS, not raw errors. An AER status
+    bit is a latch (">=1 error of this type since the last clear"), so each poll that
+    finds a correctable bit set is one event; we then clear and re-arm. This equals
+    the true error count at the low rates where a unit passes, and is a conservative
+    lower bound at high rates where it fails anyway. For exact counts at high rates,
+    use device hardware counters (switch per-lane, GPU replay).
+
+    ``clock``/``sleep`` are injectable so tests can drive the loop deterministically.
     """
     if engine == "c":
         return _run_c_engine(backend, bdf, target_ber=target_ber,
@@ -80,22 +96,22 @@ def run_bert(backend: Backend, bdf: str, *, target_ber: float = 1e-12,
     dev = backend.get_device(bdf)
     bps = link_bits_per_second(dev.current_link_speed, dev.current_link_width)
 
-    aer.clear(backend, bdf)  # arm both status latches
-    base = aer.aer_base(backend, bdf)
+    aer.clear(backend, bdf)  # arm both status latches before measuring
 
     per: dict[str, int] = {}
     cor_total = unc_total = 0
     unc_bits_seen = 0
     stuck = False
 
-    t0 = time.monotonic()
+    t0 = clock()
+    elapsed = 0.0
     while True:
-        elapsed = time.monotonic() - t0
+        elapsed = clock() - t0
         snap = aer.snapshot(backend, bdf)
         if snap.correctable_raw:
+            cor_total += 1                         # one clear-recount EVENT
             for _, name, _ in snap.correctable:
-                per[name] = per.get(name, 0) + 1
-                cor_total += 1
+                per[name] = per.get(name, 0) + 1   # which bit(s) this event involved
             res = aer.clear(backend, bdf, uncorrectable=False)  # re-arm fast
             if res.get("correctable") and not res["correctable"].ok:
                 stuck = True
@@ -107,30 +123,38 @@ def run_bert(backend: Backend, bdf: str, *, target_ber: float = 1e-12,
         bits = bps * elapsed
         verdict = ber.assess(cor_total, bits, target_ber, confidence, unc_total)
 
-        if verdict.status == "fail":
-            break
-        if verdict.status == "pass":
+        if verdict.status in ("pass", "fail"):
             break
         if elapsed >= max_seconds:
-            # Ran out of time without proving the target -> fail (inconclusive).
-            verdict.status = "fail"
+            verdict.status = "fail"                # out of time without proving target
             break
-        if poll_s:
-            time.sleep(poll_s)
+        if poll_s > 0:
+            sleep(poll_s)
 
     unc_decode = [n for _, n, _ in aer.decode_uncorrectable(unc_bits_seen)]
-    return BertResult(bdf, time.monotonic() - t0, bps * (time.monotonic() - t0),
-                      cor_total, unc_total, per, dev.current_link_speed,
-                      dev.current_link_width, verdict, stuck, unc_decode)
+    # Report the SAME bits the verdict was decided on (one elapsed value, no re-reads).
+    return BertResult(bdf, elapsed, verdict.bits, cor_total, unc_total, per,
+                      dev.current_link_speed, dev.current_link_width, verdict,
+                      stuck, unc_decode)
 
 
 def _run_c_engine(backend: Backend, bdf: str, *, target_ber: float,
                   confidence: float, seconds: float,
                   binary: str = "c/pcie_bert") -> BertResult:
     """Run the compiled C engine for one fixed window, then assess in Python."""
-    proc = subprocess.run([binary, "-d", bdf, "-t", str(seconds), "--json"],
-                          capture_output=True, text=True, timeout=seconds + 30)
-    data = json.loads(proc.stdout)
+    try:
+        proc = subprocess.run([binary, "-d", bdf, "-t", str(seconds), "--json"],
+                              capture_output=True, text=True, timeout=seconds + 30)
+    except FileNotFoundError as e:
+        raise RuntimeError(f"C engine not found: {binary} (build it with: make -C c)") from e
+    except subprocess.TimeoutExpired as e:
+        raise RuntimeError(f"C engine timed out after {seconds + 30}s") from e
+    if proc.returncode not in (0, 3):   # 0 = clean, 3 = uncorrectable seen (valid data)
+        raise RuntimeError(f"C engine failed (rc={proc.returncode}): {proc.stderr.strip()}")
+    try:
+        data = json.loads(proc.stdout)
+    except json.JSONDecodeError as e:
+        raise RuntimeError(f"C engine produced invalid JSON: {proc.stdout!r}") from e
     verdict = ber.assess(data["correctable"], data["bits"], target_ber,
                          confidence, data["uncorrectable"])
     unc_decode = [n for _, n, _ in aer.decode_uncorrectable(data.get("uncorrectable_bits", 0))]
