@@ -1,0 +1,19 @@
+{
+  "target_ber": 1e-9,
+  "confidence": 0.95,
+  "bert_max_s": 2.0,
+  "watch_retrains_s": 0.3,
+  "devices": [
+    {"name": "GPU", "match": {"vendor_id": 4318, "class_code": 196608},
+     "count": 2, "expected_speed": 4, "expected_width": 16, "min_margin_ui": 0.25},
+    {"name": "NVMe", "match": {"class_code": 67586},
+     "count": 2, "expected_speed": 4, "expected_width": 4, "min_margin_ui": 0.25},
+    {"name": "CustomCard", "match": {"vendor_id": 6966},
+     "count": 1, "expected_speed": 4, "expected_width": 8}
+  ],
+  "nvme": ["/dev/nvme0", "/dev/nvme1"],
+  "gpus": [0, 1],
+  "gmsl": ["1-0029"],
+  "ethernet": ["eth0"],
+  "can": ["can0"]
+}

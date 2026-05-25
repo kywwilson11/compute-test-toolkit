@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "computetest"
+version = "0.1.0"
+description = "Compute-platform manufacturing-test toolkit: PCIe BERT + diagnostics, NVMe/GPU/GMSL/Ethernet checks, harness, dashboard."
+requires-python = ">=3.10"
+dependencies = []
+
+[project.optional-dependencies]
+sci = ["scipy"]                      # faster/exacter BER math (a pure-python fallback ships built in)
+yaml = ["pyyaml"]                    # YAML test plans (JSON works without it)
+dashboard = ["fastapi", "uvicorn"]   # the results dashboard
+dev = ["pytest"]
+
+[project.scripts]
+computetest = "computetest.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
+addopts = "-q"

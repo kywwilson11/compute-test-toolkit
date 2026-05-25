@@ -1,0 +1,26 @@
+% ---- Guide PDF styling (pandoc + xelatex) ----
+
+% Wrap long lines in highlighted (language-tagged) code blocks so commands
+% never run off the page edge.
+\usepackage{fvextra}
+\DefineVerbatimEnvironment{Highlighting}{Verbatim}{breaklines,breakanywhere,commandchars=\\\{\},fontsize=\small}
+
+% Shrink plain verbatim (the ASCII diagrams) slightly so wide ones fit.
+\usepackage{etoolbox}
+\AtBeginEnvironment{verbatim}{\small}
+
+% Nicer justification/kerning.
+\usepackage{microtype}
+
+% A few relational/arrow glyphs are absent from STIX Two Text's text variant.
+% Render them from math mode (always available) so they never come out blank.
+% (None of these appear inside code blocks, so this is safe.)
+\usepackage{newunicodechar}
+\newunicodechar{→}{\ensuremath{\rightarrow}}
+\newunicodechar{≈}{\ensuremath{\approx}}
+\newunicodechar{≤}{\ensuremath{\leq}}
+\newunicodechar{≥}{\ensuremath{\geq}}
+\newunicodechar{≠}{\ensuremath{\neq}}
+
+% Keep tables from overflowing; allow them to size to content.
+\setlength{\emergencystretch}{3em}

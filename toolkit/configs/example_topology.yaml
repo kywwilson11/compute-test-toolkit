@@ -1,0 +1,35 @@
+# Example test plan for a compute board. A new board revision is a new file like
+# this — not new code. Loads with computetest.topology.load_config (needs PyYAML;
+# a stdlib-loadable example_plan.json mirror is provided alongside).
+
+target_ber: 1.0e-12      # production target; the demo overrides to 1e-9 for speed
+confidence: 0.95
+bert_max_s: 30
+watch_retrains_s: 0.3
+
+# PCIe devices the board must present, matched by vendor/class (or an exact bdf).
+devices:
+  - name: GPU
+    match: {vendor_id: 0x10DE, class_code: 0x030000}
+    count: 2
+    expected_speed: 4        # Gen4
+    expected_width: 16
+    min_margin_ui: 0.25
+  - name: NVMe
+    match: {class_code: 0x010802}
+    count: 2
+    expected_speed: 4
+    expected_width: 4
+    min_margin_ui: 0.25
+  - name: CustomCard
+    match: {vendor_id: 0x1B36}
+    count: 1
+    expected_speed: 4        # this card trains at Gen3 in the mock -> flagged degraded
+    expected_width: 8
+
+# Interface checks (keyed by device path / index / interface name).
+nvme:     ["/dev/nvme0", "/dev/nvme1"]
+gpus:     [0, 1]
+gmsl:     ["1-0029"]
+ethernet: ["eth0"]
+can:      ["can0"]
