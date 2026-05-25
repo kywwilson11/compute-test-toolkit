@@ -87,3 +87,50 @@ def check_gmsl(link: str = "1-0029", video_device: str = "/dev/video0", *,
         captured = 0
     return GmslHealth(link, locked, video_device, w, h, captured, errors,
                       _limits(locked, w, h, captured, errors, expect_w, expect_h))
+
+
+# --- Multi-link deserializer (a quad/hex part like MAX96712 carries N camera links) -- #
+@dataclass
+class GmslDeserHealth:
+    addr: str                       # deserializer I2C address (e.g. "1-0029")
+    links: list[GmslHealth]
+    frame_sync_ok: bool             # all cameras locked and frame-synchronized
+
+    @property
+    def ok(self) -> bool:
+        return bool(self.links) and all(li.ok for li in self.links) and self.frame_sync_ok
+
+    def summary(self) -> str:
+        locked = sum(1 for li in self.links if li.locked)
+        state = "OK" if self.ok else "FAIL"
+        sync = "sync" if self.frame_sync_ok else "DESYNC"
+        head = f"GMSL deser {self.addr}: {locked}/{len(self.links)} links locked, {sync} -> {state}"
+        return head + "".join(f"\n    {li.summary()}" for li in self.links)
+
+    def to_dict(self) -> dict:
+        return {"addr": self.addr, "frame_sync_ok": self.frame_sync_ok, "ok": self.ok,
+                "links": [li.to_dict() for li in self.links]}
+
+
+def check_deserializer(addr: str = "1-0029", n_links: int = 4, *, expect_w: int = 1920,
+                       expect_h: int = 1080, frames: int = 5,
+                       mock: bool | None = None) -> GmslDeserHealth:
+    """Check every camera link on a multi-link GMSL deserializer + frame sync across
+    them. (Real per-link access is part/driver-specific — MAX9296 vs MAX96712 differ —
+    so the real path is a best-effort over /dev/videoN; the registers are the datasheet's.)"""
+    use_mock = mock_mode() if mock is None else mock
+    links: list[GmslHealth] = []
+    for i in range(n_links):
+        link_id, vid = f"{addr}:link{i}", f"/dev/video{i}"
+        if use_mock:
+            bad = "BAD" in addr and i == 0            # one camera link down
+            locked, w, h = (not bad), (0 if bad else expect_w), (0 if bad else expect_h)
+            captured, errors = (0 if bad else frames), (12 if bad else 0)
+            links.append(GmslHealth(link_id, locked, vid, w, h, captured, errors,
+                         _limits(locked, w, h, captured, errors, expect_w, expect_h)))
+        else:  # pragma: no cover - real-hw path
+            links.append(check_gmsl(addr, vid, expect_w=expect_w, expect_h=expect_h,
+                                    frames=frames, mock=False))
+    # FrameSync: every link locked AND synchronized (a "DESYNC" address models loss of sync).
+    frame_sync_ok = all(li.locked for li in links) and ("DESYNC" not in addr)
+    return GmslDeserHealth(addr, links, frame_sync_ok)
