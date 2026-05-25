@@ -138,6 +138,12 @@ def run_bert(backend: Backend, bdf: str, *, target_ber: float = 1e-12,
     per: dict[str, int] = {}
     cor_total = unc_total = 0
     unc_bits_seen = 0
+    # Same sequential decision + takt budget as the conductor, so this no-hardware
+    # reference path mirrors the real engine="c" path (it just polls the registers
+    # continuously in Python instead of driving the C counter in increments).
+    budget_bits = ber.bits_for_confidence(target_ber, confidence, 0) * extend_budget
+    status = "continue"
+    bits = 0.0
 
     t0 = clock()
     elapsed = 0.0
@@ -157,14 +163,23 @@ def run_bert(backend: Backend, bdf: str, *, target_ber: float = 1e-12,
             aer.clear_errors(backend, bdf, source)       # re-arm fast
 
         bits = bps * elapsed
-        verdict = ber.assess(cor_total, bits, target_ber, confidence, unc_total)
-        if verdict.status in ("pass", "fail"):
+        if unc_total > 0:
+            status = "fail"
+            break                                         # any uncorrectable = immediate fail
+        status = ber.sequential_decision(cor_total, bits, target_ber, confidence)
+        if status == "pass":
             break
-        if elapsed >= max_seconds:
-            verdict.status = "fail"                       # out of time, target not proven
-            break
+        if status == "reject":
+            status = "fail"
+            break                                         # proved BER > target (fail fast)
+        if bits >= budget_bits or elapsed >= max_seconds:
+            status = "fail"
+            break                                         # takt budget exhausted, not proven
         if poll_s > 0:
             sleep(poll_s)
+
+    verdict = ber.assess(cor_total, bits, target_ber, confidence, unc_total)
+    verdict.status = status
 
     # --- Idle baseline (end): errors still present with no traffic = a real fault.
     backend.set_exercising(bdf, False)
