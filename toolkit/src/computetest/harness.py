@@ -104,6 +104,18 @@ def run_test_plan(backend: Backend, plan: dict, *, store: ResultStore | None = N
         add(TestRecord("can", iface, "state", "pass" if h.ok else "fail",
                        h.to_dict(), h.summary()))
 
+    # 4. Whole-chain diagnostics (every link in an endpoint's path). Each entry is an
+    #    endpoint BDF, or {endpoint, expected_speed, expected_width}.
+    for spec in plan.get("chains", []):
+        ep = spec if isinstance(spec, str) else spec["endpoint"]
+        kw = {} if isinstance(spec, str) else {
+            "expected_speed": spec.get("expected_speed"),
+            "expected_width": spec.get("expected_width")}
+        d = diagnostics.diagnose_chain(backend, ep, target_ber=cfg.target_ber,
+                                       confidence=cfg.confidence,
+                                       max_seconds=plan.get("bert_max_s", 30.0), **kw)
+        add(TestRecord("chain", ep, "chain", d.status, d.to_dict(), "; ".join(d.reasons())))
+
     if store:
         store.heartbeat("idle", "PASS" if report.ok else "FAIL")
     return report

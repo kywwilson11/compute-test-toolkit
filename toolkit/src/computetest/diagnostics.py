@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from . import aer, bert, linkstate, margining, topology
+from . import aer, bert, dmesg, linkstate, margining, topology
 from .backend import Backend
 from .topology import DeviceExpectation
 
@@ -128,11 +128,17 @@ class ChainDiagnostic:
     bert: bert.BertResult               # confidence BERT on the endpoint link
     segments: list[ChainSegmentResult]  # upstream BDFs, monitored by direction
     links: list[ChainLinkResult]        # per-link downgrade results
+    kernel_events: list = field(default_factory=list)  # dmesg-decoded PCIe/AER events
+
+    @property
+    def bad_kernel_events(self) -> list:
+        # Kernel-logged uncorrectables / link-downs are fail signals; corrected are info.
+        return [e for e in self.kernel_events if e.uncorrectable or e.severity == "link"]
 
     @property
     def status(self) -> str:
         if (self.bert.status == "fail" or any(s.status == "fail" for s in self.segments)
-                or any(li.status == "fail" for li in self.links)):
+                or any(li.status == "fail" for li in self.links) or self.bad_kernel_events):
             return "fail"
         return self.bert.status         # "pass" (or "skip" if the endpoint had no AER)
 
@@ -148,6 +154,8 @@ class ChainDiagnostic:
             if li.status == "fail":
                 r.append(f"downgrade {li.name}: Gen{li.speed} x{li.width}"
                          + (" (LBMS/LABS latched)" if li.bw_changed else ""))
+        for e in self.bad_kernel_events:
+            r.append(f"kernel: {e.text}")
         return r
 
     def summary(self) -> str:
@@ -167,20 +175,27 @@ class ChainDiagnostic:
         return {"endpoint": self.endpoint, "status": self.status,
                 "reasons": self.reasons(), "bert": self.bert.to_dict(),
                 "segments": [vars(s) for s in self.segments],
-                "links": [vars(li) for li in self.links]}
+                "links": [vars(li) for li in self.links],
+                "kernel_events": [vars(e) for e in self.kernel_events]}
 
 
 def diagnose_chain(backend: Backend, endpoint_bdf: str, *, expected_speed: int | None = None,
                    expected_width: int | None = None, target_ber: float = 1e-12,
                    confidence: float = 0.95, max_seconds: float = 30.0,
-                   upstream_correctable_ok: int = 0, **bert_kw) -> ChainDiagnostic:
+                   upstream_correctable_ok: int = 0, dmesg_reader=None,
+                   **bert_kw) -> ChainDiagnostic:
     """Test EVERY link in an endpoint's path. One stress window (the endpoint BERT;
     its traffic traverses every link): a confidence BERT on the endpoint link, AER
-    monitored per-direction on every other BDF, and a per-link downgrade check read at
-    each link's downstream port. Any error/downgrade/uncorrectable on any segment fails
-    the chain, pinned to the exact BDF+direction or link."""
+    monitored per-direction on every other BDF, a per-link downgrade check read at each
+    link's downstream port, and the kernel log (dmesg) watched for PCIe/AER events on
+    any chain BDF. Any error/downgrade/uncorrectable on any segment fails the chain,
+    pinned to the exact BDF+direction or link."""
     members, links = topology.analyze_chain(backend, endpoint_bdf)
     upstream = [m for m in members if m.bdf != endpoint_bdf]
+
+    # Watch the kernel log across the whole window (no-op off Linux without a reader).
+    monitor = dmesg.DmesgMonitor(reader=dmesg_reader)
+    monitor.start()
 
     # Arm the monitored upstream BDFs and the links' bandwidth-change latches.
     for m in upstream:
@@ -192,6 +207,7 @@ def diagnose_chain(backend: Backend, endpoint_bdf: str, *, expected_speed: int |
     # The one stress window: traffic to the endpoint traverses the whole chain.
     bert_res = bert.run_bert(backend, endpoint_bdf, target_ber=target_ber,
                              confidence=confidence, max_seconds=max_seconds, **bert_kw)
+    kernel_events = monitor.collect([m.bdf for m in members])
 
     # Read each upstream BDF's accrued errors (one direction of one link).
     segments = []
@@ -214,4 +230,4 @@ def diagnose_chain(backend: Backend, endpoint_bdf: str, *, expected_speed: int |
         link_results.append(ChainLinkResult(li.name, li.downstream_bdf, ls.speed, ls.width,
                                              expected_speed, expected_width, bw,
                                              "fail" if downgraded else "pass"))
-    return ChainDiagnostic(endpoint_bdf, bert_res, segments, link_results)
+    return ChainDiagnostic(endpoint_bdf, bert_res, segments, link_results, kernel_events)

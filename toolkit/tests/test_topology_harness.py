@@ -108,3 +108,20 @@ def test_analyze_chain_errors_per_bdf_downgrades_per_link():
     # only 2 external links; the switch-internal up<->down pair is excluded
     assert len(links) == 2
     assert {l.downstream_bdf for l in links} == {"0000:00:1c.0", "0000:03:00.0"}
+
+
+def test_plan_runs_chain_section():
+    from computetest.backend import (MockDevice, PORT_ROOT, PORT_SWITCH_UPSTREAM,
+                                      PORT_SWITCH_DOWNSTREAM, PORT_ENDPOINT)
+    from computetest.harness import run_test_plan
+    be = MockBackend([
+        MockDevice("0000:00:1c.0", parent=None, port_type=PORT_ROOT),
+        MockDevice("0000:02:00.0", parent="0000:00:1c.0", port_type=PORT_SWITCH_UPSTREAM),
+        MockDevice("0000:03:00.0", parent="0000:02:00.0", port_type=PORT_SWITCH_DOWNSTREAM),
+        MockDevice("0000:04:00.0", parent="0000:03:00.0", port_type=PORT_ENDPOINT),
+    ])
+    plan = {"target_ber": 1e-9, "confidence": 0.95, "bert_max_s": 2,
+            "chains": [{"endpoint": "0000:04:00.0", "expected_speed": 4, "expected_width": 16}]}
+    report = run_test_plan(be, plan)
+    chain_recs = [r for r in report.records if r.subsystem == "chain"]
+    assert len(chain_recs) == 1 and chain_recs[0].status == "pass"   # all clean
