@@ -37,14 +37,15 @@ class BertResult:
     link_speed_code: int
     link_width: int
     verdict: ber.BertVerdict
-    stuck: bool = False
+    stuck: bool = False          # an error was present at IDLE (constant fault / severe SI)
     uncorrectable_decode: list[str] = field(default_factory=list)
-    aer_available: bool = True
+    aer_available: bool = True   # False only if neither AER nor Device Status is present
+    aer_source: str = "aer"      # "aer" (rich) | "devstatus" (coarse fallback) | "none"
     note: str = ""
 
     @property
     def status(self) -> str:
-        # No AER capability => we couldn't measure errors; "skip" (never a false pass).
+        # No error source at all => we couldn't measure; "skip" (never a false pass).
         return self.verdict.status if self.aer_available else "skip"
 
     @property
@@ -60,8 +61,9 @@ class BertResult:
             "confidence": round(self.verdict.confidence_reached, 4),
             "ber_upper_bound": self.verdict.ber_upper,
             "uncorrectable_decode": self.uncorrectable_decode,
-            "stuck_bits": self.stuck, "aer_available": self.aer_available,
-            "note": self.note, "status": self.status,
+            "idle_errors": self.stuck, "error_source": self.aer_source,
+            "aer_available": self.aer_available, "note": self.note,
+            "status": self.status,
         }
 
     def summary(self) -> str:
@@ -109,54 +111,82 @@ def run_bert(backend: Backend, bdf: str, *, target_ber: float = 1e-12,
     gen_note = ("Gen6+ FLIT/FEC: AER LCRC-retry counting under-measures BER; "
                 "use FEC/symbol statistics") if dev.current_link_speed >= 6 else ""
 
-    if aer.aer_base(backend, bdf) is None:
+    source = aer.error_source(backend, bdf)   # "aer" (rich) | "devstatus" (coarse) | "none"
+    if source == "none":
         v = ber.BertVerdict(0, 0.0, target_ber, confidence, 0.0,
                             float("inf"), float("inf"), "skip")
         return BertResult(bdf, 0.0, 0.0, 0, 0, {}, dev.current_link_speed,
                           dev.current_link_width, v, aer_available=False,
-                          note="no AER capability; use device-native error counters")
+                          aer_source="none",
+                          note="no PCIe error source (neither AER nor Device Status)")
 
-    aer.clear(backend, bdf)  # arm both status latches before measuring
+    # --- Idle baseline (begin): quiesce the link; bits set with no exercise are a
+    #     constant fault (or severe marginality), NOT a per-error rate. We record and
+    #     exclude them from the rate count so a real fault can't run the count away —
+    #     and a high error rate under load is still counted, never masked.
+    backend.set_exercising(bdf, False)
+    aer.clear_errors(backend, bdf, source)
+    idle0 = aer.read_errors(backend, bdf, source)
+    idle_cor, idle_unc = idle0.correctable_raw, idle0.uncorrectable_raw
+
+    # --- Exercise window.
+    backend.set_exercising(bdf, True)
+    aer.clear_errors(backend, bdf, source)   # start the measurement window clean
 
     per: dict[str, int] = {}
     cor_total = unc_total = 0
     unc_bits_seen = 0
-    stuck = False
 
     t0 = clock()
     elapsed = 0.0
     while True:
         elapsed = clock() - t0
-        snap = aer.snapshot(backend, bdf)
-        if snap.correctable_raw:
-            for _, name, _ in snap.correctable:    # each distinct bit = >=1 error of that type
-                per[name] = per.get(name, 0) + 1
+        r = aer.read_errors(backend, bdf, source)
+        rate_cor = r.correctable_raw & ~idle_cor        # exclude constant/idle bits
+        if rate_cor:
+            for _, name, _ in aer.ErrorReading(rate_cor, 0, source).correctable:
+                per[name] = per.get(name, 0) + 1         # each distinct bit = >=1 error
                 cor_total += 1
-            res = aer.clear(backend, bdf, uncorrectable=False)  # re-arm fast
-            if res.get("correctable") and not res["correctable"].ok:
-                stuck = True
-        if snap.uncorrectable_raw:
-            new_unc = snap.uncorrectable_raw & ~unc_bits_seen   # count each type once
-            unc_total += bin(new_unc).count("1")
-            unc_bits_seen |= snap.uncorrectable_raw
-            aer.clear(backend, bdf, correctable=False)
+        if r.has_uncorrectable:
+            new_unc = r.uncorrectable_raw & ~unc_bits_seen
+            unc_total += bin(new_unc).count("1")         # count each type once
+            unc_bits_seen |= r.uncorrectable_raw
+        if r.has_correctable or r.has_uncorrectable:
+            aer.clear_errors(backend, bdf, source)       # re-arm fast
 
         bits = bps * elapsed
         verdict = ber.assess(cor_total, bits, target_ber, confidence, unc_total)
-
         if verdict.status in ("pass", "fail"):
             break
         if elapsed >= max_seconds:
-            verdict.status = "fail"                # out of time without proving target
+            verdict.status = "fail"                       # out of time, target not proven
             break
         if poll_s > 0:
             sleep(poll_s)
 
-    unc_decode = [n for _, n, _ in aer.decode_uncorrectable(unc_bits_seen)]
+    # --- Idle baseline (end): errors still present with no traffic = a real fault.
+    backend.set_exercising(bdf, False)
+    aer.clear_errors(backend, bdf, source)
+    idle1 = aer.read_errors(backend, bdf, source)
+    idle_cor |= idle1.correctable_raw
+    idle_unc |= idle1.uncorrectable_raw
+    idle_fault = bool(idle_cor or idle_unc)
+    if idle_fault and verdict.status != "fail":
+        verdict.status = "fail"   # errors at idle => constant fault / severe SI
+
+    note = gen_note
+    if idle_fault:
+        idle_names = ([n for _, n, _ in aer.ErrorReading(idle_cor, 0, source).correctable]
+                      + [n for _, n, _ in aer.ErrorReading(0, idle_unc, source).uncorrectable])
+        note = ((note + "; ") if note else "") + \
+               "errors present at idle (constant fault): " + ",".join(idle_names)
+
+    unc_decode = [n for _, n, _ in aer.ErrorReading(0, unc_bits_seen | idle_unc, source).uncorrectable]
     # Report the SAME bits the verdict was decided on (one elapsed value, no re-reads).
     return BertResult(bdf, elapsed, verdict.bits, cor_total, unc_total, per,
                       dev.current_link_speed, dev.current_link_width, verdict,
-                      stuck, unc_decode, note=gen_note)
+                      stuck=idle_fault, uncorrectable_decode=unc_decode,
+                      aer_source=source, note=note)
 
 
 def _run_c_engine(backend: Backend, bdf: str, *, target_ber: float,

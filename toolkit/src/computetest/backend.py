@@ -67,10 +67,37 @@ ECAP_AER = 0x0001
 ECAP_SECONDARY_PCIE = 0x0019  # Gen3+ lane equalization control
 ECAP_LANE_MARGINING = 0x0027  # receiver lane margining (Gen4+)
 
-# Legacy PCIe capability (holds Link Control / Link Status).
+# Legacy PCIe capability (holds Device + Link status/control).
 CAP_PCIE = 0x10
-PCIE_LINK_CONTROL = 0x10  # relative to the PCIe capability base
-PCIE_LINK_STATUS = 0x12   # relative to the PCIe capability base; bit 11 = link training
+PCIE_DEV_CONTROL = 0x08   # relative to the PCIe capability base
+PCIE_DEV_STATUS = 0x0A    # Device Status: error-detected bits, present on EVERY PCIe fn
+PCIE_LINK_CONTROL = 0x10
+PCIE_LINK_STATUS = 0x12   # current speed/width + training + bandwidth-change latches
+
+# Device Status error bits (W1C) — the no-AER fallback error source.
+DEVSTA_CORR = 1 << 0      # Correctable Error Detected
+DEVSTA_NONFATAL = 1 << 1  # Non-Fatal Error Detected
+DEVSTA_FATAL = 1 << 2     # Fatal Error Detected
+DEVSTA_UR = 1 << 3        # Unsupported Request Detected
+
+# Link Status bits.
+LNKSTA_TRAINING = 1 << 11  # link is retraining (entered Recovery)
+LNKSTA_DLLLA = 1 << 13     # Data Link Layer Link Active
+LNKSTA_LBMS = 1 << 14      # Link Bandwidth Management Status (W1C) — a speed/width change
+LNKSTA_LABS = 1 << 15      # Link Autonomous Bandwidth Status (W1C) — reliability downgrade
+
+
+@dataclass
+class LinkStatus:
+    """A decoded PCIe Link Status read. ``bw_changed``/``autonomous_bw`` are W1C latches
+    that fire on any speed/width change since the last clear — they catch a transient
+    downgrade that recovered before the final snapshot."""
+    speed: int
+    width: int
+    training: bool = False        # bit 11 — entered Recovery
+    bw_changed: bool = False      # bit 14 LBMS — bandwidth (speed/width) changed
+    autonomous_bw: bool = False   # bit 15 LABS — link downgraded itself for reliability
+    dl_active: bool = True        # bit 13 DLLLA
 
 
 @dataclass
@@ -122,12 +149,26 @@ class Backend(abc.ABC):
         """Return the config-space offset of an extended capability, or None."""
 
     @abc.abstractmethod
-    def read_link_status(self, bdf: str) -> tuple[int, int, bool]:
-        """Return (speed_code, width, link_training_active) from the PCIe cap.
+    def read_link_status(self, bdf: str) -> LinkStatus:
+        """Read and decode the PCIe Link Status register."""
 
-        ``link_training_active`` (Link Status bit 11) flicking true during a run
-        means the link entered Recovery and retrained — frequent = marginal SI.
-        """
+    @abc.abstractmethod
+    def read_device_status(self, bdf: str) -> int | None:
+        """Raw Device Status register (PCIe cap +0x0A), or None if no PCIe capability.
+        The no-AER fallback error source: bit0 correctable, bits1/2 non-fatal/fatal."""
+
+    @abc.abstractmethod
+    def clear_device_status(self, bdf: str, mask: int = 0xF) -> None:
+        """Write-1-to-clear the Device Status error bits."""
+
+    @abc.abstractmethod
+    def clear_link_bw_status(self, bdf: str) -> None:
+        """Write-1-to-clear the LBMS/LABS bandwidth-change latches in Link Status."""
+
+    def set_exercising(self, bdf: str, active: bool) -> None:
+        """Tell the backend whether the link is being exercised (driving traffic).
+        On real hardware the stress workload is external, so this is a no-op; the mock
+        uses it to gate error generation, enabling a true idle baseline (begin/end)."""
 
     def is_mock(self) -> bool:
         return isinstance(self, MockBackend)
@@ -228,13 +269,29 @@ class RealBackend(Backend):
             ptr = self.read_config(bdf, ptr + 1, 1) & 0xFC
         return None
 
-    def read_link_status(self, bdf: str) -> tuple[int, int, bool]:
+    def read_link_status(self, bdf: str) -> LinkStatus:
         cap = self.find_cap(bdf, CAP_PCIE)
         if cap is None:
             d = self.get_device(bdf)  # fall back to sysfs
-            return d.current_link_speed, d.current_link_width, False
+            return LinkStatus(d.current_link_speed, d.current_link_width)
         ls = self.read_config(bdf, cap + PCIE_LINK_STATUS, 2)
-        return ls & 0xF, (ls >> 4) & 0x3F, bool((ls >> 11) & 1)
+        return LinkStatus(ls & 0xF, (ls >> 4) & 0x3F, bool(ls & LNKSTA_TRAINING),
+                          bool(ls & LNKSTA_LBMS), bool(ls & LNKSTA_LABS),
+                          bool(ls & LNKSTA_DLLLA))
+
+    def read_device_status(self, bdf: str) -> int | None:
+        cap = self.find_cap(bdf, CAP_PCIE)
+        return None if cap is None else self.read_config(bdf, cap + PCIE_DEV_STATUS, 2)
+
+    def clear_device_status(self, bdf: str, mask: int = 0xF) -> None:
+        cap = self.find_cap(bdf, CAP_PCIE)
+        if cap is not None:
+            self.write_config(bdf, cap + PCIE_DEV_STATUS, mask, 2)
+
+    def clear_link_bw_status(self, bdf: str) -> None:
+        cap = self.find_cap(bdf, CAP_PCIE)
+        if cap is not None:
+            self.write_config(bdf, cap + PCIE_LINK_STATUS, LNKSTA_LBMS | LNKSTA_LABS, 2)
 
 
 # ----------------------------------------------------------------------------- #
@@ -259,13 +316,19 @@ class MockDevice:
     max_link_speed: int = 4
     max_link_width: int = 16
     driver: str | None = "nvidia"
-    injected_ber: float = 0.0    # set > 0 to simulate a marginal link
-    inject_uncorr_bit: int = 0   # >0 = a persistent uncorrectable fault that re-latches
+    injected_ber: float = 0.0    # set > 0 to simulate a marginal link (rate errors under load)
+    inject_uncorr_bit: int = 0   # >0 = a persistent uncorrectable fault (present even at idle)
+    inject_stuck_cor: int = 0    # correctable bit mask that's ALWAYS set, even at idle (a fault)
     inject_retrains_per_sec: float = 0.0   # >0 = link keeps re-entering Recovery
+    inject_downtrain_per_sec: float = 0.0  # >0 = link transiently downgrades speed under load
+    has_pcie_cap: bool = True    # False simulates a (legacy) device with no PCIe capability
     optimal_preset: int = 4      # TX preset that minimizes errors (for the eq sweep)
     # Internal latch/accounting state:
     _cor_status: int = 0
     _uncor_status: int = 0
+    _exercising: bool = False     # gated by set_exercising(); rate errors accrue only when True
+    _bw_latched: bool = False     # LBMS/LABS sticky latch (a speed/width change occurred)
+    _min_speed_seen: int = 99
     _accrual_t: float = field(default_factory=time.monotonic)   # window-baseline for errors
     _last_ls_poll: float = field(default_factory=time.monotonic)
     _true_errors: int = 0        # ground-truth PHYSICAL error count (>= observable events)
@@ -330,24 +393,35 @@ class MockBackend(Backend):
     def find_ext_cap(self, bdf: str, cap_id: int) -> int | None:
         return self._dev(bdf)._ext_caps.get(cap_id)
 
-    def read_link_status(self, bdf: str) -> tuple[int, int, bool]:
+    def read_link_status(self, bdf: str) -> LinkStatus:
         d = self._dev(bdf)
         training = False
-        if d.inject_retrains_per_sec > 0:
+        speed = d.link_speed
+        if d.inject_retrains_per_sec > 0 or d.inject_downtrain_per_sec > 0:
             now = time.monotonic()
-            lam = d.inject_retrains_per_sec * (now - d._last_ls_poll)
+            dt = now - d._last_ls_poll
             d._last_ls_poll = now
-            training = _poisson(self._rng, lam) > 0
-        return d.link_speed, d.link_width, training
+            if d.inject_retrains_per_sec > 0:
+                training = _poisson(self._rng, d.inject_retrains_per_sec * dt) > 0
+            if d.inject_downtrain_per_sec > 0 and \
+                    _poisson(self._rng, d.inject_downtrain_per_sec * dt) > 0:
+                d._bw_latched = True             # a speed/width change occurred
+                speed = max(1, d.link_speed - 2)  # transient dip (may recover)
+        d._min_speed_seen = min(d._min_speed_seen, speed)
+        return LinkStatus(speed, d.link_width, training,
+                          bw_changed=d._bw_latched, autonomous_bw=d._bw_latched)
 
     def read_config(self, bdf: str, offset: int, size: int = 4) -> int:
         d = self._dev(bdf)
         aer = d._ext_caps.get(ECAP_AER)
         if aer is not None and offset == aer + AER_CORR_STATUS:
-            d._accrue_and_latch(self._rng)
+            if d.inject_stuck_cor:                # constant fault, present even at idle
+                d._cor_status |= d.inject_stuck_cor
+            if d._exercising:                     # rate errors only while exercised
+                d._accrue_and_latch(self._rng)
             return d._cor_status & _mask(size)
         if aer is not None and offset == aer + AER_UNCORR_STATUS:
-            if d.inject_uncorr_bit:           # a persistent fault re-latches each read
+            if d.inject_uncorr_bit:               # a persistent fault re-latches each read
                 d._uncor_status |= (1 << d.inject_uncorr_bit)
             return d._uncor_status & _mask(size)
         if aer is not None and offset == aer:
@@ -364,13 +438,55 @@ class MockBackend(Backend):
         elif aer is not None and offset == aer + AER_UNCORR_STATUS:
             d._uncor_status &= ~(value & _mask(size))
 
+    # Device Status (no-AER fallback error source) ------------------------------
+    def read_device_status(self, bdf: str) -> int | None:
+        d = self._dev(bdf)
+        if not d.has_pcie_cap:
+            return None
+        if d.inject_stuck_cor:
+            d._cor_status |= d.inject_stuck_cor
+        if d.inject_uncorr_bit:
+            d._uncor_status |= (1 << d.inject_uncorr_bit)
+        if d._exercising:
+            d._accrue_and_latch(self._rng)
+        val = 0
+        if d._cor_status:
+            val |= DEVSTA_CORR
+        if d._uncor_status:
+            val |= DEVSTA_NONFATAL
+        return val
+
+    def clear_device_status(self, bdf: str, mask: int = 0xF) -> None:
+        d = self._dev(bdf)
+        if mask & DEVSTA_CORR:
+            d._cor_status = 0
+            d._accrual_t = time.monotonic()
+        if mask & (DEVSTA_NONFATAL | DEVSTA_FATAL):
+            d._uncor_status = 0
+
+    def clear_link_bw_status(self, bdf: str) -> None:
+        self._dev(bdf)._bw_latched = False
+
+    def set_exercising(self, bdf: str, active: bool) -> None:
+        d = self._dev(bdf)
+        d._exercising = active
+        d._accrual_t = time.monotonic()          # reset the accrual window on state change
+
     # Test helpers (not part of the Backend interface) --------------------------
     def true_error_count(self, bdf: str) -> int:
         return self._dev(bdf)._true_errors
 
     def inject_uncorrectable(self, bdf: str, bit: int) -> None:
-        """Simulate a persistent uncorrectable fault (re-latches after each clear)."""
+        """Simulate a persistent uncorrectable fault (present even at idle)."""
         self._dev(bdf).inject_uncorr_bit = bit
+
+    def inject_stuck_correctable(self, bdf: str, mask: int = _COR_BAD_TLP) -> None:
+        """Simulate a genuinely stuck correctable bit (set even at idle)."""
+        self._dev(bdf).inject_stuck_cor = mask
+
+    def inject_downtrain(self, bdf: str, per_sec: float = 50.0) -> None:
+        """Simulate a link that transiently downgrades speed under load."""
+        self._dev(bdf).inject_downtrain_per_sec = per_sec
 
 
 def _mask(size: int) -> int:

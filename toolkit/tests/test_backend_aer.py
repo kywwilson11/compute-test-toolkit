@@ -14,8 +14,8 @@ def test_find_ext_cap_and_link_status():
     be = MockBackend()
     bdf = be.list_devices()[0]
     assert be.find_ext_cap(bdf, ECAP_AER) == 0x100
-    speed, width, training = be.read_link_status(bdf)
-    assert speed == 4 and width == 16 and training is False
+    ls = be.read_link_status(bdf)
+    assert ls.speed == 4 and ls.width == 16 and ls.training is False
 
 
 def test_decode_correctable_bits():

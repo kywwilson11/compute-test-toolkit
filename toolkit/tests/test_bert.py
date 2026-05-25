@@ -47,13 +47,31 @@ def test_deterministic_clock_injection():
     assert r.bits == r.verdict.bits
 
 
-def test_no_aer_device_is_skipped_not_passed():
-    # A device without an AER capability must not be a silent PASS on zero errors.
+def test_no_aer_falls_back_to_device_status():
+    # No AER but a PCIe cap is present -> measure via Device Status (coarse), don't skip.
     from computetest.backend import ECAP_AER
     dev = MockDevice("0000:0a:00.0", 0x10DE, 0x2204, 0x030000, 4, 16, 4, 16)
     dev._ext_caps.pop(ECAP_AER)
-    r = bert.run_bert(MockBackend([dev]), "0000:0a:00.0", target_ber=1e-9, max_seconds=1)
+    r = bert.run_bert(MockBackend([dev]), "0000:0a:00.0", target_ber=1e-9, max_seconds=2)
+    assert r.aer_source == "devstatus" and r.status == "pass"
+
+
+def test_no_error_source_is_skipped_not_passed():
+    # No AER AND no PCIe cap -> truly cannot measure -> skip (never a false PASS).
+    from computetest.backend import ECAP_AER
+    dev = MockDevice("0000:0b:00.0", has_pcie_cap=False)
+    dev._ext_caps.pop(ECAP_AER)
+    r = bert.run_bert(MockBackend([dev]), "0000:0b:00.0", target_ber=1e-9, max_seconds=1)
     assert r.status == "skip" and r.aer_available is False and not r.ok
+
+
+def test_stuck_at_idle_fails_without_runaway():
+    # A correctable bit set even at idle = constant fault: FAIL, flagged, not counted as a rate.
+    be = _be()
+    be.inject_stuck_correctable("0000:03:00.0")   # BadTLP stuck, present at idle
+    r = bert.run_bert(be, "0000:03:00.0", target_ber=1e-9, max_seconds=1)
+    assert r.status == "fail" and r.stuck is True
+    assert "idle" in r.note
 
 
 def test_persistent_uncorrectable_counted_once():

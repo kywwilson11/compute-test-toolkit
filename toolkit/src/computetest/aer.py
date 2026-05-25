@@ -11,7 +11,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from .backend import (AER_CORR_STATUS, AER_UNCORR_STATUS, ECAP_AER, Backend)
+from .backend import (AER_CORR_STATUS, AER_UNCORR_STATUS, DEVSTA_CORR, DEVSTA_FATAL,
+                      DEVSTA_NONFATAL, DEVSTA_UR, ECAP_AER, Backend)
 
 # bit -> (short name, what it usually means)
 CORRECTABLE_BITS: dict[int, tuple[str, str]] = {
@@ -133,3 +134,74 @@ def clear(backend: Backend, bdf: str, correctable: bool = True,
     if uncorrectable:
         res["uncorrectable"] = _clear_one(backend, bdf, base + AER_UNCORR_STATUS)
     return res
+
+
+# --- Unified error source: AER (rich) preferred, else Device Status (coarse) ---- #
+# Coarse Device-Status decode (the no-AER fallback; no per-type breakdown).
+DEVSTATUS_COR_BITS: dict[int, tuple[str, str]] = {
+    0: ("CorrErrDetected", "Device Status: a correctable error was detected (no breakdown)"),
+}
+DEVSTATUS_UNC_BITS: dict[int, tuple[str, str]] = {
+    1: ("NonFatalDetected", "Device Status: a non-fatal uncorrectable error was detected"),
+    2: ("FatalDetected", "Device Status: a fatal uncorrectable error was detected"),
+}
+
+
+@dataclass
+class ErrorReading:
+    """A reading from whichever error source the device exposes."""
+    correctable_raw: int
+    uncorrectable_raw: int
+    source: str           # "aer" | "devstatus" | "none"
+
+    @property
+    def correctable(self) -> list[tuple[int, str, str]]:
+        tbl = CORRECTABLE_BITS if self.source == "aer" else DEVSTATUS_COR_BITS
+        return decode(self.correctable_raw, tbl)
+
+    @property
+    def uncorrectable(self) -> list[tuple[int, str, str]]:
+        tbl = UNCORRECTABLE_BITS if self.source == "aer" else DEVSTATUS_UNC_BITS
+        return decode(self.uncorrectable_raw, tbl)
+
+    @property
+    def has_correctable(self) -> bool:
+        return self.correctable_raw != 0
+
+    @property
+    def has_uncorrectable(self) -> bool:
+        return self.uncorrectable_raw != 0
+
+
+def error_source(backend: Backend, bdf: str) -> str:
+    """Which error source this device exposes: 'aer' (preferred), 'devstatus', or 'none'."""
+    if aer_base(backend, bdf) is not None:
+        return "aer"
+    if backend.read_device_status(bdf) is not None:
+        return "devstatus"
+    return "none"
+
+
+def read_errors(backend: Backend, bdf: str, source: str | None = None) -> ErrorReading:
+    """Read correctable/uncorrectable status from AER if present, else Device Status.
+    AER is preferred (per-type breakdown); Device Status is the universal fallback."""
+    src = source or error_source(backend, bdf)
+    if src == "aer":
+        base = aer_base(backend, bdf)
+        cor = backend.read_config(bdf, base + AER_CORR_STATUS, 4)
+        unc = backend.read_config(bdf, base + AER_UNCORR_STATUS, 4)
+        return ErrorReading(cor, unc, "aer")
+    if src == "devstatus":
+        ds = backend.read_device_status(bdf) or 0
+        cor = DEVSTA_CORR if (ds & DEVSTA_CORR) else 0
+        unc = ds & (DEVSTA_NONFATAL | DEVSTA_FATAL)   # UR (bit 3) reported separately, not auto-fail
+        return ErrorReading(cor, unc, "devstatus")
+    return ErrorReading(0, 0, "none")
+
+
+def clear_errors(backend: Backend, bdf: str, source: str) -> None:
+    """Clear (arm) whichever error source is in use."""
+    if source == "aer":
+        clear(backend, bdf)
+    elif source == "devstatus":
+        backend.clear_device_status(bdf)
