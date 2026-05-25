@@ -1,14 +1,20 @@
 """
-NVMe health check: SMART decode against new-drive manufacturing limits, plus
-identify and (optionally) a controller self-test. Wraps `nvme-cli` on real Linux;
-returns simulated data on a laptop. Remember: an NVMe drive is a PCIe endpoint, so
-run the PCIe diagnostic on its link too (link train, AER) — this covers the drive.
+NVMe health check: SMART decode against new-drive manufacturing limits, the
+power-on-hours / power-cycles "used-stock" signal, and an optional Device Self-Test
+(DST) that polls the self-test log (page 0x06) to completion. Wraps `nvme-cli` on
+real Linux; simulated otherwise. An NVMe drive is a PCIe endpoint, so run the PCIe
+diagnostic on its link too (link train + AER).
+
+Like the GPU check: SMART faults are pass/fail; high lifetime counters (power-on
+hours/cycles, unsafe shutdowns) are reported as RMA *history* — a re-labeled or
+returned drive entering the line — failing only the configurable power-on-hours gate.
 """
 from __future__ import annotations
 
 import json
 import shutil
 import subprocess
+import time
 from dataclasses import dataclass, field
 
 from .backend import mock_mode
@@ -22,6 +28,8 @@ class NvmeHealth:
     firmware: str
     smart: dict
     checks: dict[str, bool] = field(default_factory=dict)
+    history: list[str] = field(default_factory=list)   # used-stock flags (not faults)
+    self_test: dict | None = None                       # DST result, if run
 
     @property
     def ok(self) -> bool:
@@ -31,18 +39,20 @@ class NvmeHealth:
         fails = [k for k, v in self.checks.items() if not v]
         state = "OK" if self.ok else "FAIL(" + ",".join(fails) + ")"
         s = self.smart
+        hist = f"  history[{';'.join(self.history)}]" if self.history else ""
+        dst = f"  dst={'pass' if self.self_test.get('passed') else 'FAIL'}" if self.self_test else ""
         return (f"{self.device} {self.model} fw={self.firmware} "
                 f"temp={s.get('temperature')}C used={s.get('percentage_used')}% "
-                f"media_err={s.get('media_errors')} -> {state}")
+                f"media_err={s.get('media_errors')} poh={s.get('power_on_hours')} "
+                f"-> {state}{dst}{hist}")
 
     def to_dict(self) -> dict:
         return {"device": self.device, "model": self.model, "serial": self.serial,
-                "firmware": self.firmware, "smart": self.smart,
-                "checks": self.checks, "ok": self.ok}
+                "firmware": self.firmware, "smart": self.smart, "checks": self.checks,
+                "history": self.history, "self_test": self.self_test, "ok": self.ok}
 
 
-# Manufacturing limits for a *new* drive (see Guide A, §NVMe).
-def _apply_limits(smart: dict, max_temp_c: int = 70) -> dict[str, bool]:
+def _apply_limits(smart: dict, max_temp_c: int, max_power_on_hours: int) -> dict[str, bool]:
     return {
         "critical_warning==0": smart.get("critical_warning", 0) == 0,
         "media_errors==0": smart.get("media_errors", 0) == 0,
@@ -50,11 +60,22 @@ def _apply_limits(smart: dict, max_temp_c: int = 70) -> dict[str, bool]:
         "percentage_used<2": smart.get("percentage_used", 0) < 2,
         "available_spare>=100": smart.get("available_spare", 0) >= 100,
         f"temp<={max_temp_c}": 0 < smart.get("temperature", 0) <= max_temp_c,
+        f"power_on_hours<={max_power_on_hours}": smart.get("power_on_hours", 0) <= max_power_on_hours,
     }
 
 
+def _history(smart: dict) -> list[str]:
+    h = []
+    if smart.get("power_cycles", 0) > 50:
+        h.append(f"power_cycles={smart['power_cycles']}")
+    if smart.get("unsafe_shutdowns", 0) > 0:
+        h.append(f"unsafe_shutdowns={smart['unsafe_shutdowns']}")
+    if smart.get("data_units_written", 0) > 100000:
+        h.append("significant lifetime writes")
+    return h
+
+
 def _mock_smart(device: str) -> dict:
-    # A healthy new drive. Inject a fault by putting "BAD" in the device path.
     bad = "BAD" in device
     return {
         "critical_warning": 1 if bad else 0,
@@ -66,37 +87,76 @@ def _mock_smart(device: str) -> dict:
         "num_err_log_entries": 7 if bad else 0,
         "data_units_written": 1234,
         "data_units_read": 5678,
-        "unsafe_shutdowns": 0,
+        "power_on_hours": 6200 if bad else 1,   # high on a "new" drive = used/returned stock
+        "power_cycles": 800 if bad else 3,
+        "unsafe_shutdowns": 40 if bad else 0,
     }
 
 
-def check_nvme(device: str = "/dev/nvme0", *, mock: bool | None = None,
-               max_temp_c: int = 70) -> NvmeHealth:
-    """Read SMART/identify and apply new-drive pass/fail limits."""
+def check_nvme(device: str = "/dev/nvme0", *, mock: bool | None = None, max_temp_c: int = 70,
+               max_power_on_hours: int = 50, run_self_test: bool = False) -> NvmeHealth:
+    """Read SMART/identify, apply new-drive limits, and (optionally) run a DST."""
     use_mock = mock_mode() if mock is None else mock
     if use_mock:
         smart = _mock_smart(device)
-        return NvmeHealth(device, "MockSSD-1TB", "MOCK0001", "MK1.0", smart,
-                          _apply_limits(smart, max_temp_c))
+        model, serial, fw = "MockSSD-1TB", "MOCK0001", "MK1.0"
+    else:  # pragma: no cover - real-hw path
+        if not shutil.which("nvme"):
+            raise RuntimeError("nvme-cli not found (apt install nvme-cli)")
+        smart = json.loads(subprocess.run(["nvme", "smart-log", device, "-o", "json"],
+                                          capture_output=True, text=True, check=True).stdout)
+        if smart.get("temperature", 0) > 200:           # nvme-cli reports Kelvin
+            smart["temperature"] -= 273
+        ctrl = json.loads(subprocess.run(["nvme", "id-ctrl", device, "-o", "json"],
+                                        capture_output=True, text=True, check=True).stdout)
+        model, serial, fw = (ctrl.get("mn", "?").strip(), ctrl.get("sn", "?").strip(),
+                             ctrl.get("fr", "?").strip())
 
-    if not shutil.which("nvme"):  # pragma: no cover - real-hw path
-        raise RuntimeError("nvme-cli not found (apt install nvme-cli)")
-    smart_raw = subprocess.run(["nvme", "smart-log", device, "-o", "json"],
-                               capture_output=True, text=True, check=True).stdout
-    smart = json.loads(smart_raw)
-    # nvme-cli reports temperature in Kelvin; normalize to Celsius.
-    if smart.get("temperature", 0) > 200:
-        smart["temperature"] = smart["temperature"] - 273
-    ctrl = json.loads(subprocess.run(["nvme", "id-ctrl", device, "-o", "json"],
-                                     capture_output=True, text=True, check=True).stdout)
-    return NvmeHealth(device, ctrl.get("mn", "?").strip(), ctrl.get("sn", "?").strip(),
-                      ctrl.get("fr", "?").strip(), smart, _apply_limits(smart, max_temp_c))
+    checks = _apply_limits(smart, max_temp_c, max_power_on_hours)
+    dst = None
+    if run_self_test:
+        start_self_test(device, extended=False, mock=use_mock)
+        dst = poll_self_test(device, mock=use_mock)
+        checks["self_test_passed"] = bool(dst.get("passed"))
+    return NvmeHealth(device, model, serial, fw, smart, checks, _history(smart), dst)
 
 
+# --- Device Self-Test (DST), log page 0x06 ------------------------------------- #
 def start_self_test(device: str, extended: bool = False, *, mock: bool | None = None) -> bool:
-    """Kick off a device self-test (DST). Poll self-test-log for the result later."""
+    """Kick off a device self-test. Poll self_test_log()/poll_self_test() for the result."""
     if (mock_mode() if mock is None else mock):
         return True
     code = "2" if extended else "1"  # pragma: no cover - real-hw path
     subprocess.run(["nvme", "device-self-test", device, "-s", code], check=True)
     return True
+
+
+def self_test_log(device: str, *, mock: bool | None = None) -> dict:
+    """Read the current self-test log: {percent, in_progress, result, passed}.
+    result 0 = completed without error; >0 = a failure code (NVMe spec)."""
+    if (mock_mode() if mock is None else mock):
+        bad = "BAD" in device
+        return {"percent": 100, "in_progress": False, "result": 9 if bad else 0,
+                "passed": not bad}
+    raw = json.loads(subprocess.run(["nvme", "self-test-log", device, "-o", "json"],  # pragma: no cover
+                                    capture_output=True, text=True, check=True).stdout)
+    cur = raw.get("current_operation", 0)
+    entry = (raw.get("Self-test Log") or raw.get("logs") or [{}])[0]
+    result = entry.get("result", entry.get("Self Test Result", 0)) or 0
+    in_progress = cur not in (0, 0xF)
+    return {"percent": raw.get("completion", 100), "in_progress": in_progress,
+            "result": result, "passed": (not in_progress) and result == 0}
+
+
+def poll_self_test(device: str, *, mock: bool | None = None, timeout: float = 120.0,
+                   interval: float = 2.0) -> dict:
+    """Poll the self-test log until the DST completes (or times out)."""
+    if (mock_mode() if mock is None else mock):
+        return self_test_log(device, mock=True)            # mock completes immediately
+    deadline = time.monotonic() + timeout                  # pragma: no cover - real-hw path
+    while time.monotonic() < deadline:
+        log = self_test_log(device, mock=False)
+        if not log["in_progress"]:
+            return log
+        time.sleep(interval)
+    return {"percent": 0, "in_progress": True, "result": -1, "passed": False, "timeout": True}
