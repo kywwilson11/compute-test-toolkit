@@ -247,6 +247,15 @@ test code + config, setup/runbook docs, fixture spec, acceptance criteria, golde
 correlation data, and a failure-triage guide. Treat assembling it as a core deliverable, not
 an afterthought.
 
+**The on-call / line-down reflex.** A CM line stop is a cross-time-zone incident — the line is
+down, money is burning, and you can't walk over. The same things that make a test robust make
+the incident short: timeouts on every instrument/DUT call so nothing hangs forever, clear
+failure states so the operator's screenshot tells you the layer, logs rich enough to diagnose
+from the record, and a triage guide that lets *their* engineer resolve the common 80% without
+waking you. The difference between a 10-minute issue and an overnight outage is almost entirely
+**robustness + logs + documentation you built in advance**, not heroics at 3 a.m. Build for the
+incident you won't be awake for.
+
 > Practical reality: time zones, language differences, and you-can't-see-it. Over-communicate
 > in writing, make specs unambiguous, and build tests that explain themselves. The senior move
 > is making the CM *successful and self-sufficient*, not dependent on a call to you for every
@@ -320,6 +329,98 @@ what makes the next one easier to get approved.
 **Best practices as artifacts.** "Establish best practices" means turning your judgment into
 things the team reuses: a bring-up checklist, a release/correlation procedure, a failure-triage
 guide, a standard result schema. Codify it so it survives you and scales to the next hire.
+
+\newpage
+
+# What the JD Implies But Doesn't Say
+
+The job description is a paragraph; the *job* is much larger. A senior compute test engineer is
+expected to bring a lot the JD only gestures at. This chapter makes the implied requirements
+explicit — each notes the JD phrase it hides behind — so none of them surprises you. Treat it
+as a checklist of "things I'm quietly expected to be good at."
+
+## Lab instrumentation & physical-layer measurement *(hidden in "control test instruments")*
+
+- **Bench-instrument fluency** and *what each proves on a compute board*: rail voltages under
+  load, ripple/noise, power-up sequencing, inrush, PERST#/reset timing (Guide A's Instruments
+  chapter). Not "I've seen a scope" — "I scope the rail AC-coupled under the load profile that
+  triggers the AER burst."
+- **Instrument automation stack:** VISA/SCPI over LAN/LXI/USB/GPIB, and a shared-instrument
+  server for multi-station benches (your `equipment_rpc.py`).
+- **Measurement discipline:** 4-wire/Kelvin for low-R and shunts, settling/averaging, fixed vs
+  autorange, and **calibration/NIST traceability** — log instrument IDN + cal status with every
+  measurement, because a number from an out-of-cal instrument is not a result.
+- **The instinct that "digital failures are often power/SI failures"** — reaching for the
+  **scope + AER decode together** to root-cause an intermittent link error.
+
+## Software engineering at scale *(hidden in "develop scripts and code", "build and release")*
+
+- Not "can write Python," but **test-framework engineering:** a config-driven harness, pytest
+  fixtures/parametrize, structured result schemas, defensive coding with **timeouts on every
+  instrument/DUT call**, graceful failure/recovery.
+- **C/C++ for tight loops** where Python can't keep up (the AER clear-and-count, the BERT inner
+  loop) — the JD's "C++ or C# beneficial."
+- **Config-over-code** so a new board revision or a new CM is a config change, not a code
+  release + re-qualification.
+- **Version control, release engineering, rollback** for *test programs as released artifacts.*
+
+## Data systems, statistics & continuous improvement *(hidden in "analyze results", "yield")*
+
+- **SPC, $C_{pk}$/$P_{pk}$, GR&R/MSA, FPY/RTY, guard-banding, data-driven limit setting** — the
+  statistical backbone of "improve yield" (Guide A's Mass-Production chapter has the detail).
+  This is the difference between "I set the limit at 50 mV" and "the fleet is 20 ± 5 mV, $C_{pk}$
+  against 50 mV is 2.0, here's the histogram."
+- **A results database + dashboards at fleet scale; Pareto + RCA (5-whys/fishbone)** to pick and
+  close the top failure modes; **closed-loop CI** (baseline → change → correlate → deploy →
+  measure delta).
+- **MES / test-data-management integration** awareness (check-in/out, push verdicts +
+  parameters).
+
+## Working across all four phases & influencing the design *(hidden in "all phases", "validate new products")*
+
+- Understanding the **coverage envelope of PCBA methods** (AOI/AXI/ICT/JTAG/flying probe) even
+  though the CM runs them, so you can **allocate coverage** across phases (the 10× placement
+  skill).
+- **DFT (Design-for-Test) influence on the design** — pushing *upstream*, while EE is still
+  laying out the board, for test pads/ICT access, boundary-scan/JTAG coverage, a scratch/ID
+  register on custom FPGA cards, accessible rails, telemetry hooks.
+- **Bring-up of custom hardware with no vendor test plan** — working from the schematic
+  (root-port mapping, bifurcation, retimers, rails) to stand up coverage from scratch.
+
+## Reliability/stress integration *(implied by "all phases" + safety-critical compute)*
+
+- Knowing **where HALT/HASS/ESS/burn-in/thermal-cycling belong** (HALT = design tool;
+  HASS/ESS/burn-in = production screens) and that the test engineer's job is the **in-soak
+  functional monitor** — the at-temperature link/error/throttle checks during the screen.
+- The **"passes at 25 °C, fails at 85 °C"** intuition (SerDes margin loss + Arrhenius) and
+  therefore **testing hot.**
+
+## Safety-criticality mindset & traceability *(inherent to a robotaxi role; not in the JD)*
+
+- **"Ship only good units"** as non-negotiable: never recover yield by raising the escape rate
+  on safety-critical compute.
+- **ISO 26262 awareness:** ASIL levels, mandatory traceability, coverage/limits as safety-case
+  evidence, change control on test programs/limits.
+- **Full traceability/genealogy** expectation: **serial → genealogy → program version →
+  parameters → disposition** as an auditable chain.
+
+## Behavioral / seniority expectations *(hidden in "work independently, manage priorities")*
+
+- **Judgment and ownership over an ambiguous mandate** ("this board needs coverage") rather than
+  ticket-taking; the **coverage/runtime/yield triad** traded *consciously, with data.*
+- **Evidence-based communication** (decoded, layer-identified failures EE believes;
+  altitude-matched updates), **influence without authority**, **disagree-and-commit**, and
+  **writing it down** so knowledge scales across sites.
+- **Operator/CM-centric design:** operators and CM engineers are your *users*; an
+  operator-hostile test fails in practice no matter how technically correct.
+- **Not breaking the line:** read-only-first, sandbox-before-production, golden-unit gate,
+  single-variable debugging, rollback.
+
+> **How to use this list.** These are the unspoken bar. You don't recite them — you *demonstrate*
+> them: a failure report that's already decoded and layer-identified; a limit backed by a
+> distribution and a $C_{pk}$; a test that's robust enough to run unattended at a CM; a bring-up
+> done from a schematic with no vendor plan. Every one of them is "senior" rendered as a concrete
+> behavior.
 
 \newpage
 

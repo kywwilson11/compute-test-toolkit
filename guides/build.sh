@@ -18,7 +18,7 @@ COMMON=(
   --syntax-highlighting=tango
 )
 
-for f in 01-job-prep-deep-dive 02-success-guide; do
+for f in 01-job-prep-deep-dive 02-success-guide 03-pcie-diagnosis-playbook; do
   echo "Building pdf/$f.pdf ..."
   pandoc "$f.md" "${COMMON[@]}" -o "pdf/$f.pdf"
 done

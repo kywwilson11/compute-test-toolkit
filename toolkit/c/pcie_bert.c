@@ -195,11 +195,8 @@ int main(int argc, char **argv) {
         uint32_t st = 0;
         uint32_t set = clear_set_bits(fd, aer + AER_CORR_STATUS, &st);  /* read+clear */
         uint32_t newly = set & ~cor_stuck;     /* exclude already-known-stuck bits */
-        if (newly) {
-            cor_total++;                        /* one clear-recount EVENT */
-            for (int i = 0; i < N_COR_BITS; i++)
-                if (newly & (1u << COR_BITS[i].bit)) cor_events[i]++;
-        }
+        for (int i = 0; i < N_COR_BITS; i++)   /* each distinct bit = >=1 error of that type */
+            if (newly & (1u << COR_BITS[i].bit)) { cor_events[i]++; cor_total++; }
         cor_stuck |= st;
 
         uint32_t su = 0;

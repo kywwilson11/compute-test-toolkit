@@ -45,3 +45,19 @@ def test_deterministic_clock_injection():
     assert r.ok and r.seconds > 0
     # Reported bits equal the bits the verdict was decided on (P0-2 consistency).
     assert r.bits == r.verdict.bits
+
+
+def test_no_aer_device_is_skipped_not_passed():
+    # A device without an AER capability must not be a silent PASS on zero errors.
+    from computetest.backend import ECAP_AER
+    dev = MockDevice("0000:0a:00.0", 0x10DE, 0x2204, 0x030000, 4, 16, 4, 16)
+    dev._ext_caps.pop(ECAP_AER)
+    r = bert.run_bert(MockBackend([dev]), "0000:0a:00.0", target_ber=1e-9, max_seconds=1)
+    assert r.status == "skip" and r.aer_available is False and not r.ok
+
+
+def test_persistent_uncorrectable_counted_once():
+    be = _be()
+    be.inject_uncorrectable("0000:05:00.0", 14)  # re-latches every poll
+    r = bert.run_bert(be, "0000:05:00.0", target_ber=1e-9, max_seconds=1.5)
+    assert r.status == "fail" and r.uncorrectable == 1  # not inflated by re-latching

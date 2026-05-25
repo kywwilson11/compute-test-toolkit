@@ -13,13 +13,18 @@ It runs two ways from the same code:
   board with injectable errors, so you can develop, demo, and unit-test everything.
   Force the choice with `COMPUTETEST_BACKEND=mock|real`.
 
+> **New here? Read [`USAGE.md`](USAGE.md)** — the task-oriented how-to: install/verify in
+> 5 minutes, mock-vs-real, a full per-command reference (syntax, flags, real output, exit
+> codes, `--json` shapes), writing a test plan, running on a real Linux station, safety,
+> and troubleshooting.
+
 ## Quick start (no hardware needed)
 
 ```bash
 cd toolkit
 make demo        # run the PCIe BERT across a simulated board
 make plan        # run the full example test plan (PCIe + NVMe + GPU + GMSL + Eth + CAN)
-make test        # 36 unit tests, all on the mock backend
+make test        # 48 unit tests, all on the mock backend
 make c           # build the C BERT engine (Linux runtime; compiles on macOS too)
 ```
 
@@ -84,7 +89,7 @@ toolkit/
 │   └── cli.py                 # command-line front end
 ├── dashboard/app.py           # FastAPI results + heartbeat dashboard
 ├── configs/                   # example_plan.json / example_topology.yaml
-├── tests/                     # 36 pytest tests (all run on the mock backend)
+├── tests/                     # 48 pytest tests (all run on the mock backend)
 └── demo_bert.py               # standalone BERT demo
 ```
 

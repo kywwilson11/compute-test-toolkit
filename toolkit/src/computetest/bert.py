@@ -39,10 +39,13 @@ class BertResult:
     verdict: ber.BertVerdict
     stuck: bool = False
     uncorrectable_decode: list[str] = field(default_factory=list)
+    aer_available: bool = True
+    note: str = ""
 
     @property
     def status(self) -> str:
-        return self.verdict.status
+        # No AER capability => we couldn't measure errors; "skip" (never a false pass).
+        return self.verdict.status if self.aer_available else "skip"
 
     @property
     def ok(self) -> bool:
@@ -57,7 +60,8 @@ class BertResult:
             "confidence": round(self.verdict.confidence_reached, 4),
             "ber_upper_bound": self.verdict.ber_upper,
             "uncorrectable_decode": self.uncorrectable_decode,
-            "stuck_bits": self.stuck, "status": self.status,
+            "stuck_bits": self.stuck, "aer_available": self.aer_available,
+            "note": self.note, "status": self.status,
         }
 
     def summary(self) -> str:
@@ -80,12 +84,16 @@ def run_bert(backend: Backend, bdf: str, *, target_ber: float = 1e-12,
     PASS  = reached the confidence target with no uncorrectable errors.
     FAIL  = any uncorrectable error, OR ran out of time without reaching confidence.
 
-    ``correctable`` is counted as clear-recount EVENTS, not raw errors. An AER status
-    bit is a latch (">=1 error of this type since the last clear"), so each poll that
-    finds a correctable bit set is one event; we then clear and re-arm. This equals
-    the true error count at the low rates where a unit passes, and is a conservative
-    lower bound at high rates where it fails anyway. For exact counts at high rates,
-    use device hardware counters (switch per-lane, GPU replay).
+    Counting model: an AER status bit is a latch (">=1 error of THIS type since the
+    last clear"), not a counter. Each distinct correctable bit set in a poll counts as
+    one error of that type — counting set bits is a tighter lower bound than 1-per-poll
+    and is exact at the low rates where a unit passes. Same-type repeats within a clear
+    window are not separable from AER status alone; for exact high-rate counts use
+    device-native counters (switch per-lane, GPU replay). Uncorrectable errors are
+    counted once per distinct type (any uncorrectable => FAIL regardless of count).
+
+    Devices without an AER capability return status "skip" (we never claim PASS from
+    zero errors we couldn't actually measure).
 
     ``clock``/``sleep`` are injectable so tests can drive the loop deterministically.
     """
@@ -95,6 +103,18 @@ def run_bert(backend: Backend, bdf: str, *, target_ber: float = 1e-12,
 
     dev = backend.get_device(bdf)
     bps = link_bits_per_second(dev.current_link_speed, dev.current_link_width)
+    # Gen6+ uses PAM4 + FLIT + forward error correction: many symbol errors are
+    # FEC-corrected and never become Bad-TLP/replay events, so AER-based BER counting
+    # under-measures. Flag it (Gen1-5 NRZ links are measured faithfully).
+    gen_note = ("Gen6+ FLIT/FEC: AER LCRC-retry counting under-measures BER; "
+                "use FEC/symbol statistics") if dev.current_link_speed >= 6 else ""
+
+    if aer.aer_base(backend, bdf) is None:
+        v = ber.BertVerdict(0, 0.0, target_ber, confidence, 0.0,
+                            float("inf"), float("inf"), "skip")
+        return BertResult(bdf, 0.0, 0.0, 0, 0, {}, dev.current_link_speed,
+                          dev.current_link_width, v, aer_available=False,
+                          note="no AER capability; use device-native error counters")
 
     aer.clear(backend, bdf)  # arm both status latches before measuring
 
@@ -109,14 +129,15 @@ def run_bert(backend: Backend, bdf: str, *, target_ber: float = 1e-12,
         elapsed = clock() - t0
         snap = aer.snapshot(backend, bdf)
         if snap.correctable_raw:
-            cor_total += 1                         # one clear-recount EVENT
-            for _, name, _ in snap.correctable:
-                per[name] = per.get(name, 0) + 1   # which bit(s) this event involved
+            for _, name, _ in snap.correctable:    # each distinct bit = >=1 error of that type
+                per[name] = per.get(name, 0) + 1
+                cor_total += 1
             res = aer.clear(backend, bdf, uncorrectable=False)  # re-arm fast
             if res.get("correctable") and not res["correctable"].ok:
                 stuck = True
         if snap.uncorrectable_raw:
-            unc_total += 1
+            new_unc = snap.uncorrectable_raw & ~unc_bits_seen   # count each type once
+            unc_total += bin(new_unc).count("1")
             unc_bits_seen |= snap.uncorrectable_raw
             aer.clear(backend, bdf, correctable=False)
 
@@ -135,7 +156,7 @@ def run_bert(backend: Backend, bdf: str, *, target_ber: float = 1e-12,
     # Report the SAME bits the verdict was decided on (one elapsed value, no re-reads).
     return BertResult(bdf, elapsed, verdict.bits, cor_total, unc_total, per,
                       dev.current_link_speed, dev.current_link_width, verdict,
-                      stuck, unc_decode)
+                      stuck, unc_decode, note=gen_note)
 
 
 def _run_c_engine(backend: Backend, bdf: str, *, target_ber: float,
