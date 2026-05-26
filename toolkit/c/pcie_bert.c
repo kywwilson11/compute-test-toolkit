@@ -23,38 +23,32 @@
  *   5. Print JSON: {source, link_speed_code, link_width, link_unknown, bits,
  *      correctable, uncorrectable, uncorrectable_bits, per_correctable}.
  *
- * Linux only (reads /sys/bus/pci). Config-space writes (the W1C clear) need root.
+ * The hardware-agnostic logic (config-space access, capability walks, the W1C
+ * primitive, the accounting, the parsers) lives in pcie_bert_core.{c,h} behind a
+ * cfg_io seam so it can be unit-tested off-hardware; this file supplies main(), the
+ * sysfs file reads, and the real pread/pwrite backend.
  *
- * Build:  cc -O2 -Wall -Wextra -std=c11 -o pcie_bert pcie_bert.c
- * Usage:  ./pcie_bert -d 0000:03:00.0 -t 12 --json   (Python normally calls this)
+ * Linux only (reads /sys/bus/pci). Config-space writes (the W1C clear) need root.
+ * The sysfs root is overridable via -r <dir> or $COMPUTETEST_SYSROOT (for off-hardware
+ * testing against a fixture/FUSE/QEMU-guest tree); it defaults to /sys/bus/pci/devices.
+ *
+ * Build:  cc -O2 -Wall -Wextra -std=c11 -o pcie_bert pcie_bert.c pcie_bert_core.c
+ * Usage:  ./pcie_bert -d 0000:03:00.0 -t 12 [-r <sysfs-root>] --json
  */
 #define _POSIX_C_SOURCE 200809L
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <math.h>
 #include <time.h>
 #include <unistd.h>
 #include <fcntl.h>
 #include <errno.h>
 
+#include "pcie_bert_core.h"
+
 #define SYS_PCI "/sys/bus/pci/devices"
-
-/* AER extended-cap register offsets (relative to the AER base). */
-enum { AER_UNCORR_STATUS = 0x04, AER_CORR_STATUS = 0x10 };
-enum { ECAP_AER = 0x0001 };
-
-/* Legacy PCIe cap + Device Status (the no-AER fallback error source). */
-enum { CAP_PCIE = 0x10, PCIE_DEV_STATUS = 0x0A };
-enum { DEVSTA_CORR = 1u << 0, DEVSTA_NONFATAL = 1u << 1, DEVSTA_FATAL = 1u << 2 };
-
-/* Named correctable bits per source (see computetest/aer.py for the full AER map). */
-struct cor_bit { int bit; const char *name; };
-static const struct cor_bit AER_COR_BITS[] = {
-    {0, "RxErr"}, {6, "BadTLP"}, {7, "BadDLLP"}, {8, "RollOver"},
-    {12, "ReplayTO"}, {13, "AdvNonFatal"}, {14, "CorrIntErr"}, {15, "HdrLogOvf"},
-};
-static const struct cor_bit DEVSTA_COR_BITS[] = { {0, "CorrErrDetected"} };
 
 static double now_sec(void) {
     struct timespec ts;
@@ -62,81 +56,30 @@ static double now_sec(void) {
     return ts.tv_sec + ts.tv_nsec * 1e-9;
 }
 
-/* Read `n` bytes of config space at `off` into a uint32 (little-endian). */
-static int cfg_read(int fd, off_t off, int n, uint32_t *out) {
-    uint8_t buf[4] = {0};
-    ssize_t r = pread(fd, buf, n, off);
-    if (r != n) return -1;
-    uint32_t v = 0;
-    for (int i = 0; i < n; i++) v |= (uint32_t)buf[i] << (8 * i);
-    *out = v;
-    return 0;
+/* Production config-space backend: pread/pwrite on the open .../config fd. The
+ * signatures mirror pread/pwrite so these are thin forwards; the cfg_io seam lets
+ * unit tests swap in an in-memory register model (see c/test/fake_cfgspace.c). */
+static ssize_t fd_read(void *ctx, void *buf, size_t n, off_t off) {
+    return pread(*(int *)ctx, buf, n, off);
+}
+static ssize_t fd_write(void *ctx, const void *buf, size_t n, off_t off) {
+    return pwrite(*(int *)ctx, buf, n, off);
 }
 
-/* Write `n` bytes (little-endian) of config space at `off`. Needs root. */
-static int cfg_write(int fd, off_t off, int n, uint32_t v) {
-    uint8_t buf[4];
-    for (int i = 0; i < n; i++) buf[i] = (v >> (8 * i)) & 0xff;
-    ssize_t w = pwrite(fd, buf, n, off);
-    return (w == n) ? 0 : -1;
-}
-
-/* Walk the extended-capability linked list to find a capability by ID. */
-static off_t find_ext_cap(int fd, uint16_t cap_id) {
-    off_t off = 0x100;
-    for (int guard = 0; guard < 64 && off; guard++) {
-        uint32_t hdr;
-        if (cfg_read(fd, off, 4, &hdr) != 0) return 0;
-        if (hdr == 0 || hdr == 0xffffffffu) return 0;
-        if ((hdr & 0xffff) == cap_id) return off;
-        off = (hdr >> 20) & 0xfff;  /* next-capability offset */
-    }
-    return 0;
-}
-
-/* Read a status register and write-1-to-clear the bits in `mask` that are set.
- * Returns the set (masked) bits. Stuck-bit interpretation is the Python conductor's
- * job (via an idle baseline) — this counter just reads, counts, and clears, fast. */
-static uint32_t read_and_clear(int fd, off_t reg, uint32_t mask) {
-    uint32_t s = 0;
-    if (cfg_read(fd, reg, 4, &s) != 0) return 0;
-    s &= mask;
-    if (s) cfg_write(fd, reg, 4, s);       /* W1C only the bits we handle */
-    return s;
-}
-
-/* Walk the legacy capability list (from the 0x34 pointer) for a capability ID. */
-static off_t find_cap(int fd, uint8_t cap_id) {
-    uint32_t p = 0;
-    if (cfg_read(fd, 0x34, 1, &p) != 0) return 0;
-    off_t ptr = p & 0xFC;
-    for (int guard = 0; guard < 48 && ptr; guard++) {
-        uint32_t id = 0, nxt = 0;
-        if (cfg_read(fd, ptr, 1, &id) != 0) return 0;
-        if ((id & 0xff) == cap_id) return ptr;
-        if (cfg_read(fd, ptr + 1, 1, &nxt) != 0) return 0;
-        ptr = nxt & 0xFC;
-    }
-    return 0;
-}
-
-/* Read e.g. "16.0 GT/s" -> speed code; returns 0 if unknown. */
-static int read_link_speed_code(const char *bdf) {
-    char path[256], buf[64] = {0};
-    snprintf(path, sizeof path, SYS_PCI "/%s/current_link_speed", bdf);
+/* Read e.g. "16.0 GT/s" from sysfs -> speed code; 0 if unreadable/unknown. */
+static int read_link_speed_code(const char *sys_root, const char *bdf) {
+    char path[512], buf[64] = {0};
+    snprintf(path, sizeof path, "%s/%s/current_link_speed", sys_root, bdf);
     FILE *f = fopen(path, "r");
     if (!f) return 0;
-    if (!fgets(buf, sizeof buf, f)) { fclose(f); return 0; }
+    int ok = (fgets(buf, sizeof buf, f) != NULL);
     fclose(f);
-    double g = atof(buf);
-    if (g >= 63) return 6; if (g >= 31) return 5; if (g >= 15) return 4;
-    if (g >= 7.5) return 3; if (g >= 4.5) return 2; if (g >= 2) return 1;
-    return 0;
+    return ok ? speed_code_from_str(buf) : 0;
 }
 
-static int read_link_width(const char *bdf) {
-    char path[256], buf[64] = {0};
-    snprintf(path, sizeof path, SYS_PCI "/%s/current_link_width", bdf);
+static int read_link_width(const char *sys_root, const char *bdf) {
+    char path[512], buf[64] = {0};
+    snprintf(path, sizeof path, "%s/%s/current_link_width", sys_root, bdf);
     FILE *f = fopen(path, "r");
     if (!f) return 0;
     int w = (fgets(buf, sizeof buf, f)) ? atoi(buf) : 0;
@@ -144,25 +87,12 @@ static int read_link_width(const char *bdf) {
     return w;
 }
 
-static double link_bits_per_sec(int code, int width) {
-    static const double gtps[] = {0, 2.5e9, 5e9, 8e9, 16e9, 32e9, 64e9};
-    double eff = (code <= 2) ? 0.8 : (code <= 5 ? 128.0 / 130.0 : 242.0 / 256.0);
-    if (code < 1 || code > 6) return 0;
-    return gtps[code] * (double)width * eff;
-}
-
-/* Strict BDF grammar DDDD:BB:DD.F (hex; function 0-7). Rejects junk and path
- * traversal before the value reaches snprintf()/JSON. */
-static int valid_bdf(const char *s) {
-    int n = 0;
-    sscanf(s, "%*4[0-9a-fA-F]:%*2[0-9a-fA-F]:%*2[0-9a-fA-F].%*1[0-7]%n", &n);
-    return n == 12 && s[n] == '\0';
-}
-
 int main(int argc, char **argv) {
     const char *bdf = NULL;
     double duration = 12.0;
     int json = 0;
+    const char *sys_root = getenv("COMPUTETEST_SYSROOT");
+    if (!sys_root) sys_root = SYS_PCI;
 
     for (int i = 1; i < argc; i++) {
         if (!strcmp(argv[i], "-d") && i + 1 < argc) {
@@ -170,14 +100,16 @@ int main(int argc, char **argv) {
         } else if (!strcmp(argv[i], "-t") && i + 1 < argc) {
             char *end = NULL;
             duration = strtod(argv[++i], &end);
-            if (end == argv[i] || *end != '\0' || duration <= 0) {
-                fprintf(stderr, "error: -t needs a positive number of seconds\n");
+            if (end == argv[i] || *end != '\0' || duration <= 0 || !isfinite(duration)) {
+                fprintf(stderr, "error: -t needs a positive, finite number of seconds\n");
                 return 2;
             }
+        } else if (!strcmp(argv[i], "-r") && i + 1 < argc) {
+            sys_root = argv[++i];          /* sysfs root (default $COMPUTETEST_SYSROOT or /sys) */
         } else if (!strcmp(argv[i], "--json")) {
             json = 1;
         } else {
-            fprintf(stderr, "usage: %s -d <bdf> -t <sec> [--json]\n", argv[0]);
+            fprintf(stderr, "usage: %s -d <bdf> -t <sec> [-r <sysfs-root>] [--json]\n", argv[0]);
             return 2;
         }
     }
@@ -187,21 +119,23 @@ int main(int argc, char **argv) {
         return 2;
     }
 
-    char cfgpath[256];
-    snprintf(cfgpath, sizeof cfgpath, SYS_PCI "/%s/config", bdf);
+    char cfgpath[512];
+    snprintf(cfgpath, sizeof cfgpath, "%s/%s/config", sys_root, bdf);
     int fd = open(cfgpath, O_RDWR);
     if (fd < 0) {
         fprintf(stderr, "error: open %s: %s (need root for config writes)\n",
                 cfgpath, strerror(errno));
         return 1;
     }
+    cfg_io io = { fd_read, fd_write, &fd };
 
     /* Pick the error source: AER (per-type, preferred) else Device Status (coarse). */
-    off_t aer = find_ext_cap(fd, ECAP_AER);
-    off_t pcie_cap = find_cap(fd, CAP_PCIE);
+    off_t aer = find_ext_cap(&io, ECAP_AER);
+    off_t pcie_cap = find_cap(&io, CAP_PCIE);
     const char *source;
     off_t cor_off, unc_off;
     uint32_t cor_mask, unc_mask;
+    int reg_width;                                    /* status-register width in bytes */
     const struct cor_bit *cor_tbl;
     int n_cor;
     if (aer) {
@@ -210,27 +144,29 @@ int main(int argc, char **argv) {
         unc_off = aer + AER_UNCORR_STATUS;
         cor_mask = 0xFFFFFFFFu;
         unc_mask = 0xFFFFFFFFu;
+        reg_width = 4;                                /* 32-bit AER status registers */
         cor_tbl = AER_COR_BITS;
-        n_cor = (int)(sizeof AER_COR_BITS / sizeof AER_COR_BITS[0]);
+        n_cor = N_AER_COR_BITS;
     } else if (pcie_cap) {
         source = "devstatus";
         cor_off = unc_off = pcie_cap + PCIE_DEV_STATUS;
         cor_mask = DEVSTA_CORR;                       /* bit 0 */
         unc_mask = DEVSTA_NONFATAL | DEVSTA_FATAL;    /* bits 1, 2 */
+        reg_width = 2;                                /* 16-bit Device Status register */
         cor_tbl = DEVSTA_COR_BITS;
-        n_cor = (int)(sizeof DEVSTA_COR_BITS / sizeof DEVSTA_COR_BITS[0]);
+        n_cor = N_DEVSTA_COR_BITS;
     } else {
         fprintf(stderr, "error: no AER or PCIe capability on %s\n", bdf);
         close(fd);
         return 1;
     }
 
-    int code = read_link_speed_code(bdf), width = read_link_width(bdf);
+    int code = read_link_speed_code(sys_root, bdf), width = read_link_width(sys_root, bdf);
     double bps = link_bits_per_sec(code, width);
 
     /* Arm: clear the handled status bits before counting. */
-    read_and_clear(fd, cor_off, cor_mask);
-    read_and_clear(fd, unc_off, unc_mask);
+    read_and_clear(&io, cor_off, cor_mask, reg_width);
+    read_and_clear(&io, unc_off, unc_mask, reg_width);
 
     long cor_events[16] = {0};
     long cor_total = 0, unc_total = 0;
@@ -249,21 +185,18 @@ int main(int argc, char **argv) {
     long iters = 0;
     double t0 = now_sec();
     while (now_sec() - t0 < duration) {
-        uint32_t cs = read_and_clear(fd, cor_off, cor_mask);   /* hot path: 1 read when clean */
-        for (int i = 0; i < n_cor; i++)
-            if (cs & (1u << cor_tbl[i].bit)) { cor_events[i]++; cor_total++; }
+        uint32_t cs = read_and_clear(&io, cor_off, cor_mask, reg_width); /* hot path: 1 read when clean */
+        account_correctable(cs, cor_tbl, n_cor, cor_events, &cor_total);
         if (++iters % UNC_EVERY == 0) {
-            uint32_t us = read_and_clear(fd, unc_off, unc_mask);
-            unc_total += __builtin_popcount(us & ~unc_seen);   /* count each type once */
-            unc_seen |= us;
+            uint32_t us = read_and_clear(&io, unc_off, unc_mask, reg_width);
+            account_uncorrectable(us, &unc_seen, &unc_total);
         }
     }
     /* Final uncorrectable sample — the latch persists, so this catches anything since
      * the last periodic check (and handles very short runs that never hit UNC_EVERY). */
     {
-        uint32_t us = read_and_clear(fd, unc_off, unc_mask);
-        unc_total += __builtin_popcount(us & ~unc_seen);
-        unc_seen |= us;
+        uint32_t us = read_and_clear(&io, unc_off, unc_mask, reg_width);
+        account_uncorrectable(us, &unc_seen, &unc_total);
     }
     double elapsed = now_sec() - t0;
     double bits = bps * elapsed;

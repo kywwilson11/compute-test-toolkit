@@ -188,9 +188,14 @@ def read_errors(backend: Backend, bdf: str, source: str | None = None) -> ErrorR
     src = source or error_source(backend, bdf)
     if src == "aer":
         base = aer_base(backend, bdf)
-        cor = backend.read_config(bdf, base + AER_CORR_STATUS, 4)
-        unc = backend.read_config(bdf, base + AER_UNCORR_STATUS, 4)
-        return ErrorReading(cor, unc, "aer")
+        if base is not None:
+            cor = backend.read_config(bdf, base + AER_CORR_STATUS, 4)
+            unc = backend.read_config(bdf, base + AER_UNCORR_STATUS, 4)
+            return ErrorReading(cor, unc, "aer")
+        # A caller forced source="aer" but this device has no AER capability; fall back to
+        # the universal source instead of crashing on (None + offset). (clear() guards the
+        # same way.)
+        src = "devstatus" if backend.read_device_status(bdf) is not None else "none"
     if src == "devstatus":
         ds = backend.read_device_status(bdf) or 0
         cor = DEVSTA_CORR if (ds & DEVSTA_CORR) else 0

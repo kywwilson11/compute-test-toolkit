@@ -1,0 +1,12 @@
+NIC statistics:
+     rx_packets: 1000000
+     tx_packets: 990000
+     rx_bytes: 700000000
+     tx_bytes: 690000000
+     rx_errors: 40
+     tx_errors: 5
+     rx_errors_phy: 999
+     rx_crc_errors: 38
+     rx_align_errors: 2
+     tx_aborted_errors: 2
+     tx_carrier_errors: 3

@@ -30,7 +30,6 @@ import math
 import os
 import random
 import re
-import struct
 import time
 from dataclasses import dataclass, field
 
@@ -136,6 +135,18 @@ class PciDevice:
         return {0x10DE: "NVIDIA", 0x144D: "Samsung", 0x8086: "Intel",
                 0x1B36: "Zoox-custom(example)"}.get(self.vendor_id, f"{self.vendor_id:#06x}")
 
+    def to_dict(self) -> dict:
+        """Serializable view that matches the human listing: includes the derived
+        ``vendor_name``/``speed_str`` (plain ``vars()`` would drop these properties)."""
+        return {
+            "bdf": self.bdf, "vendor_id": self.vendor_id, "device_id": self.device_id,
+            "vendor_name": self.vendor_name, "class_code": self.class_code,
+            "current_link_speed": self.current_link_speed,
+            "current_link_width": self.current_link_width, "speed_str": self.speed_str,
+            "max_link_speed": self.max_link_speed, "max_link_width": self.max_link_width,
+            "driver": self.driver,
+        }
+
 
 class Backend(abc.ABC):
     """Abstract hardware access. Higher layers depend only on this."""
@@ -202,16 +213,23 @@ class Backend(abc.ABC):
 # Real Linux backend
 # ----------------------------------------------------------------------------- #
 class RealBackend(Backend):
-    """Reads real hardware via /sys/bus/pci. Requires root for config-space writes."""
+    """Reads real hardware via /sys/bus/pci. Requires root for config-space writes.
+
+    The sysfs root is injectable so this real path can run off-hardware against a fixture
+    tree (see tests/sysfs_fixture.py): pass ``sys_root=`` or set ``$COMPUTETEST_SYSROOT``;
+    it defaults to the real ``/sys/bus/pci/devices``."""
 
     SYS = "/sys/bus/pci/devices"
 
+    def __init__(self, sys_root: str | None = None):
+        self._sys_root = sys_root or os.environ.get("COMPUTETEST_SYSROOT") or RealBackend.SYS
+
     def list_devices(self) -> list[str]:
-        return sorted(os.path.basename(p) for p in glob.glob(f"{self.SYS}/*"))
+        return sorted(os.path.basename(p) for p in glob.glob(f"{self._sys_root}/*"))
 
     def _attr(self, bdf: str, name: str) -> str | None:
         try:
-            with open(f"{self.SYS}/{bdf}/{name}") as fh:
+            with open(f"{self._sys_root}/{bdf}/{name}") as fh:
                 return fh.read().strip()
         except OSError:
             return None
@@ -234,7 +252,7 @@ class RealBackend(Backend):
             return 0
 
         driver = None
-        link = os.path.join(self.SYS, bdf, "driver")
+        link = os.path.join(self._sys_root, bdf, "driver")
         if os.path.islink(link):
             driver = os.path.basename(os.readlink(link))
 
@@ -251,7 +269,7 @@ class RealBackend(Backend):
         )
 
     def read_config(self, bdf: str, offset: int, size: int = 4) -> int:
-        with open(f"{self.SYS}/{bdf}/config", "rb") as fh:
+        with open(f"{self._sys_root}/{bdf}/config", "rb") as fh:
             fh.seek(offset)
             data = fh.read(size)
         return int.from_bytes(data, "little")
@@ -259,7 +277,7 @@ class RealBackend(Backend):
     def write_config(self, bdf: str, offset: int, value: int, size: int = 4) -> None:
         data = value.to_bytes(size, "little")
         # Opening config O_WRONLY/RDWR requires CAP_SYS_ADMIN (root) on Linux.
-        fd = os.open(f"{self.SYS}/{bdf}/config", os.O_RDWR)
+        fd = os.open(f"{self._sys_root}/{bdf}/config", os.O_RDWR)
         try:
             os.lseek(fd, offset, os.SEEK_SET)
             os.write(fd, data)
@@ -320,7 +338,7 @@ class RealBackend(Backend):
     def link_chain(self, bdf: str) -> list[str]:
         # The sysfs realpath nests each upstream bridge: the BDF-shaped path
         # components ARE the chain, ordered root-port -> ... -> endpoint.
-        real = os.path.realpath(f"{self.SYS}/{bdf}")
+        real = os.path.realpath(f"{self._sys_root}/{bdf}")
         chain = [p for p in real.split(os.sep) if _BDF_RE.match(p)]
         return chain or [bdf]
 
@@ -557,14 +575,21 @@ def _poisson(rng: random.Random, lam: float) -> int:
 
 
 # ----------------------------------------------------------------------------- #
+def _effective_sys_root() -> str:
+    """The sysfs root RealBackend will use: $COMPUTETEST_SYSROOT or the real default.
+    Auto-selection keys on this, so pointing the env at a fixture tree picks Real."""
+    return os.environ.get("COMPUTETEST_SYSROOT") or RealBackend.SYS
+
+
 def select_backend() -> Backend:
-    """Pick Real on a capable Linux box, Mock otherwise. Override via env var."""
+    """Pick Real on a capable Linux box (or against a fixture root), Mock otherwise.
+    Override via COMPUTETEST_BACKEND; redirect the sysfs root via COMPUTETEST_SYSROOT."""
     forced = os.environ.get("COMPUTETEST_BACKEND", "").lower()
     if forced == "mock":
         return MockBackend()
     if forced == "real":
         return RealBackend()
-    if os.path.isdir(RealBackend.SYS):
+    if os.path.isdir(_effective_sys_root()):
         return RealBackend()
     return MockBackend()
 
@@ -578,4 +603,4 @@ def mock_mode() -> bool:
         return True
     if forced == "real":
         return False
-    return not os.path.isdir(RealBackend.SYS)
+    return not os.path.isdir(_effective_sys_root())

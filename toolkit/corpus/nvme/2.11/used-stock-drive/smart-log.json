@@ -1,0 +1,22 @@
+{
+  "critical_warning": 0,
+  "temperature": 320,
+  "avail_spare": 100,
+  "spare_thresh": 10,
+  "percent_used": 1,
+  "endurance_grp_critical_warning_summary": 0,
+  "data_units_read": 8000000,
+  "data_units_written": 200000,
+  "host_read_commands": 90000000,
+  "host_write_commands": 40000000,
+  "controller_busy_time": 540,
+  "power_cycles": 800,
+  "power_on_hours": 6200,
+  "unsafe_shutdowns": 40,
+  "media_errors": 7,
+  "num_err_log_entries": 7,
+  "warning_temp_time": 0,
+  "critical_comp_time": 0,
+  "thm_temp1_trans_count": 3,
+  "thm_temp2_trans_count": 0
+}

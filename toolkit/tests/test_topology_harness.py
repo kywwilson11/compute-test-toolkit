@@ -8,7 +8,8 @@ from computetest.results import ResultStore
 
 PLAN = {
     "target_ber": 1e-9, "confidence": 0.95, "bert_max_s": 1.5, "watch_retrains_s": 0.05,
-    "devices": [
+    # Layer 1: PCIe LINK expectations.
+    "pcie_devices": [
         {"name": "GPU", "match": {"vendor_id": 0x10DE, "class_code": 0x030000},
          "count": 2, "expected_speed": 4, "expected_width": 16},
         {"name": "NVMe", "match": {"class_code": 0x010802},
@@ -16,8 +17,11 @@ PLAN = {
         {"name": "CustomCard", "match": {"vendor_id": 0x1B36},
          "count": 1, "expected_speed": 4, "expected_width": 8},
     ],
-    "nvme": ["/dev/nvme0"], "gpus": [0], "gmsl": ["1-0029"],
-    "ethernet": ["eth0"], "can": ["can0"],
+    # Layer 2: functional / DEVICE health checks (keyed by OS handle).
+    "functional_checks": {
+        "nvme": ["/dev/nvme0"], "gpus": [0], "gmsl": ["1-0029"],
+        "ethernet": ["eth0"], "can": ["can0"],
+    },
 }
 
 
@@ -39,8 +43,8 @@ def test_enumeration_matches_sample_board():
 def test_enumeration_reports_missing():
     be = MockBackend()
     plan = dict(PLAN)
-    plan["devices"] = [{"name": "GPU", "match": {"vendor_id": 0x10DE, "class_code": 0x030000},
-                        "count": 9}]   # demand 9 GPUs; board has 2
+    plan["pcie_devices"] = [{"name": "GPU", "match": {"vendor_id": 0x10DE, "class_code": 0x030000},
+                             "count": 9}]   # demand 9 GPUs; board has 2
     report = topology.enumerate_against(be, topology.load_config(plan))
     assert not report.ok and report.missing
 

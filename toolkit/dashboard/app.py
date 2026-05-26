@@ -14,6 +14,7 @@ clear message rather than breaking the rest of the toolkit.
 """
 from __future__ import annotations
 
+import logging
 import os
 import sys
 
@@ -27,7 +28,25 @@ except ImportError as e:  # pragma: no cover
 
 from computetest.results import ResultStore  # noqa: E402
 
+log = logging.getLogger("computetest.dashboard")
+
 DB = os.environ.get("COMPUTETEST_DB", ":memory:")
+
+
+def _warn_if_in_memory(db: str) -> bool:
+    """Each request opens a fresh connection, so an in-memory DB is per-request and
+    empty — the dashboard would show nothing. Warn loudly (don't crash: the module
+    must stay importable for tests and `--help`). Returns True if the DB is :memory:."""
+    if db == ":memory:":
+        log.warning(
+            "COMPUTETEST_DB is ':memory:' — each request gets a fresh EMPTY in-memory "
+            "database, so the dashboard will show no data. Point it at a shared file, "
+            "e.g.  COMPUTETEST_DB=results.db uvicorn dashboard.app:app")
+        return True
+    return False
+
+
+_DB_IN_MEMORY = _warn_if_in_memory(DB)
 app = FastAPI(title="Compute Test Dashboard")
 
 
@@ -39,8 +58,12 @@ def _store() -> ResultStore:
 def summary():
     s = _store()
     try:
-        return {"summary": s.summary(), "stations": s.stations(),
-                "yield_by_test": s.yield_by_test()}
+        out = {"summary": s.summary(), "stations": s.stations(),
+               "yield_by_test": s.yield_by_test()}
+        if _DB_IN_MEMORY:
+            out["db_warning"] = ("COMPUTETEST_DB=':memory:' — data is per-request and "
+                                 "empty; set COMPUTETEST_DB to a file path.")
+        return out
     finally:
         s.close()
 

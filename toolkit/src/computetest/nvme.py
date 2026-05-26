@@ -93,6 +93,24 @@ def _mock_smart(device: str) -> dict:
     }
 
 
+# nvme-cli emits some SMART fields under abbreviated JSON keys; map them to the
+# canonical names used by the checks/summary (and by the mock) so the real-hardware
+# path reads the right values. Without this, e.g. available_spare would always read
+# its 0 default and the available_spare>=100 check would false-FAIL every good drive.
+_SMART_KEY_ALIASES = {
+    "avail_spare": "available_spare",
+    "spare_thresh": "available_spare_threshold",
+    "percent_used": "percentage_used",
+}
+
+
+def _normalize_smart_keys(smart: dict) -> dict:
+    for src, dst in _SMART_KEY_ALIASES.items():
+        if src in smart and dst not in smart:
+            smart[dst] = smart[src]
+    return smart
+
+
 def check_nvme(device: str = "/dev/nvme0", *, mock: bool | None = None, max_temp_c: int = 70,
                max_power_on_hours: int = 50, run_self_test: bool = False) -> NvmeHealth:
     """Read SMART/identify, apply new-drive limits, and (optionally) run a DST."""
@@ -105,6 +123,7 @@ def check_nvme(device: str = "/dev/nvme0", *, mock: bool | None = None, max_temp
             raise RuntimeError("nvme-cli not found (apt install nvme-cli)")
         smart = json.loads(subprocess.run(["nvme", "smart-log", device, "-o", "json"],
                                           capture_output=True, text=True, check=True).stdout)
+        smart = _normalize_smart_keys(smart)
         if smart.get("temperature", 0) > 200:           # nvme-cli reports Kelvin
             smart["temperature"] -= 273
         ctrl = json.loads(subprocess.run(["nvme", "id-ctrl", device, "-o", "json"],
@@ -127,8 +146,8 @@ def start_self_test(device: str, extended: bool = False, *, mock: bool | None = 
     if (mock_mode() if mock is None else mock):
         return True
     code = "2" if extended else "1"  # pragma: no cover - real-hw path
-    subprocess.run(["nvme", "device-self-test", device, "-s", code], check=True)
-    return True
+    subprocess.run(["nvme", "device-self-test", device, "-s", code], check=True)  # pragma: no cover
+    return True  # pragma: no cover - real-hw path
 
 
 def self_test_log(device: str, *, mock: bool | None = None) -> dict:
@@ -138,7 +157,11 @@ def self_test_log(device: str, *, mock: bool | None = None) -> dict:
         bad = "BAD" in device
         return {"percent": 100, "in_progress": False, "result": 9 if bad else 0,
                 "passed": not bad}
-    raw = json.loads(subprocess.run(["nvme", "self-test-log", device, "-o", "json"],  # pragma: no cover
+    return _real_self_test_log(device)  # pragma: no cover - real-hw path
+
+
+def _real_self_test_log(device: str) -> dict:  # pragma: no cover - real-hw path
+    raw = json.loads(subprocess.run(["nvme", "self-test-log", device, "-o", "json"],
                                     capture_output=True, text=True, check=True).stdout)
     cur = raw.get("current_operation", 0)
     entry = (raw.get("Self-test Log") or raw.get("logs") or [{}])[0]
@@ -153,7 +176,12 @@ def poll_self_test(device: str, *, mock: bool | None = None, timeout: float = 12
     """Poll the self-test log until the DST completes (or times out)."""
     if (mock_mode() if mock is None else mock):
         return self_test_log(device, mock=True)            # mock completes immediately
-    deadline = time.monotonic() + timeout                  # pragma: no cover - real-hw path
+    return _real_poll_self_test(device, timeout, interval)  # pragma: no cover - real-hw path
+
+
+def _real_poll_self_test(device: str, timeout: float,
+                         interval: float) -> dict:  # pragma: no cover - real-hw path
+    deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         log = self_test_log(device, mock=False)
         if not log["in_progress"]:

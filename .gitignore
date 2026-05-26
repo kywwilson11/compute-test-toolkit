@@ -1,10 +1,13 @@
 __pycache__/
 *.pyc
 .pytest_cache/
+.hypothesis/
 toolkit/c/pcie_bert
+toolkit/c/test/runner
 *.db
 .coverage
 htmlcov/
-.mutmut-cache/
+.mutmut-cache
 mutants/
 *.egg-info/
+.DS_Store

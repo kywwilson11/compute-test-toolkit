@@ -59,9 +59,13 @@ def check_gmsl(link: str = "1-0029", video_device: str = "/dev/video0", *,
         captured, errors = (0 if bad else frames), (12 if bad else 0)
         return GmslHealth(link, locked, video_device, w, h, captured, errors,
                           _limits(locked, w, h, captured, errors, expect_w, expect_h))
+    return _real_check_gmsl(link, video_device, expect_w, expect_h, frames)  # pragma: no cover
 
+
+def _real_check_gmsl(link, video_device, expect_w, expect_h,
+                     frames) -> GmslHealth:  # pragma: no cover - real-hw path
     # Real path (driver/board specific paths shown; adjust to your platform). ---
-    locked = False  # pragma: no cover - real-hw path
+    locked = False
     lock_path = f"/sys/bus/i2c/devices/{link}/link_status"
     if os.path.exists(lock_path):
         with open(lock_path) as fh:

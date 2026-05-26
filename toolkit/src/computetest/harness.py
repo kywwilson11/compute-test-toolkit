@@ -4,18 +4,26 @@ results (with measured values), and return a pass/fail report. This is the data-
 driven runner described in Guide A — a new board revision is a new config, not new
 code. The pytest suite (tests/) drives this same machinery, parametrized per device.
 
+A plan has TWO test LAYERS (this is not duplication — see USAGE.md "## Config
+reference"). Layer 1 (`pcie_devices`, `chains`) tests the LINK to each device;
+Layer 2 (`functional_checks`) tests the DEVICE itself by OS handle. A GPU
+legitimately appears in both: its link in Layer 1, its ECC/thermal in Layer 2.
+
 Plan format (dict, or JSON/YAML file):
 
     target_ber: 1.0e-12
     confidence: 0.95
     bert_max_s: 30
-    devices:                 # PCIe expectations (see topology.py)
+    pcie_devices:            # Layer 1: PCIe LINK expectations (see topology.py)
       - {name: GPU0, match: {class_code: 0x030000}, expected_speed: 4, expected_width: 16}
-    nvme:     ["/dev/nvme0", "/dev/nvme1"]
-    gpus:     [0, 1]
-    gmsl:     ["1-0029"]
-    ethernet: ["eth0"]
-    can:      ["can0"]
+    chains:                  # Layer 1: whole-path (root..endpoint) link diagnostics
+      - {endpoint: "0000:04:00.0", expected_speed: 4, expected_width: 16}
+    functional_checks:       # Layer 2: DEVICE health, keyed by OS handle
+      nvme:     ["/dev/nvme0", "/dev/nvme1"]
+      gpus:     [0, 1]
+      gmsl:     ["1-0029"]
+      ethernet: ["eth0"]
+      can:      ["can0"]
 """
 from __future__ import annotations
 
@@ -82,24 +90,26 @@ def run_test_plan(backend: Backend, plan: dict, *, store: ResultStore | None = N
             add(TestRecord("pcie", bdf, f"{exp.name}:diagnose", d.status,
                            d.to_dict(), "; ".join(d.reasons())))
 
-    # 3. Interface checks.
-    for dev in plan.get("nvme", []):
+    # 3. Layer 2: functional / DEVICE health checks (keyed by OS handle). These test
+    #    each device itself (a GPU's link is Layer 1 above; its ECC/thermal is here).
+    fc = plan.get("functional_checks", {})
+    for dev in fc.get("nvme", []):
         h = nvme.check_nvme(dev)
         add(TestRecord("nvme", dev, "smart", "pass" if h.ok else "fail",
                        h.to_dict(), h.summary()))
-    for idx in plan.get("gpus", []):
+    for idx in fc.get("gpus", []):
         h = gpu.check_gpu(idx)
         add(TestRecord("gpu", str(idx), "health", "pass" if h.ok else "fail",
                        h.to_dict(), h.summary()))
-    for link in plan.get("gmsl", []):
+    for link in fc.get("gmsl", []):
         h = gmsl.check_gmsl(link)
         add(TestRecord("gmsl", link, "link+video", "pass" if h.ok else "fail",
                        h.to_dict(), h.summary()))
-    for iface in plan.get("ethernet", []):
+    for iface in fc.get("ethernet", []):
         h = ethernet.check_ethernet(iface)
         add(TestRecord("ethernet", iface, "link", "pass" if h.ok else "fail",
                        h.to_dict(), h.summary()))
-    for iface in plan.get("can", []):
+    for iface in fc.get("can", []):
         h = ethernet.check_can(iface)
         add(TestRecord("can", iface, "state", "pass" if h.ok else "fail",
                        h.to_dict(), h.summary()))

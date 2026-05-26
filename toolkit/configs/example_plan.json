@@ -1,9 +1,10 @@
 {
+  "_comment": "Stdlib/no-dependency mirror of configs/example_topology.yaml. TWO TEST LAYERS, not duplication: 'pcie_devices' (Layer 1) tests the LINK to each device (enumeration, link-health, AER, BERT, lane margining); 'functional_checks' (Layer 2) tests the DEVICE itself by OS handle (NVMe SMART, GPU ECC/thermal, GMSL, Ethernet, CAN). A GPU appears in BOTH on purpose: Layer 1 verifies its link, Layer 2 verifies its ECC/thermal. See the YAML for the fully annotated version (comments + hex vendor/class/BDF literals).",
   "target_ber": 1e-9,
   "confidence": 0.95,
   "bert_max_s": 2.0,
   "watch_retrains_s": 0.3,
-  "devices": [
+  "pcie_devices": [
     {"name": "GPU", "match": {"vendor_id": 4318, "class_code": 196608},
      "count": 2, "expected_speed": 4, "expected_width": 16, "min_margin_ui": 0.25},
     {"name": "NVMe", "match": {"class_code": 67586},
@@ -11,9 +12,11 @@
     {"name": "CustomCard", "match": {"vendor_id": 6966},
      "count": 1, "expected_speed": 4, "expected_width": 8}
   ],
-  "nvme": ["/dev/nvme0", "/dev/nvme1"],
-  "gpus": [0, 1],
-  "gmsl": ["1-0029"],
-  "ethernet": ["eth0"],
-  "can": ["can0"]
+  "functional_checks": {
+    "nvme": ["/dev/nvme0", "/dev/nvme1"],
+    "gpus": [0, 1],
+    "gmsl": ["1-0029"],
+    "ethernet": ["eth0"],
+    "can": ["can0"]
+  }
 }

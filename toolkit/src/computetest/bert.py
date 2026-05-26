@@ -218,7 +218,7 @@ def default_c_runner(bdf: str, seconds: float, binary: str = "c/pcie_bert") -> d
                               capture_output=True, text=True, timeout=seconds + 30)
     except FileNotFoundError as e:
         raise RuntimeError(f"C engine not found: {binary} (build it with: make -C c)") from e
-    except subprocess.TimeoutExpired as e:
+    except subprocess.TimeoutExpired as e:  # pragma: no cover - real-hw path (slow C process)
         raise RuntimeError(f"C engine timed out after {seconds + 30}s") from e
     if proc.returncode not in (0, 3):   # 0 = clean, 3 = uncorrectable seen (valid data)
         raise RuntimeError(f"C engine failed (rc={proc.returncode}): {proc.stderr.strip()}")
@@ -331,5 +331,7 @@ def run_conductor(backend: Backend, bdf: str, *, target_ber: float = 1e-12,
 
 
 def run_many(backend: Backend, bdfs: list[str], **kw) -> list[BertResult]:
-    """Run the BERT across several BDFs (sequentially; the harness parallelizes)."""
+    """Run the BERT across several BDFs, one after another (the harness also runs
+    these sequentially — a BERT saturates the link under test, so overlapping runs
+    on a shared upstream would contend)."""
     return [run_bert(backend, bdf, **kw) for bdf in bdfs]

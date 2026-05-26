@@ -74,7 +74,7 @@ def read_kernel_log(reader=None) -> str:
     try:  # pragma: no cover - real-hw path
         return subprocess.run(["dmesg", "--ctime"], capture_output=True, text=True,
                               timeout=5).stdout
-    except (OSError, subprocess.SubprocessError):
+    except (OSError, subprocess.SubprocessError):  # pragma: no cover - real-hw path
         return ""
 
 

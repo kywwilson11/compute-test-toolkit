@@ -1,5 +1,5 @@
 from computetest import diagnostics, margining
-from computetest.backend import MockBackend, MockDevice
+from computetest.backend import ECAP_AER, MockBackend, MockDevice
 
 
 def test_clean_device_passes():
@@ -42,3 +42,68 @@ def test_eq_sweep_finds_optimal_preset():
     sweep = margining.characterize_equalization(be, "0000:09:00.0")
     assert sweep.best is not None
     assert sweep.best.preset == 7
+
+
+# --- FIX 1: a margining failure must not abort the rest of the diagnostic ------ #
+def test_margining_exception_does_not_abort_diagnostic(monkeypatch):
+    # On real Gen4+ hardware margining raises NotImplementedError (guarded path).
+    # That must NOT lose the link/AER/BERT evidence we already gathered.
+    be = MockBackend([MockDevice("0000:03:00.0", 0x10DE, 0x2204, 0x030000, 4, 16, 4, 16)])
+
+    def boom(*a, **k):
+        raise NotImplementedError("real lane margining needs per-hardware validation")
+    monkeypatch.setattr(diagnostics.margining, "margin_link", boom)
+
+    d = diagnostics.diagnose(be, "0000:03:00.0", target_ber=1e-9, bert_max_s=2,
+                             watch_retrains_s=0.05)
+    # The rest of the diagnostic completed: link/AER/BERT all produced results.
+    assert d.link is not None and d.link.ok
+    assert d.aer_snapshot is not None
+    assert d.bert is not None and d.bert.status == "pass"
+    # Margining is recorded as unavailable (no lanes) with the reason, not a fail.
+    assert d.margin is not None and not d.margin.available
+    assert "validation" in d.margin.note
+    assert d.status == "pass"                         # margining-unavailable is not a fail
+    assert "margin:" in d.summary() and "unavailable" in d.summary()
+
+
+def test_margining_generic_exception_is_caught(monkeypatch):
+    # Any margining fault (a live-margining perturbation), not just NotImplementedError.
+    be = MockBackend([MockDevice("0000:03:00.0", 0x10DE, 0x2204, 0x030000, 4, 16, 4, 16)])
+    monkeypatch.setattr(diagnostics.margining, "margin_link",
+                        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("link faulted")))
+    d = diagnostics.diagnose(be, "0000:03:00.0", do_bert=False, watch_retrains_s=0.02)
+    assert d.margin is not None and not d.margin.available
+    assert "RuntimeError" in d.margin.note and "link faulted" in d.margin.note
+    assert d.link.ok                                  # diagnostic still completed
+
+
+# --- FIX 3: a skipped endpoint BERT is "skip" overall, never a silent "pass" --- #
+def _no_error_source_be(bdf="0000:0b:00.0"):
+    dev = MockDevice(bdf, 0x10DE, 0x2204, 0x030000, 4, 16, 4, 16, has_pcie_cap=False)
+    dev._ext_caps.pop(ECAP_AER)        # no AER AND no Device Status -> cannot measure
+    return MockBackend([dev]), bdf
+
+
+def test_skipped_bert_makes_overall_skip_not_pass():
+    be, bdf = _no_error_source_be()
+    d = diagnostics.diagnose(be, bdf, target_ber=1e-9, bert_max_s=1,
+                             do_margin=False, watch_retrains_s=0.02)
+    assert d.bert is not None and d.bert.status == "skip"   # never error-tested
+    assert d.link.ok                                        # link itself trained fine
+    assert d.status == "skip"                               # NOT "pass"
+    assert d.status != "pass"
+    assert any("BERT skipped" in r for r in d.reasons())
+    assert d.to_dict()["status"] == "skip"
+
+
+def test_skip_does_not_mask_a_real_fail():
+    # A real fault still wins over an incomplete measurement: degraded link => fail.
+    dev = MockDevice("0000:0c:00.0", 0x10DE, 0x2204, 0x030000, 3, 16, 4, 16,
+                     has_pcie_cap=False)            # Gen3 < max Gen4 (degraded)
+    dev._ext_caps.pop(ECAP_AER)                     # BERT will be "skip"
+    be = MockBackend([dev])
+    d = diagnostics.diagnose(be, "0000:0c:00.0", target_ber=1e-9, bert_max_s=1,
+                             do_margin=False, watch_retrains_s=0.02)
+    assert d.bert.status == "skip"
+    assert d.status == "fail"                       # the degrade dominates the skip

@@ -24,6 +24,7 @@ class PcieDiagnostic:
 
     @property
     def status(self) -> str:
+        # A real fault always wins over an incomplete measurement.
         if self.aer_snapshot.has_uncorrectable:
             return "fail"
         if not self.link.ok:
@@ -32,6 +33,11 @@ class PcieDiagnostic:
             return "fail"
         if self.margin and self.margin.lanes and not self.margin.ok:
             return "fail"
+        # No fail signal — but a device never error-tested has NOT passed. If the
+        # endpoint BERT was skipped (no AER / Device-Status source), the verdict is
+        # "skip", not "pass" (we never claim PASS from a measurement we couldn't make).
+        if self.bert and self.bert.status == "skip":
+            return "skip"
         return "pass"
 
     def reasons(self) -> list[str]:
@@ -46,6 +52,8 @@ class PcieDiagnostic:
             r.append(f"{self.link.retrains} retrains during soak")
         if self.bert and self.bert.status == "fail" and not self.aer_snapshot.has_uncorrectable:
             r.append(f"BERT fail (BER<= {self.bert.verdict.ber_upper:.2e})")
+        if self.bert and self.bert.status == "skip":
+            r.append(f"BERT skipped: {self.bert.note or 'no PCIe error source'}")
         if self.margin and self.margin.lanes and not self.margin.ok:
             w = self.margin.worst_lane
             r.append(f"lane {w.lane} margin {w.timing_ui:.3f}UI < {self.margin.limit_ui}UI")
@@ -59,6 +67,8 @@ class PcieDiagnostic:
         if self.bert:
             head += f"\n      bert: {self.bert.verdict.summary()}"
         if self.margin and self.margin.lanes:
+            head += f"\n      margin: {self.margin.summary()}"
+        elif self.margin and self.margin.note:
             head += f"\n      margin: {self.margin.summary()}"
         return head
 
@@ -87,9 +97,26 @@ def diagnose(backend: Backend, bdf: str, *, expected: DeviceExpectation | None =
     snap = aer.snapshot(backend, bdf)
     bert_res = (bert.run_bert(backend, bdf, target_ber=target_ber, confidence=confidence,
                               max_seconds=bert_max_s) if do_bert else None)
-    margin_res = (margining.margin_link(backend, bdf, limit_ui=limit_ui)
-                  if do_margin else None)
+    margin_res = _try_margin(backend, bdf, limit_ui) if do_margin else None
     return PcieDiagnostic(bdf, link, snap, bert_res, margin_res)
+
+
+def _try_margin(backend: Backend, bdf: str, limit_ui: float) -> margining.MarginResult:
+    """Margin the link, but never let a margining failure abort the diagnostic.
+
+    The real Gen4+ margining path is guarded (raises NotImplementedError until
+    validated per-hardware) and a live margining sequence can fault. Either way the
+    link/AER/BERT evidence we already gathered must survive: record margining as
+    unavailable (no lanes, with the reason) and let the rest of the report stand.
+    """
+    try:
+        return margining.margin_link(backend, bdf, limit_ui=limit_ui)
+    except NotImplementedError as e:
+        return margining.MarginResult(bdf, [], limit_ui=limit_ui,
+                                      note=f"unavailable: {e}")
+    except Exception as e:  # pragma: no cover - defensive: any live-margining fault
+        return margining.MarginResult(bdf, [], limit_ui=limit_ui,
+                                      note=f"margining error: {type(e).__name__}: {e}")
 
 
 def diagnose_all(backend: Backend, bdfs: list[str] | None = None, **kw) -> list[PcieDiagnostic]:

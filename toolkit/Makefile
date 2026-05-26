@@ -2,12 +2,15 @@
 PY ?= python3
 export PYTHONPATH := src
 
-.PHONY: all c test demo plan dashboard clean
+.PHONY: all c ctest test demo plan dashboard clean
 
-all: c test
+all: c ctest test
 
 c:                       ## build the C BERT engine
 	$(MAKE) -C c
+
+ctest:                   ## run the C unit tests (Unity)
+	$(MAKE) -C c ctest
 
 test:                    ## run the pytest suite (uses the mock backend)
 	COMPUTETEST_BACKEND=mock $(PY) -m pytest

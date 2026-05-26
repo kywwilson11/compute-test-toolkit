@@ -13,7 +13,7 @@ from dataclasses import dataclass, field
 
 from .backend import mock_mode
 
-_SPEED_RE = re.compile(r"Speed:\s*([\d.]+)\s*([MG])b?", re.I)
+_SPEED_RE = re.compile(r"Speed:\s*(\d+(?:\.\d+)?)\s*([MG])b?", re.I)
 
 
 @dataclass
@@ -64,14 +64,21 @@ def _parse_speed(ethtool_out: str) -> int:
 
 def check_ethernet(iface: str = "eth0", *, expect_mbps: int = 1000,
                    min_throughput_mbps: float = 900, cable_test: bool = False,
+                   iperf: bool = False, iperf_server: str | None = None,
                    mock: bool | None = None) -> EthHealth:
+    """Check link/speed/errors, and (opt-in) cable TDR + iperf3 throughput.
+
+    Throughput is only measured (and gated by ``min_throughput_mbps``) when
+    ``iperf=True`` — a link-only check must not fail on a throughput it never ran.
+    """
     use_mock = mock_mode() if mock is None else mock
+    measured_tput = iperf            # whether a throughput number was actually obtained
     if use_mock:
         bad = "BAD" in iface
         up = not bad
         spd = 0 if bad else expect_mbps
         rx_e, tx_e = (40, 5) if bad else (0, 0)
-        tput = 0.0 if bad else (min_throughput_mbps + 50)
+        tput = (0.0 if bad else (min_throughput_mbps + 50)) if iperf else 0.0
         role = "master"
         ct = _mock_cable_test(bad) if cable_test else None
     else:  # pragma: no cover - real-hw path
@@ -85,14 +92,30 @@ def check_ethernet(iface: str = "eth0", *, expect_mbps: int = 1000,
                ("slave" if mlb else "")
         stats = subprocess.run(["ethtool", "-S", iface], capture_output=True, text=True).stdout
         rx_e, tx_e = _stat(stats, "rx_errors"), _stat(stats, "tx_errors")
-        tput = 0.0
+        tput = _real_iperf(iperf_server) if iperf else 0.0
         ct = _real_cable_test(iface) if cable_test else None
 
     checks = {"link_up": up, "speed_ok": spd >= expect_mbps,
-              "low_errors": rx_e + tx_e < 10, "throughput_ok": tput >= min_throughput_mbps}
+              "low_errors": rx_e + tx_e < 10}
+    if measured_tput:
+        checks["throughput_ok"] = tput >= min_throughput_mbps
     if ct is not None:
         checks["cable_ok"] = ct.get("status") != "fault"
     return EthHealth(iface, up, spd, rx_e, tx_e, tput, role, ct, checks)
+
+
+def _real_iperf(server: str | None) -> float:  # pragma: no cover - real-hw path
+    """Best-effort iperf3 client throughput in Mb/s; 0.0 if iperf3/server unavailable."""
+    if not server or not shutil.which("iperf3"):
+        return 0.0
+    try:
+        import json as _json
+        out = subprocess.run(["iperf3", "-c", server, "-J"],
+                             capture_output=True, text=True, timeout=30).stdout
+        bps = _json.loads(out)["end"]["sum_received"]["bits_per_second"]
+        return bps / 1e6
+    except (OSError, subprocess.SubprocessError, ValueError, KeyError):
+        return 0.0
 
 
 def _mock_cable_test(bad: bool) -> dict:
@@ -117,9 +140,14 @@ def _real_cable_test(iface: str) -> dict:  # pragma: no cover - real-hw path
 
 
 def _stat(stats: str, key: str) -> int:
+    """Value of an exact `ethtool -S` counter (lines look like '   rx_errors: 5'). Match the
+    name before the ':' EXACTLY so a superstring counter (e.g. 'rx_errors_phy') can't shadow
+    the one we want, and keep only ASCII decimal digits (str.isdigit() also accepts Unicode
+    digits such as superscripts, which int() then rejects with ValueError)."""
     for line in stats.splitlines():
-        if key in line:
-            digits = "".join(c for c in line.split(":")[-1] if c.isdigit())
+        name, sep, val = line.partition(":")
+        if sep and name.strip() == key:
+            digits = "".join(c for c in val if c in "0123456789")
             return int(digits) if digits else 0
     return 0
 
@@ -147,6 +175,12 @@ class CanHealth:
                 "fd": self.fd, "checks": self.checks, "ok": self.ok}
 
 
+def _can_fd_enabled(ip_link_output: str) -> bool:
+    """CAN-FD is on iff `ip -details link` reports the explicit 'fd on' flag. Keyed on
+    'fd on' (not a loose \\bfd\\b, which also matches 'fd off' and stray 'fd' tokens)."""
+    return "fd on" in ip_link_output
+
+
 def check_can(iface: str = "can0", *, mock: bool | None = None) -> CanHealth:
     use_mock = mock_mode() if mock is None else mock
     if use_mock:
@@ -161,7 +195,7 @@ def check_can(iface: str = "can0", *, mock: bool | None = None) -> CanHealth:
                  "ERROR-WARNING" if "ERROR-WARNING" in out else "ERROR-ACTIVE")
         berr = re.search(r"berr-counter tx (\d+) rx (\d+)", out)
         tec, rec = (int(berr.group(1)), int(berr.group(2))) if berr else (0, 0)
-        fd = "fd on" in out or bool(re.search(r"\bfd\b", out))
+        fd = _can_fd_enabled(out)
     checks = {"not_bus_off": state != "BUS-OFF", "error_active": state == "ERROR-ACTIVE",
               "low_errors": tec < 96 and rec < 96}
     return CanHealth(iface, state, tec, rec, fd, checks)

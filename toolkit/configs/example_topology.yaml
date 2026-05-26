@@ -1,16 +1,44 @@
-# Example test plan for a compute board. A new board revision is a new file like
-# this — not new code. Loads with computetest.topology.load_config (needs PyYAML;
-# a stdlib-loadable example_plan.json mirror is provided alongside).
+# =============================================================================
+# computetest board test plan.  A new board revision is a new file like this —
+# not new code.  Loads with computetest.topology.load_config (needs PyYAML; a
+# stdlib-loadable example_plan.json mirror is provided alongside).
+#
+# TWO TEST LAYERS — this is NOT duplication.  A device can be listed twice on
+# purpose, because the two layers test two *different* things:
+#
+#   Layer 1  pcie_devices:       tests the LINK to each device.
+#            PCIe endpoints matched by vendor_id / class_code / bdf.  Drives
+#            enumeration, link-health (speed/width vs expected), AER decode,
+#            the BERT, and lane margining — i.e. "is the wire to this device
+#            good, and trained at the speed/width we expect?"
+#
+#   Layer 2  functional_checks:  tests the DEVICE itself.
+#            Each endpoint's own health check, by OS handle (device path /
+#            index / interface name) — NVMe SMART, GPU ECC/thermal, GMSL
+#            link+video, Ethernet/CAN link.  I.e. "is the device behind that
+#            wire actually healthy?"
+#
+# WHY A GPU APPEARS IN BOTH:  a GPU's PCIe LINK is verified in Layer 1 (it
+# trains Gen4 x16, no AER errors, passes the BERT and margining), while the
+# GPU DEVICE is verified in Layer 2 (ECC error count, temperature, throttle).
+# A perfect link to a GPU with failing ECC must still fail — and vice-versa —
+# so the same GPU is intentionally referenced in both layers.  Listing it in
+# pcie_devices does NOT functionally health-check it; listing it in
+# functional_checks.gpus does NOT test its link.  (The third NVMe/CustomCard
+# example shows a device need not appear in both.)
+# =============================================================================
 
-target_ber: 1.0e-12      # production target; the demo overrides to 1e-9 for speed
-confidence: 0.95
-bert_max_s: 30
-watch_retrains_s: 0.3
+target_ber: 1.0e-12      # production target; the demo .json overrides to 1e-9 for speed
+confidence: 0.95         # confidence the BERT must reach to PASS
+bert_max_s: 30           # per-device BERT time cap, seconds (prod value; longer than the demo)
+watch_retrains_s: 0.3    # how long to watch the link-training bit for retrain events
 
-# PCIe devices the board must present, matched by vendor/class (or an exact bdf).
-devices:
+# ---- Layer 1: PCIe LINK / interconnect -------------------------------------
+# PCIe devices the board must present, matched by vendor/class (or an exact
+# bdf).  Each entry tests the LINK to the matched device(s).
+pcie_devices:
   - name: GPU
-    match: {vendor_id: 0x10DE, class_code: 0x030000}
+    match: {vendor_id: 0x10DE, class_code: 0x030000}   # hex literals are fine in YAML
     count: 2
     expected_speed: 4        # Gen4
     expected_width: 16
@@ -27,9 +55,21 @@ devices:
     expected_speed: 4        # this card trains at Gen3 in the mock -> flagged degraded
     expected_width: 8
 
-# Interface checks (keyed by device path / index / interface name).
-nvme:     ["/dev/nvme0", "/dev/nvme1"]
-gpus:     [0, 1]
-gmsl:     ["1-0029"]
-ethernet: ["eth0"]
-can:      ["can0"]
+# Whole-chain diagnostics: every link in an endpoint's path (root..endpoint).
+# Each entry is an endpoint BDF, or {endpoint, expected_speed, expected_width}.
+# (Still Layer 1 — it tests links, just along the full path rather than the
+# single endpoint link.)  None in this example; uncomment to add one:
+# chains:
+#   - {endpoint: "0000:04:00.0", expected_speed: 4, expected_width: 16}
+
+# ---- Layer 2: functional / DEVICE health -----------------------------------
+# Each endpoint's own health check, keyed by OS handle (device path / index /
+# interface name).  These test the DEVICE, not its link.  The GPUs below are
+# the SAME parts matched by the "GPU" entry in pcie_devices above — Layer 1
+# tested their links; here Layer 2 tests their ECC/thermal health.
+functional_checks:
+  nvme:     ["/dev/nvme0", "/dev/nvme1"]   # NVMe SMART (device paths)
+  gpus:     [0, 1]                         # GPU ECC/thermal/throttle (indices)
+  gmsl:     ["1-0029"]                     # GMSL link+video (i2c link ids)
+  ethernet: ["eth0"]                       # Ethernet link (interfaces)
+  can:      ["can0"]                       # CAN state (interfaces)

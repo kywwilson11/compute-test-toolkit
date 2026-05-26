@@ -9,7 +9,11 @@ from __future__ import annotations
 import time
 from dataclasses import dataclass
 
-from .backend import Backend, LINK_SPEED_GTPS
+from .backend import Backend, LINK_SPEED_GTPS, link_bits_per_second
+
+# Re-exported so callers needing the link payload rate have one obvious home
+# (the rate is a link property). `link_bits_per_second(4, 16)` = Gen4 x16 bytes-ish/s.
+__all__ = ["LinkHealth", "check_link", "link_bits_per_second"]
 
 
 @dataclass
@@ -34,12 +38,27 @@ class LinkHealth:
             self.min_width = self.width
 
     @property
+    def speed_unknown(self) -> bool:
+        """A current/max speed of 0 means sysfs gave us nothing (enumeration or parse
+        failure) — that is NOT a healthy link, even with no expectation set."""
+        return self.speed <= 0 or self.max_speed <= 0
+
+    @property
+    def width_unknown(self) -> bool:
+        return self.width <= 0 or self.max_width <= 0
+
+    @property
     def speed_degraded(self) -> bool:
+        # Unknown (0) speed reads as degraded, never a silent pass.
+        if self.speed_unknown:
+            return True
         target = self.expected_speed or self.max_speed
         return self.speed < target or self.min_speed < target
 
     @property
     def width_degraded(self) -> bool:
+        if self.width_unknown:
+            return True
         target = self.expected_width or self.max_width
         return self.width < target or self.min_width < target
 
@@ -51,11 +70,15 @@ class LinkHealth:
     def summary(self) -> str:
         gt = LINK_SPEED_GTPS.get(self.speed, 0)
         flags = []
-        if self.speed_degraded:
+        if self.speed_unknown:
+            flags.append("SPEED unknown (sysfs/enumeration)")
+        elif self.speed_degraded:
             tgt = self.expected_speed or self.max_speed
             lo = f"/min Gen{self.min_speed}" if self.min_speed < self.speed else ""
             flags.append(f"SPEED Gen{self.speed}{lo}<Gen{tgt}")
-        if self.width_degraded:
+        if self.width_unknown:
+            flags.append("WIDTH unknown (sysfs/enumeration)")
+        elif self.width_degraded:
             tgt = self.expected_width or self.max_width
             lo = f"/min x{self.min_width}" if self.min_width < self.width else ""
             flags.append(f"WIDTH x{self.width}{lo}<x{tgt}")
@@ -72,6 +95,7 @@ class LinkHealth:
             "max_speed": self.max_speed, "max_width": self.max_width,
             "min_speed": self.min_speed, "min_width": self.min_width,
             "speed_degraded": self.speed_degraded, "width_degraded": self.width_degraded,
+            "speed_unknown": self.speed_unknown, "width_unknown": self.width_unknown,
             "retrains": self.retrains, "bw_changed": self.bw_changed, "ok": self.ok,
         }
 

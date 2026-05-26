@@ -3,11 +3,17 @@ Topology / expectation config: declare what a good board *should* look like (whi
 devices, at which speed/width) and compare reality against it. Data-driven so a new
 board revision is a new config file, not new code (Guide A, §"Test station").
 
+This is Layer 1 of the plan — the PCIe LINK layer. `pcie_devices` declares the
+endpoints whose *links* must be tested (enumeration, link-health, AER, BERT, lane
+margining). Layer 2 — the functional/DEVICE health checks under `functional_checks`
+(NVMe SMART, GPU ECC/thermal, etc.) — is consumed separately by the harness; see
+harness.py and USAGE.md "## Config reference".
+
 A config is a dict (or JSON/YAML file):
 
     target_ber: 1.0e-12
     confidence: 0.95
-    devices:
+    pcie_devices:
       - name: GPU0
         match: {vendor_id: 0x10DE, class_code: 0x030000}
         expected_speed: 4        # Gen4
@@ -82,7 +88,7 @@ def load_config(source) -> TopologyConfig:
         return int(v, 0) if isinstance(v, str) else v
 
     devs = []
-    for d in data.get("devices", []):
+    for d in data.get("pcie_devices", []):
         match = {k: to_int(v) for k, v in d.get("match", {}).items()}
         devs.append(DeviceExpectation(
             name=d["name"], match=match, count=d.get("count", 1),

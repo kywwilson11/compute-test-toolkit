@@ -25,3 +25,18 @@ where = ["src"]
 pythonpath = ["src"]
 testpaths = ["tests"]
 addopts = "-q"
+
+# Coverage: run via `python -m coverage run -m pytest && python -m coverage report -m`.
+# branch=true so an untaken if/else half is flagged, not just unexecuted lines.
+[tool.coverage.run]
+branch = true
+source = ["src/computetest"]
+
+[tool.coverage.report]
+show_missing = true
+exclude_lines = [
+    "pragma: no cover",                 # real-hardware sysfs/subprocess paths (run on the bench)
+    "if __name__ == .__main__.:",       # module demos
+    "raise NotImplementedError",
+    "if TYPE_CHECKING:",
+]

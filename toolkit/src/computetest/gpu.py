@@ -114,7 +114,13 @@ def check_gpu(index: int = 0, *, mock: bool | None = None, max_temp_c: int = 85,
         checks = _apply_limits(m, max_temp_c, expect_gen, expect_width, gen, width, replay_limit)
         return GpuHealth(index, "Mock RTX", gen, width, m, checks, _history(m))
 
-    if not shutil.which("nvidia-smi"):  # pragma: no cover - real-hw path
+    return _real_check_gpu(index, max_temp_c, expect_gen, expect_width,  # pragma: no cover
+                           replay_limit, dmesg_reader)
+
+
+def _real_check_gpu(index, max_temp_c, expect_gen, expect_width, replay_limit,
+                    dmesg_reader) -> GpuHealth:  # pragma: no cover - real-hw path
+    if not shutil.which("nvidia-smi"):
         raise RuntimeError("nvidia-smi not found")
     m = _query_nvidia_smi(index)
     m["xid_errors"] = _scan_xids(dmesg_reader)

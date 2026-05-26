@@ -104,7 +104,11 @@ def stress_memory(seconds: int = 60, mb: int | None = None, *, mock: bool | None
     """Run a stressapptest soak (provokes errors EDAC then counts). Returns success."""
     if (mock_mode() if mock is None else mock):
         return True
-    cmd = ["stressapptest", "-s", str(seconds), "-W"]  # pragma: no cover - real-hw path
+    return _real_stress_memory(seconds, mb)  # pragma: no cover - real-hw path
+
+
+def _real_stress_memory(seconds: int, mb: int | None) -> bool:  # pragma: no cover - real-hw path
+    cmd = ["stressapptest", "-s", str(seconds), "-W"]
     if mb:
         cmd += ["-M", str(mb)]
     return subprocess.run(cmd, capture_output=True, text=True).returncode == 0

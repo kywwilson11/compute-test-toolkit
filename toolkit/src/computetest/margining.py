@@ -40,10 +40,16 @@ class MarginResult:
     lanes: list[LaneMargin]
     min_timing_ui: float = field(default=0.0)
     limit_ui: float = DEFAULT_MIN_TIMING_UI
+    note: str = ""            # why margining produced no lanes (unsupported / errored)
 
     def __post_init__(self):
         if self.lanes:
             self.min_timing_ui = min(l.timing_ui for l in self.lanes)
+
+    @property
+    def available(self) -> bool:
+        """True iff margining actually measured at least one lane."""
+        return bool(self.lanes)
 
     @property
     def worst_lane(self) -> LaneMargin | None:
@@ -55,7 +61,8 @@ class MarginResult:
 
     def summary(self) -> str:
         if not self.lanes:
-            return f"{self.bdf}: margining unavailable"
+            reason = f" ({self.note})" if self.note else ""
+            return f"{self.bdf}: margining unavailable{reason}"
         w = self.worst_lane
         state = "OK" if self.ok else f"FAIL(lane {w.lane}={w.timing_ui:.3f}UI<{self.limit_ui}UI)"
         return (f"{self.bdf}: min margin {self.min_timing_ui:.3f} UI "
@@ -63,7 +70,8 @@ class MarginResult:
 
     def to_dict(self) -> dict:
         return {"bdf": self.bdf, "min_timing_ui": round(self.min_timing_ui, 4),
-                "limit_ui": self.limit_ui, "ok": self.ok,
+                "limit_ui": self.limit_ui, "ok": self.ok, "available": self.available,
+                "note": self.note,
                 "lanes": {l.lane: round(l.timing_ui, 4) for l in self.lanes}}
 
 
@@ -92,7 +100,7 @@ def margin_link(backend: Backend, bdf: str, lanes: int | None = None,
         ber = backend._dev(bdf).injected_ber
         for lane in range(n):
             results.append(LaneMargin(lane, _mock_lane_margin(bdf, lane, ber)))
-    else:
+    else:  # pragma: no cover - real-hw path
         for lane in range(n):
             results.append(_real_margin_lane(backend, bdf, lane))
     return MarginResult(bdf, results, limit_ui=limit_ui)

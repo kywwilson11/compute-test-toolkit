@@ -38,6 +38,18 @@ def test_list_human_output(capsys):
     assert rc == cli.EXIT_PASS and "0000:03:00.0" in out
 
 
+def test_list_json_includes_derived_properties(capsys):
+    # JSON must align with the human listing: vendor_name/speed_str (derived properties)
+    # are present, not dropped by a raw __dict__ dump that only had the raw fields.
+    rc = cli.main(["--backend", "mock", "list", "--json"])
+    data = json.loads(capsys.readouterr().out)
+    assert rc == cli.EXIT_PASS and isinstance(data, list) and data
+    first = data[0]
+    assert "vendor_name" in first and "speed_str" in first   # the alignment fix
+    assert first["bdf"] == "0000:03:00.0" and first["vendor_name"] == "NVIDIA"
+    assert first["current_link_speed"] == 4 and "GT/s" in first["speed_str"]
+
+
 def test_chain_command_runs(capsys):
     # Flat sample board: chain degenerates to the endpoint, but the command must run cleanly.
     rc = cli.main(["--backend", "mock", "chain", "0000:03:00.0",

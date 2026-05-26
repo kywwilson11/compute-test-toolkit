@@ -24,6 +24,12 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 
+from .backend import link_bits_per_second
+
+# One source of truth for the "how long at Gen4 x16" time estimate (payload bits/s),
+# shared by the CLI so the estimate is computed in exactly one place.
+GEN4_X16_BPS = link_bits_per_second(4, 16)
+
 # --- Fast path: scipy if available ------------------------------------------- #
 try:  # pragma: no cover - exercised only where scipy is installed
     from scipy.special import gammainc as _gammainc          # lower regularized P(a,x)
@@ -271,6 +277,6 @@ if __name__ == "__main__":  # quick sanity demo: `python -m computetest.ber`
     for cl in (0.90, 0.95, 0.99):
         n = bits_for_confidence(1e-12, cl, 0)
         print(f"zero-error, target 1e-12 @ {cl:.0%} confidence -> {n:.3e} bits "
-              f"(~{n / (31.5e9 * 8):.1f}s at Gen4 x16)")
+              f"(~{n / GEN4_X16_BPS:.1f}s at Gen4 x16)")
     print(assess(errors=0, bits=3.0e12, target_ber=1e-12).summary())
     print(assess(errors=5, bits=3.0e12, target_ber=1e-12).summary())

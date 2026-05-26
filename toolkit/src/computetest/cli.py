@@ -44,6 +44,27 @@ def _emit(human: str, obj, as_json: bool) -> None:
     print(json.dumps(obj, indent=2, default=str) if as_json else human)
 
 
+def _verdict_exit(status: str) -> int:
+    """Map a measurement verdict to an exit code, distinguishing "couldn't measure"
+    from "DUT failed":  pass -> 0,  fail -> 1,  skip/unavailable -> 5."""
+    if status == "pass":
+        return EXIT_PASS
+    if status in ("skip", "unavailable", "incomplete"):
+        return EXIT_UNAVAIL
+    return EXIT_FAIL
+
+
+def _verdict_exit_any(statuses) -> int:
+    """Aggregate exit for several verdicts: any genuine fail -> 1 (a real fault wins);
+    else any skip -> 5 (incomplete coverage); else 0."""
+    seen = list(statuses)
+    if any(s == "fail" for s in seen):
+        return EXIT_FAIL
+    if any(s in ("skip", "unavailable", "incomplete") for s in seen):
+        return EXIT_UNAVAIL
+    return EXIT_PASS
+
+
 def _build_parser() -> argparse.ArgumentParser:
     common = argparse.ArgumentParser(add_help=False)
     common.add_argument("--json", action="store_true", help="emit JSON to stdout (pipeable)")
@@ -107,7 +128,7 @@ def _run(args) -> int:
             n = ber.bits_for_confidence(args.target_ber, args.confidence, args.errors)
             human = (f"To prove BER <= {args.target_ber:.1e} at {args.confidence:.0%} "
                      f"with {args.errors} errors: {n:.4e} bits "
-                     f"(~{n / (31.5e9 * 8):.1f}s at Gen4 x16)")
+                     f"(~{n / ber.GEN4_X16_BPS:.1f}s at Gen4 x16)")
             obj = {"target_ber": args.target_ber, "confidence": args.confidence,
                    "errors": args.errors, "bits_needed": n}
         else:
@@ -127,7 +148,7 @@ def _run(args) -> int:
         human = "\n".join(
             f"{d.bdf}  {d.vendor_name:18} Gen{d.current_link_speed}x{d.current_link_width}"
             f"  class={d.class_code:#08x} drv={d.driver}" for d in devs)
-        _emit(human, [d.__dict__ for d in devs], args.json)
+        _emit(human, [d.to_dict() for d in devs], args.json)
         return EXIT_PASS
 
     if args.cmd == "bert":
@@ -135,7 +156,7 @@ def _run(args) -> int:
                      confidence=args.confidence, max_seconds=args.max_seconds,
                      engine=args.engine)
         _emit(r.summary(), r.to_dict(), args.json)
-        return EXIT_PASS if r.ok else EXIT_FAIL
+        return _verdict_exit(r.status)
 
     if args.cmd == "diagnose":
         bdfs = [args.bdf] if args.bdf else None
@@ -144,7 +165,7 @@ def _run(args) -> int:
             target_ber=args.target_ber, bert_max_s=args.max_seconds)
         human = "\n".join(d.summary() for d in results)
         _emit(human, [d.to_dict() for d in results], args.json)
-        return EXIT_PASS if all(d.status == "pass" for d in results) else EXIT_FAIL
+        return _verdict_exit_any(d.status for d in results)
 
     if args.cmd == "chain":
         d = diagnostics.diagnose_chain(
@@ -152,7 +173,7 @@ def _run(args) -> int:
             max_seconds=args.max_seconds, expected_speed=args.expected_speed,
             expected_width=args.expected_width)
         _emit(d.summary(), d.to_dict(), args.json)
-        return EXIT_PASS if d.status == "pass" else EXIT_FAIL
+        return _verdict_exit(d.status)
 
     if args.cmd in ("nvme", "gpu", "gmsl", "eth", "can"):
         h = {"nvme": lambda: nvme.check_nvme(args.target),
@@ -169,17 +190,24 @@ def _run(args) -> int:
             report = run_test_plan(backend, plan, store=store)
             obj = {"report": [vars(r) for r in report.records], "summary": store.summary()}
         _emit(report.summary(), obj, args.json)
-        return EXIT_PASS if report.ok else EXIT_FAIL
+        # Consistent with single-command verdicts: a real fail -> 1, an unmeasured/skip
+        # record -> 5 (incomplete coverage), else 0. (plan previously returned 0 on skip.)
+        return _verdict_exit_any(r.status for r in report.records)
 
-    return EXIT_USAGE
+    return EXIT_USAGE  # pragma: no cover - unreachable (argparse requires a subcommand)
 
 
 def _load_plan(path: str) -> dict:
+    """Load a plan as a raw dict, preserving every section (both test layers:
+    pcie_devices + chains, and functional_checks) and the top-level knobs."""
     if path.endswith((".yaml", ".yml")):
-        from .topology import load_config
-        cfg = load_config(path)
-        return {"target_ber": cfg.target_ber, "confidence": cfg.confidence,
-                "devices": [vars(d) for d in cfg.devices]}
+        try:
+            import yaml  # optional dependency
+        except ImportError as e:
+            raise RuntimeError("PyYAML not installed; use a .json config or "
+                               "`pip install pyyaml`") from e
+        with open(path) as fh:
+            return yaml.safe_load(fh)
     with open(path) as fh:
         return json.load(fh)
 

@@ -21,7 +21,7 @@ You need Python 3.10+. Nothing else is required to run against the mock backend.
 
 ```bash
 cd toolkit
-make test     # run the unit suite on the mock backend  -> expect "48 passed"
+make test     # run the unit suite on the mock backend  -> expect "304 passed"
 make demo     # run the PCIe BERT across the simulated board (python demo_bert.py)
 ```
 
@@ -29,7 +29,7 @@ make demo     # run the PCIe BERT across the simulated board (python demo_bert.p
 
 ```
 ................................................                         [100%]
-48 passed
+304 passed
 ```
 
 `make plan` runs the full example test plan end to end (PCIe + NVMe + GPU + GMSL +
@@ -122,10 +122,17 @@ Subcommands: `list` · `bert` · `diagnose` · `nvme` · `gpu` · `gmsl` · `eth
 | `2` | **usage error** — bad/missing arguments |
 | `3` | **device/target not found** — the BDF / index / interface does not exist |
 | `4` | **config / IO error** — config file missing or unparseable, or an IO/runtime error |
-| `5` | **capability unavailable** — feature not supported on this hardware/backend (e.g. real lane margining) |
+| `5` | **unavailable / couldn't measure** — feature unsupported on this hardware/backend (e.g. real lane margining), **or** a measurement was skipped because the device exposes no error source (no AER and no Device Status) |
 
 This contract is stable and meant for scripting (e.g. a station runner branching on the
 code). Exit codes are identical for human and `--json` modes.
+
+**`5` ≠ `1`.** `bert`, `diagnose`, and `chain` distinguish *"the DUT failed"* (exit `1`)
+from *"we couldn't measure it"* (exit `5`). A device with no PCIe error source yields a
+**skip** verdict — never a false pass *or* a false fail — and exits `5`. When several
+devices are diagnosed at once, a genuine fail still wins (any real fault → `1`); exit `5`
+means *no fault was found but at least one device could not be error-tested*. A station
+runner should treat `5` as "re-check coverage / wiring", not "scrap the unit".
 
 ### Common options
 
@@ -157,13 +164,15 @@ $ COMPUTETEST_BACKEND=mock computetest list
 
 **Exit codes:** `0` always (enumeration itself does not pass/fail).
 
-**`--json` shape:** a JSON **array** of device objects:
+**`--json` shape:** a JSON **array** of device objects. It carries the same derived
+fields the human listing shows — `vendor_name` and `speed_str` — so JSON and text agree:
 
 ```json
 [
   {
     "bdf": "0000:03:00.0", "vendor_id": 4318, "device_id": 8708,
-    "class_code": 196608, "current_link_speed": 4, "current_link_width": 16,
+    "vendor_name": "NVIDIA", "class_code": 196608,
+    "current_link_speed": 4, "current_link_width": 16, "speed_str": "16 GT/s",
     "max_link_speed": 4, "max_link_width": 16, "driver": "nvidia"
   }
 ]
@@ -211,7 +220,9 @@ for tight, high-rate polling on real hardware (build it first — Section 5). If
 binary is missing, you get a clear `error:` and exit `4`.
 
 **Exit codes:** `0` pass · `1` fail (any uncorrectable error, or ran out of time without
-reaching the confidence target) · `3` BDF not found · `4` C engine missing/failed.
+reaching the confidence target) · `3` BDF not found · `4` C engine missing/failed · `5`
+**skip** — the device exposes no error source (no AER and no Device Status), so the BERT
+could not measure anything (status `"skip"`, never a false pass or fail).
 
 **`--json` shape:**
 
@@ -272,8 +283,20 @@ A clean device looks like:
 > `CL≈0.85 … FAIL` even with zero errors — it's "not proven yet", not "errored"). Give
 > them more time, use `--engine c`, or relax the target for a smoke test.
 
-**Exit codes:** `0` if **all** diagnosed devices pass, else `1`. (`3` if a `-d` BDF
-doesn't exist.)
+**Exit codes:** `1` if **any** diagnosed device genuinely failed (a real fault always
+wins); else `5` if no fault was found but at least one device could not be error-tested
+(its endpoint BERT was **skipped** — no AER/Device-Status source, so overall status is
+`"skip"`, never a false `"pass"`); else `0`. (`3` if a `-d` BDF doesn't exist.)
+
+> A device whose link trained fine but that has no error source reports overall
+> `status: "skip"` — *trained, but never error-tested is not a pass.* The `reasons`
+> list says `"BERT skipped: …"` so it's clear why.
+
+> **Margining never aborts the diagnostic.** On real Gen4+ hardware the lane-margining
+> path is guarded (it raises until validated per-hardware — Section 6); `diagnose`
+> catches that (and any margining fault), records margining as `available: false` with
+> the reason, and **still returns** the link / AER / BERT results. A margining-unavailable
+> is reported, not a fail.
 
 **`--json` shape:** a JSON **array** of per-device diagnostics:
 
@@ -284,14 +307,21 @@ doesn't exist.)
     "reasons": ["BERT fail (BER<= 1.60e-09)", "lane 2 margin 0.020UI < 0.25UI"],
     "link": {"bdf": "0000:04:00.0", "speed": 4, "width": 16, "max_speed": 4,
              "max_width": 16, "speed_degraded": false, "width_degraded": false,
+             "speed_unknown": false, "width_unknown": false,
              "retrains": 0, "ok": true},
     "aer": {"correctable": ["BadTLP"], "uncorrectable": []},
     "bert": { "...": "same shape as `bert --json` above" },
     "margin": {"bdf": "0000:04:00.0", "min_timing_ui": 0.02, "limit_ui": 0.25,
-               "ok": false, "lanes": {"0": 0.39, "2": 0.02, "...": 0.0}}
+               "ok": false, "available": true, "note": "",
+               "lanes": {"0": 0.39, "2": 0.02, "...": 0.0}}
   }
 ]
 ```
+
+> `link.speed_unknown` / `link.width_unknown` are `true` when sysfs reported a speed/width
+> of `0` (an enumeration or parse failure). That is treated as **degraded** (`ok: false`),
+> never a silent pass — a link the OS couldn't read its speed for is not "healthy".
+> A margining-unavailable result carries `"available": false` and a `"note"` (the reason).
 
 ---
 
@@ -460,43 +490,17 @@ E=0 n=3.000e+12 | CL=0.9502 (target 0.95) | BER<=9.99e-13 | PASS
 
 ## 4. Writing a test plan / topology config
 
-A plan declares **what a good board should look like** (which devices, at which
-speed/width) plus the list of interfaces to check. The toolkit compares reality to it.
-**A new board revision is a new file like this — not new code.** JSON and YAML are
-equivalent (YAML needs PyYAML; numbers like `0x10DE` may be written in hex in YAML, or as
-decimals in JSON).
+A plan declares **what a good board should look like** plus the device health checks to
+run, and the toolkit compares reality to it. **A new board revision is a new file like
+this — not new code.** Two equivalent forms ship; **YAML is primary** and JSON is a
+stdlib, no-dependency mirror — see *Why YAML is primary* in the Config reference below.
 
-### `configs/example_plan.json` — annotated
+A plan has **two test layers** — `pcie_devices` (and `chains`) test the **LINK** to each
+device; `functional_checks` tests the **DEVICE** itself. This is not duplication; the
+full model, every field, and the GPU-appears-in-both rationale are documented in the
+**Config reference** (next section). The shipped examples:
 
-```jsonc
-{
-  "target_ber": 1e-9,          // BER target for every per-device BERT (demo uses 1e-9 for speed; prod 1e-12)
-  "confidence": 0.95,          // confidence level the BERT must reach to PASS
-  "bert_max_s": 2.0,           // per-device BERT time cap, seconds (demo: short; prod: ~30)
-  "watch_retrains_s": 0.3,     // how long to watch the link-training bit for retrain events
-  "devices": [                 // PCIe expectations — each entry is matched against enumerated devices
-    {"name": "GPU",            //   label used in the report
-     "match": {"vendor_id": 4318, "class_code": 196608}, // match criteria: any of vendor_id/device_id/class_code/bdf
-     "count": 2,               //   how many devices must match (enumeration fails if fewer found)
-     "expected_speed": 4,      //   expected link gen (4 = Gen4); a slower trained link => "degraded"
-     "expected_width": 16,     //   expected lane width
-     "min_margin_ui": 0.25},   //   per-lane margining pass limit, in UI
-    {"name": "NVMe", "match": {"class_code": 67586},
-     "count": 2, "expected_speed": 4, "expected_width": 4, "min_margin_ui": 0.25},
-    {"name": "CustomCard", "match": {"vendor_id": 6966}, // 6966 = 0x1B36 (the example vendor)
-     "count": 1, "expected_speed": 4, "expected_width": 8} // expects Gen4 but mock trains Gen3 => flagged
-  ],
-  "nvme":     ["/dev/nvme0", "/dev/nvme1"], // NVMe SMART checks (device paths)
-  "gpus":     [0, 1],                       // GPU health checks (indices)
-  "gmsl":     ["1-0029"],                   // GMSL link+video checks (i2c link ids)
-  "ethernet": ["eth0"],                     // Ethernet link checks (interfaces)
-  "can":      ["can0"]                      // CAN state checks (interfaces)
-}
-```
-
-(JSON has no comments; the `//` above are explanatory only — keep the real file plain.)
-
-### `configs/example_topology.yaml` — annotated (same schema, YAML form)
+### `configs/example_topology.yaml` — primary (annotated, hex IDs)
 
 ```yaml
 target_ber: 1.0e-12      # production target; the demo .json overrides to 1e-9 for speed
@@ -504,8 +508,8 @@ confidence: 0.95
 bert_max_s: 30           # per-device BERT cap (prod value; longer than the demo)
 watch_retrains_s: 0.3
 
-# PCIe devices the board must present, matched by vendor/class (or an exact bdf).
-devices:
+# ---- Layer 1: PCIe LINK / interconnect — tests the LINK to each device -----
+pcie_devices:
   - name: GPU
     match: {vendor_id: 0x10DE, class_code: 0x030000}   # hex literals are fine in YAML
     count: 2
@@ -523,30 +527,218 @@ devices:
     count: 1
     expected_speed: 4        # this card trains at Gen3 in the mock -> flagged degraded
     expected_width: 8
+# chains:                    # optional Layer 1 whole-path diagnostics (see reference)
+#   - {endpoint: "0000:04:00.0", expected_speed: 4, expected_width: 16}
 
-# Interface checks (keyed by device path / index / interface name).
-nvme:     ["/dev/nvme0", "/dev/nvme1"]
-gpus:     [0, 1]
-gmsl:     ["1-0029"]
-ethernet: ["eth0"]
-can:      ["can0"]
+# ---- Layer 2: functional / DEVICE health — tests the DEVICE itself ---------
+functional_checks:
+  nvme:     ["/dev/nvme0", "/dev/nvme1"]   # NVMe SMART (device paths)
+  gpus:     [0, 1]                         # GPU ECC/thermal/throttle (indices)
+  gmsl:     ["1-0029"]                     # GMSL link+video (i2c link ids)
+  ethernet: ["eth0"]                       # Ethernet link (interfaces)
+  can:      ["can0"]                       # CAN state (interfaces)
 ```
 
-**Field reference (per `devices[]` entry):**
+### `configs/example_plan.json` — stdlib mirror (decimal IDs, no comments)
 
-| Field | Meaning |
-|-------|---------|
-| `name` | Label shown in the report; groups matched BDFs. |
-| `match` | Any of `bdf`, `vendor_id`, `device_id`, `class_code`. A device matches if **all** given keys match. Hex in YAML (`0x10DE`) or decimal in JSON (`4318`). |
-| `count` | Required number of matching devices; enumeration **fails** (reports MISSING) if fewer are present. Default 1. |
-| `expected_speed` | Expected link gen code (1=Gen1 … 6=Gen6). A device trained below this is flagged **speed degraded**. Omit to compare against the device's own max. |
-| `expected_width` | Expected lane width (e.g. 16). Below this is **width degraded**. |
-| `min_margin_ui` | Per-lane lane-margining pass limit in UI (default 0.25). |
+```jsonc
+{
+  "target_ber": 1e-9,          // BER target for every per-device BERT (demo uses 1e-9 for speed; prod 1e-12)
+  "confidence": 0.95,          // confidence level the BERT must reach to PASS
+  "bert_max_s": 2.0,           // per-device BERT time cap, seconds (demo: short; prod: ~30)
+  "watch_retrains_s": 0.3,     // how long to watch the link-training bit for retrain events
+  "pcie_devices": [            // Layer 1: PCIe LINK expectations — matched against enumerated devices
+    {"name": "GPU",            //   label used in the report
+     "match": {"vendor_id": 4318, "class_code": 196608}, // 4318=0x10DE, 196608=0x030000
+     "count": 2,               //   how many devices must match (enumeration fails if fewer found)
+     "expected_speed": 4,      //   expected link gen (4 = Gen4); a slower trained link => "degraded"
+     "expected_width": 16,     //   expected lane width
+     "min_margin_ui": 0.25},   //   per-lane margining pass limit, in UI
+    {"name": "NVMe", "match": {"class_code": 67586},
+     "count": 2, "expected_speed": 4, "expected_width": 4, "min_margin_ui": 0.25},
+    {"name": "CustomCard", "match": {"vendor_id": 6966}, // 6966 = 0x1B36 (the example vendor)
+     "count": 1, "expected_speed": 4, "expected_width": 8} // expects Gen4 but mock trains Gen3 => flagged
+  ],
+  "functional_checks": {       // Layer 2: DEVICE health checks, keyed by OS handle
+    "nvme":     ["/dev/nvme0", "/dev/nvme1"], // NVMe SMART (device paths)
+    "gpus":     [0, 1],                       // GPU health (indices)
+    "gmsl":     ["1-0029"],                   // GMSL link+video (i2c link ids)
+    "ethernet": ["eth0"],                     // Ethernet link (interfaces)
+    "can":      ["can0"]                      // CAN state (interfaces)
+  }
+}
+```
 
-Top-level `target_ber` / `confidence` / `bert_max_s` / `watch_retrains_s` set the BERT and
-retrain-soak parameters used for every device. The interface lists (`nvme`, `gpus`,
-`gmsl`, `ethernet`, `can`) drive the corresponding checks; omit a list to skip that
-subsystem.
+(JSON has no comments; the `//` above are explanatory only — keep the real file plain.
+The real file carries a `"_comment"` string pointing at the YAML for the annotated form.)
+
+---
+
+## Config reference
+
+This is the complete reference for a `computetest` plan/topology file. A plan is a single
+file (`.yaml`/`.yml` with PyYAML, or `.json` with the stdlib) consumed by `computetest
+plan CONFIG` and by `computetest.topology.load_config`. **A new board revision is a new
+file — not new code.**
+
+### The two-layer model (why it is *not* duplication)
+
+A plan tests a board at **two independent layers**. A device may appear in both — on
+purpose — because the two layers test two *different* things:
+
+| | Section | Tests… | What it runs |
+|---|---------|--------|--------------|
+| **Layer 1 — PCIe LINK** | `pcie_devices`, `chains` | the **LINK** to a device (the wire and how it trained) | enumeration, link-health (speed/width vs expected), AER decode, the BERT, lane margining |
+| **Layer 2 — functional / DEVICE** | `functional_checks` | the **DEVICE** itself (is the thing behind the wire healthy?) | NVMe SMART, GPU ECC/thermal/throttle, GMSL link+video, Ethernet link, CAN state |
+
+**Why a GPU appears in both.** A GPU's PCIe **link** is verified in Layer 1 — it must
+enumerate, train at Gen4 x16, show no AER errors, and pass the BERT and lane margining.
+The GPU **device** is verified in Layer 2 — its ECC error count, temperature, and
+throttle state. These are orthogonal: a flawless link to a GPU with failing ECC must
+still fail the board, and a GPU with perfect ECC behind a degraded x8 link must also
+fail. So the same GPU is referenced in `pcie_devices` (Layer 1) **and** in
+`functional_checks.gpus` (Layer 2) — it is not listed twice by mistake. Conversely, a
+device may appear in only one layer: the example `CustomCard` has only a Layer-1 link
+expectation (no functional handle), and a purely functional check could exist with no
+matching `pcie_devices` entry. Listing a device in `pcie_devices` does **not** run its
+functional health check; listing it in `functional_checks` does **not** test its link.
+
+### Top-level knobs
+
+These apply to the whole plan (the BERT and retrain-soak parameters used for every
+Layer-1 device and chain):
+
+| Key | Type | Default | Meaning |
+|-----|------|---------|---------|
+| `target_ber` | float | `1e-12` | BER the per-device/-chain BERT must *prove* (at `confidence`) to PASS. Prod `1e-12`; the demo `.json` uses `1e-9` for speed. |
+| `confidence` | float | `0.95` | Statistical confidence the BERT must reach (e.g. 0.95 = 95%) that the true BER ≤ `target_ber`. |
+| `bert_max_s` | float | `30.0` | Per-device BERT time cap, in seconds. A clean link that hasn't *proven* the target by the cap reports `FAIL` ("not proven yet"; see `diagnose`). |
+| `watch_retrains_s` | float | `0.2` | How long to watch each link's training bit for retrain events. |
+
+### Layer 1 — `pcie_devices[]` (PCIe LINK expectations)
+
+A list of expectations; each is matched against the enumerated PCIe devices. Drives
+enumeration (present/missing/unexpected) and, per matched BDF, the full PCIe diagnostic
+(link health, AER, BERT, margining).
+
+| Field | Type | Default | Meaning |
+|-------|------|---------|---------|
+| `name` | str | (required) | Label shown in the report; groups the matched BDFs. |
+| `match` | map | (required) | Match criteria — any of `bdf`, `vendor_id`, `device_id`, `class_code`. A device matches only if **all** supplied keys match. See *Matching semantics* below. |
+| `count` | int | `1` | Required number of matching devices. Enumeration **fails** (reports `MISSING name (found k/count)`) if fewer are present. `count: 0` means "match any number, none required". Extra matches beyond `count` are reported as `unexpected` (a warning, not a fail). |
+| `expected_speed` | int | none | Expected link generation code (`1`=Gen1 … `6`=Gen6, i.e. 2.5/5/8/16/32/64 GT/s). A device trained below this is flagged **speed degraded**. Omit to compare against the device's own advertised max. |
+| `expected_width` | int | none | Expected negotiated lane width (e.g. `16`, `8`, `4`). Below this is **width degraded**. Omit to compare against max. |
+| `min_margin_ui` | float | `0.25` | Per-lane lane-margining pass limit, in unit intervals (UI). Any lane margining below this fails the device. |
+
+#### Matching semantics
+
+- **All supplied keys must match (AND).** `{vendor_id: 0x10DE, class_code: 0x030000}`
+  matches a device only if its vendor **and** class both match.
+- **`vendor_id` / `device_id` / `class_code` are integers**, written as **hex in YAML**
+  (`0x10DE`, `0x030000`) or **decimal in JSON** (`4318`, `196608`). The loader coerces
+  hex strings too. `class_code` is the full 24-bit class/subclass/prog-IF
+  (e.g. `0x030000` = display/VGA, `0x010802` = NVMe).
+- **`bdf` is an exact string match** (e.g. `"0000:03:00.0"`) — pin one specific function
+  rather than match by vendor/class.
+- Matching is **first-come**: each enumerated BDF is claimed by at most one expectation
+  (in plan order), up to that expectation's `count`.
+
+#### Layer 1 — `chains[]` (optional, whole-path link diagnostics)
+
+Each entry diagnoses **every link in an endpoint's PCIe path** (root → … → endpoint),
+not just the endpoint's own link — errors are evaluated per-BDF and speed/width
+downgrades per-link along the path. Still Layer 1 (it tests links). Each entry is either:
+
+- a **string** endpoint BDF: `"0000:04:00.0"`, or
+- a **map**: `{endpoint: "0000:04:00.0", expected_speed: 4, expected_width: 16}` (the
+  `expected_*` are optional, same meaning as in `pcie_devices`).
+
+Omit `chains` entirely to skip whole-chain diagnostics.
+
+### Layer 2 — `functional_checks` (DEVICE health)
+
+A mapping of subsystem → list of OS handles. Each handle gets its own device-health
+check (these test the device, **not** its PCIe link). Omit a sub-key (or the whole
+`functional_checks` mapping) to skip that subsystem.
+
+| Sub-key | Handle type | Example | Check (mock pass values) |
+|---------|-------------|---------|--------------------------|
+| `nvme` | device path | `/dev/nvme0` | SMART vs new-drive limits (`critical_warning==0`, `media_errors==0`, no error-log entries, `percentage_used<2`, `available_spare>=100`, `temp<=70`) |
+| `gpus` | integer index | `0` | `ecc_uncorrected==0`, `temp<=85`, no thermal throttle, `replay<100`, link gen/width ≥ expected |
+| `gmsl` | i2c link id | `1-0029` | link locked, 1920×1080, frames captured > 0, no link errors |
+| `ethernet` | interface | `eth0` | link up, speed ≥ 1000 Mb, low errors, throughput ≥ 900 Mb |
+| `can` | interface | `can0` | not BUS-OFF, ERROR-ACTIVE, TEC/REC < 96 |
+
+(These map to the same checks as the `nvme`/`gpu`/`gmsl`/`eth`/`can` CLI subcommands in
+Section 3. The pass limits are constants in code today — see the Roadmap.)
+
+### Why YAML is primary (and JSON is a stdlib mirror)
+
+**`configs/example_topology.yaml` is the primary, annotated source of truth:**
+
+- **Comments.** YAML allows inline `#` comments, so the file can carry the two-layer
+  explanation, the GPU-in-both rationale, and per-field notes *inside* the config.
+- **Hex literals.** Vendor IDs, class codes, and BDFs are naturally hex
+  (`vendor_id: 0x10DE`, `class_code: 0x030000`); YAML accepts `0x…` literals directly,
+  so the file reads the way the values appear in `lspci`. (JSON has no hex literal, so
+  the mirror must use decimals like `4318`/`196608` — easy to mistranscribe.)
+
+**`configs/example_plan.json` is a no-dependency mirror** of the same plan: it loads with
+the Python **stdlib `json`** (no PyYAML needed), so the toolkit and its demo run on a
+bare interpreter. It uses decimal IDs and carries no comments, so it includes a top-level
+`"_comment"` string pointing back at the YAML for the annotated version. Keep the two in
+sync. If PyYAML is absent, loading a `.yaml`/`.yml` plan raises a clear "PyYAML not
+installed" error — use the `.json` mirror instead (see Section 1's extras table).
+
+### Fully annotated example
+
+```yaml
+# ---------------------------------------------------------------------------
+# TWO LAYERS, not duplication: pcie_devices (+chains) test the LINK to each
+# device; functional_checks tests the DEVICE itself. A GPU appears in both —
+# its link is Layer 1, its ECC/thermal is Layer 2.
+# ---------------------------------------------------------------------------
+
+# --- top-level knobs (apply to every Layer-1 BERT/retrain soak) ---
+target_ber: 1.0e-12      # prove BER <= 1e-12 ...
+confidence: 0.95         # ... at 95% confidence, to PASS the BERT
+bert_max_s: 30           # per-device BERT time cap (seconds)
+watch_retrains_s: 0.3    # link-training-bit watch window (seconds)
+
+# --- Layer 1: PCIe LINK / interconnect — tests the LINK to each device ---
+pcie_devices:
+  - name: GPU                                          # report label
+    match: {vendor_id: 0x10DE, class_code: 0x030000}   # NVIDIA display class (AND of both)
+    count: 2                                           # exactly two must enumerate
+    expected_speed: 4                                  # Gen4 (else "speed degraded")
+    expected_width: 16                                 # x16  (else "width degraded")
+    min_margin_ui: 0.25                                # per-lane margining floor (UI)
+  - name: NVMe
+    match: {class_code: 0x010802}                      # NVMe class; any vendor
+    count: 2
+    expected_speed: 4
+    expected_width: 4
+    min_margin_ui: 0.25
+  - name: CustomCard
+    match: {vendor_id: 0x1B36}                         # pin by vendor only
+    count: 1
+    expected_speed: 4                                  # mock trains Gen3 -> flagged degraded
+    expected_width: 8
+    # (no functional_checks entry below — a device may live in one layer only)
+
+chains:                                                # optional whole-path link diagnostics
+  - {endpoint: "0000:04:00.0", expected_speed: 4, expected_width: 16}
+
+# --- Layer 2: functional / DEVICE health — tests the DEVICE itself ---
+functional_checks:
+  nvme:     ["/dev/nvme0", "/dev/nvme1"]   # NVMe SMART (device paths)
+  gpus:     [0, 1]                         # SAME GPUs as the "GPU" link entry above —
+                                           #   Layer 1 tested their links; here we test
+                                           #   each GPU's ECC/thermal/throttle (indices)
+  gmsl:     ["1-0029"]                     # GMSL link+video (i2c link ids)
+  ethernet: ["eth0"]                       # Ethernet link (interfaces)
+  can:      ["can0"]                       # CAN state (interfaces)
+```
 
 ---
 
@@ -615,6 +807,12 @@ Point stations at a shared DB (`computetest plan ... --db results.db --station s
 --serial SNxxxx`); the dashboard shows per-station heartbeats, fleet yield, and the
 lowest-yielding tests.
 
+> **Set `COMPUTETEST_DB` to a file.** It defaults to `:memory:`, and the dashboard opens
+> a fresh connection per request — so an in-memory DB is per-request and **always empty**;
+> the page would show nothing. On startup the app logs a clear `WARNING` when `:memory:`
+> is in effect, and `/api/summary` returns a `db_warning` field, telling you to point it
+> at a shared file path (e.g. `COMPUTETEST_DB=results.db`).
+
 ---
 
 ## 6. Safety
@@ -639,9 +837,13 @@ link.
   TX presets and retrains — both depend on uneven kernel/vendor support. They are
   therefore **mock-only until validated on your hardware**: on the real backend
   `margining._real_margin_lane` and `characterize_equalization` raise
-  `NotImplementedError`, which the CLI maps to **exit `5` (capability unavailable)**. The
-  mock paths work everywhere for development and demos. Wire the real path to your
-  validated kernel/vendor margining flow before enabling it on a station.
+  `NotImplementedError`. Invoked standalone, the CLI maps that to **exit `5`
+  (capability unavailable)**. Inside `diagnose`, the margining step is **wrapped**: a
+  `NotImplementedError` (or any margining fault) is caught and recorded as
+  `margin.available = false` with the reason, and the rest of the diagnostic — link, AER,
+  and the BERT — **still completes** (a guarded margining path no longer aborts the whole
+  report on a real Gen4+ device). The mock paths work everywhere for development and demos.
+  Wire the real path to your validated kernel/vendor margining flow before enabling it.
 
 ---
 
@@ -654,6 +856,8 @@ link.
 | `bert`/`diagnose` "seems hung" for ~12 s | Expected: the default 1e-12 / 95% run needs ≈ 3×10¹² bits ≈ 12 s at Gen4 x16 to prove the target | Wait; or smoke-test with `--target-ber 1e-9` and/or `--max-seconds`. Narrow (x4) links take longer to accrue bits. |
 | `diagnose`/`plan` reports `FAIL` with **zero errors** and `CL≈0.85` | Not "errored" — the BERT ran out of bits/time before *proving* the strict target (1e-12) on a narrow link | Increase `--max-seconds`/`bert_max_s`, use `--engine c`, or lower `target_ber` for a quick check |
 | `error: not available on this backend/hardware: Real lane margining needs per-hardware validation…` (exit `5`) | Real lane margining / eq sweep is intentionally guarded (mock-only) | Run with `--backend mock` (or on a laptop), or wire `margining.py` to your validated hardware path. Use `--no-margin` on `diagnose` to skip. |
+| `bert`/`diagnose`/`chain` exits `5` (not `0` or `1`) with status `"skip"` | The device exposes no PCIe error source (no AER and no Device Status), so the BERT couldn't measure — *not* a fail, *not* a pass | Target a function that has AER/Device Status; check enumeration (`computetest list`). Exit `5` means "couldn't measure", so re-check coverage/wiring rather than scrapping the unit. |
+| Dashboard loads but shows no data / 0 results, log says `COMPUTETEST_DB is ':memory:'` | The default in-memory DB is per-request and empty | Set `COMPUTETEST_DB=results.db` (a shared file path) before launching, and point stations at the same file via `--db results.db` |
 | `error: device/target not found: …` (exit `3`) | BDF/index/interface doesn't exist (typo, or wrong backend) | Run `computetest list` to see real BDFs; check you're on the intended backend (banner on stderr) |
 | `error: config/IO: [Errno 2] No such file or directory: …` (exit `4`) | Plan/config path is wrong or unreadable | Check the path; run from `toolkit/` so `configs/…` resolves |
 | `error: C engine not found: c/pcie_bert (build it with: make -C c)` (exit `4`) | Used `--engine c` without building it | `make -C c`, then re-run (with `sudo` on real hardware) |
