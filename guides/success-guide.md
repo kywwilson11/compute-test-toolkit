@@ -6,17 +6,23 @@ date: "May 2026"
 
 # How to Use This Guide
 
-Guide A makes you technically dangerous on day one. This guide is about everything *around*
-the technical work that actually determines whether you succeed: how you ramp, who you work
-with, how you debug under pressure, how you support contract manufacturers, how you
-communicate findings, how you drive improvement, and how you land the tools you bring without
-overstepping.
+The **Study Guide** (`zoox-study-guide.pdf`) makes you technically dangerous on day one — the
+registers, the math, the interfaces. This guide is about everything *around* that technical
+work that actually determines whether you succeed: how you ramp (technically *and*
+relationally — both tracks live here), who you work with, how you debug under pressure, how you
+support contract manufacturers, how you communicate findings, how you drive improvement, and
+how you land the tools you bring without overstepping.
 
-You are a **senior hire** (8+ years; you have ~13). That changes the job in a specific way:
-nobody is going to hand you tickets. Success is measured by **judgment and ownership** — can
-you take an ambiguous problem ("this new board needs test coverage") and turn it into a
-deployed, trusted, fast test program with the right people bought in. The technical skill is
-table stakes; the senior skill is everything in this guide.
+You're coming in as a **Test Engineer**, but you bring **senior-level experience** (~13 years)
+to the role. You interviewed for the senior title; the team chose to start you as a Test
+Engineer — which is a gift, not a demotion: less title pressure, more room to ramp, learn the
+line, and build trust before the spotlight is on you. With your depth, the track to senior
+should be *shorter than usual* — so treat this guide as your fast track to earning it. That
+experience already changes the job in a specific way: nobody is going to hand you tickets.
+Success is measured by **judgment and ownership** — can you take an ambiguous problem ("this
+new board needs test coverage") and turn it into a deployed, trusted, fast test program with
+the right people bought in. The technical skill is table stakes; the senior-level judgment in
+this guide is what earns the promotion fast.
 
 > **The one sentence for this guide:** *Earn trust fast by shipping small correct things,
 > then use that trust to make the test process measurably better — without breaking the line
@@ -32,17 +38,73 @@ guide is about scaling what you already do well.
 
 \newpage
 
-# The First 90 Days (Relationships and Ownership)
+# The First 90 Days
 
-Guide A has the *technical* ramp. This is the *people-and-judgment* ramp. They run in
-parallel.
+Your first 90 days run on **two tracks at once**, and they're complementary, not sequential.
+The **technical ramp** is what to learn and do with the *hardware* — get a station, build the
+platform map, own an interface, debug to root cause. The **relational/ownership ramp** is the
+*people-and-judgment* side — earn trust, map the org, change nothing big until you've earned
+the context, then demonstrate independent judgment. The same calendar drives both: the
+technical track gives you something concrete to ship; the relational track makes sure shipping
+it builds trust instead of friction. Read them together — each week below has a technical job
+*and* a people job.
 
-## Days 1–30: Earn trust, learn the system, change nothing big
+The deep technical detail behind every hardware task below — the registers, the bring-up
+order, the BERT math, the per-lane margining — lives in the **Study Guide**; this is the
+*sequence* and the *judgment* for applying it on a live line.
+
+## Track 1 — The Technical Ramp (what to do with the hardware)
+
+**Week 1 — orient and observe.**
+
+- Get a station and the current Linux test image; get accounts/access (results DB, dashboard,
+  source control, the issue tracker).
+- Run the *existing* test program on a known-good unit end to end. Read its code. Map it to
+  the four manufacturing phases (PCBA / module / system / vehicle). Find where results land.
+- Build the platform's topology in your head: pull `lspci -t`, `nvme list`, and `nvidia-smi
+  topo -m` on a real unit; sketch the root ports, switches, retimers, GPUs, NVMe drives, GMSL
+  deserializers, NICs, and CAN. *Don't change anything* — read-only, learn the normal so you'll
+  recognize the abnormal.
+- Run the toolkit you brought, in mock mode, and show one person. (See "Landing the Tools You
+  Bring" below for how to introduce it without overstepping.)
+
+**Month 1 — own a corner.**
+
+- Take ownership of one interface's test (likely PCIe — your strength). Understand its current
+  coverage, limits, and failure history from the data.
+- Reproduce a known failure mode deliberately and watch every counter, so you *trust* the test
+  before you change it.
+- Make one small, safe improvement: better failure logging, an AER decode on a fail, a clearer
+  operator message. Land it through the team's release process. First contribution = trust
+  deposited.
+
+**Months 2–3 — improve and extend.**
+
+- Pick a real continuous-improvement target from the data: a top Pareto failure mode, a slow
+  test step, or a coverage gap (e.g., "we pass on link-up but don't measure per-lane margin").
+  Propose it with data, build it, correlate on golden units, release it.
+- Support a new-board bring-up or a new HW generation with EE — the JD's "support test and
+  validation of prototype designs." This is where the Study Guide's PCIe bring-up checklist
+  earns its keep.
+- Be the person who, when a board fails intermittently under thermal load, reaches for the AER
+  decode *and* the scope and closes it to a named cause.
+
+**What "ramped" looks like at 90 days (technical):** you can take a new board from EE, stand up
+coverage across the right phases, set data-driven limits, deploy it to a line or a CM, and
+debug a hardware failure to a physical root cause — independently. That's the JD, delivered.
+
+## Track 2 — The Relational and Ownership Ramp (how trust gets built)
+
+The technical track above is necessary but not sufficient: *how* you ramp determines whether
+each shipped thing earns trust or burns it. The same 30/60/90 windows, viewed through people
+and judgment.
+
+### Days 1–30: Earn trust, learn the system, change nothing big
 
 Your only goals this month are to **become useful at the existing process** and to **map the
 human and technical system**. Resist the urge to redesign anything yet — you don't have the
-context, and "the new senior person who immediately wanted to rewrite everything" is a
-reputation that takes a year to undo.
+context, and "the experienced new hire who immediately wanted to rewrite everything" is a
+reputation that takes a year to undo (and the surest way to *slow* your track to senior).
 
 - **Learn the existing test program cold** before proposing changes to it. Run it, read it,
   trace a unit through it, find its failure history in the data. Assume it's the way it is
@@ -57,7 +119,7 @@ reputation that takes a year to undo.
   improvement — landed through the real release process. The point isn't the impact; it's
   proving you can move something through the system correctly and safely.
 
-## Days 31–60: Own a corner, contribute visibly
+### Days 31–60: Own a corner, contribute visibly
 
 - **Take ownership of one interface or test area** (PCIe is the natural fit). Become the
   person people ask about it.
@@ -66,7 +128,7 @@ reputation that takes a year to undo.
 - **Start being the debugger.** When a hard failure shows up in your area, take it, work it
   to root cause, and write up what you found clearly. Each closed bug is trust deposited.
 
-## Days 61–90: Demonstrate independent judgment
+### Days 61–90: Demonstrate independent judgment
 
 - **Run a continuous-improvement project end to end** — pick it from the data (top Pareto
   failure, slow step, missing coverage), drive it, measure the before/after, present the win.
@@ -76,8 +138,15 @@ reputation that takes a year to undo.
   better CM correlation, faster soaks via confidence targets) — informed by 90 days of
   context, not day-one opinions.
 
-What success looks like at 90 days: your manager trusts you with an ambiguous, important
-problem and doesn't worry about it. That's the whole game.
+Notice the CI project and the bring-up appear on *both* tracks — that's not redundancy. The
+technical track says "stand up coverage for hardware with no test"; the relational track says
+"do it visibly, with the data, in a way that signals judgment." Same work, two lenses; doing
+both is what makes a single act of work also an act of trust-building.
+
+What success looks like at 90 days, where the two tracks meet: your manager hands you an
+ambiguous, important problem ("this new board needs coverage") and doesn't worry about it —
+because you've proven you can take it to a deployed, trusted, root-caused result without
+breaking the line. That's the whole game.
 
 \newpage
 
@@ -103,6 +172,23 @@ the burden on you to prove it. "Lane 7 shows 40 Replay-Timer correctable errors/
 appear only above 70 °C, here's the margining sweep and the rail scope" puts a defect in
 front of EE that's hard to wave off. **Be the test engineer whose failures EE believes.**
 
+The relationship that will *test your discipline most* is **with SW/FW**, because of one
+recurring ambiguity: when a test starts failing after a BSP/driver/firmware update, is it a
+test regression or did the new image break the hardware path? You resolve this by **pinning and
+logging every version** (kernel, BSP, driver, FW slot, test-program version) with every result,
+so you can answer "what changed" in seconds instead of a day of finger-pointing. The engineer
+who can say "the test code is byte-identical to last week; only the driver moved from X to Y,
+and the failure tracks the driver" is the one who keeps that relationship collaborative instead
+of adversarial.
+
+A note on **cadence**: these aren't one-time introductions. The healthy pattern is a standing
+light touch — you in EE's bring-up reviews, a recurring yield/Pareto sync with quality, a quick
+channel with the CM's lead engineer — so issues surface as small early signals, not as
+escalations. The PM relationship runs on one rule: **no surprises.** A schedule risk flagged
+three weeks out with two options is a planning input; the same risk surfaced the day the
+deliverable is due is a fire. Senior reads as *predictable*, and predictability is mostly about
+when you raise things, not whether you hit every date.
+
 \newpage
 
 # Ramping Without Breaking the Line
@@ -125,8 +211,18 @@ costs real money and credibility. The discipline:
 - **Change one thing, measure, then the next.** When debugging or tuning, single-variable
   discipline. The temptation under line-down pressure is to change five things; that's how
   you "fix" it without knowing why and have it return next week.
-- **Know how to roll back.** Every release should be revertible. Knowing you can undo lets
-  you move faster safely.
+- **Roll out staged, not all-at-once.** When you can, prove a release on one station (or one
+  shift, or a small unit count) and watch the yield before pushing it to every station and
+  every CM. A limit that false-fails shows up as a yield dip on the canary station — caught on
+  one line, not discovered simultaneously across three sites. This is the manufacturing version
+  of a canary deploy.
+- **Watch the yield after every release.** A release isn't "done" when it ships; it's done when
+  the post-release yield and failure-Pareto look like you predicted. A silent yield drop right
+  after your change is the change, until proven otherwise — so look, don't assume.
+- **Know how to roll back.** Every release should be revertible, and rollback should be the
+  *first* move when a release misbehaves on the line — revert, restore flow, then debug at the
+  bench. Diagnosing on a stopped line wastes money you can save by reverting first. Knowing you
+  can undo cleanly is what lets you move faster safely.
 
 > Your "restart-from-any-keyword" snapshot feature at 2G is the same instinct applied to
 > operators: design for recovery, assume things will fail mid-process, make the safe path the
@@ -134,11 +230,13 @@ costs real money and credibility. The discipline:
 
 \newpage
 
-# The Senior Test Engineer Mindset
+# Thinking Like a Senior — Your Fast Track to the Title
 
 A few principles that separate senior test judgment from script-writing. These are the things
-to *say* and *live*, because they're what the manager, senior engineer, and director
-interviews were really probing for — and what the job rewards.
+to *say* and *live* — they're what the manager, senior engineer, and director interviews were
+really probing for, what the job rewards, and the clearest way to earn the senior title faster
+than the calendar would. You don't need the title to think this way; thinking this way is how
+you get it.
 
 **Ship only good units.** The test exists to protect the vehicle and the brand from a
 marginal board. When you're tempted to loosen a limit to recover yield, the question is "does
@@ -151,18 +249,20 @@ limits buy yield but risk escapes. Every test decision moves these three. Senior
 that trade *consciously and with data*, and being able to explain the trade you chose.
 
 **Data over opinion, always.** "I think the limit should be 50 mV" loses to "the fleet
-distribution is 20±5 mV, Cpk against a 50 mV limit is 2.0, here's the histogram." Capture
-parameters, build the distribution, set the limit from it. This is your superpower — you
-already think this way (the bilinear torque model, R² thresholds). Apply it to limits.
+distribution is 20 ± 5 mV, $C_{pk}$ against a 50 mV limit is 2.0, here's the histogram."
+Capture parameters, build the distribution, set the limit from it. This is your superpower —
+you already think this way (the bilinear torque model, R² thresholds). Apply it to limits.
 
 **A failure is a question, not a verdict.** When a unit fails, the job isn't "mark it bad" —
 it's "what does this tell us." Is it a real defect (which kind, where), a marginal unit, a
 test problem, or a process drift? Good test engineers treat every fail as information about
 the *process*, not just the unit.
 
-**The cheapest defect is the one caught earliest.** Internalize the 10× curve (Guide A). Your
-instinct should always be "what's the earliest phase that can catch this," and a low-grade
-discomfort whenever a defect is found later than it could have been.
+**The cheapest defect is the one caught earliest.** Internalize the 10× curve (the Study
+Guide's Manufacturing-Test chapter): cost to find a defect rises ~10× per phase it escapes to
+(PCBA 1x, module 10x, system 100x, vehicle 1000x, field 10,000x). Your instinct should always
+be "what's the earliest phase that can catch this," and a low-grade discomfort whenever a
+defect is found later than it could have been.
 
 **Test the thing, not the test.** Beware tests that pass because they don't actually exercise
 the failure mode (a "BERT" on an idle link, a thermal test that never gets hot, a link test
@@ -173,9 +273,10 @@ test. Always ask: what defect would this catch, and have I proven it catches it?
 
 # A Systematic Debugging Method
 
-Guide A gave you the *reflex*; here's the explicit *method* for when a board fails and people
-are waiting. It works because it's evidence-driven and avoids the two failure modes of
-debugging under pressure: guessing, and changing many things at once.
+The Study Guide gave you the *reflex* — failure → enumerate → `dmesg` → counters → isolate →
+measure → decode to a part. Here's the explicit *method* for when a board fails and people are
+waiting. It works because it's evidence-driven and avoids the two failure modes of debugging
+under pressure: guessing, and changing many things at once.
 
 1. **Reproduce and define "failed."** Get a precise, repeatable failure. "Sometimes flaky"
    is not yet a bug — pin down the exact symptom, rate, and conditions (temperature? load?
@@ -183,8 +284,9 @@ debugging under pressure: guessing, and changing many things at once.
    reproducible.
 2. **Read what the system already recorded.** `dmesg`, the test logs, the counters (AER, ECC,
    EDAC, SMART). Most hardware failures already told you what happened; read before you poke.
-3. **Localize by layer and by swap.** Use the layer the error names (Guide A's AER/XID/error
-   tables) to pick physical vs protocol. Then isolate by swapping: known-good unit in the
+3. **Localize by layer and by swap.** Use the layer the error names (the Study Guide's PCIe and
+   GPU chapters — AER correctable/uncorrectable bits, GPU XID codes, the error tables) to pick
+   physical vs protocol. Then isolate by swapping: known-good unit in the
    failing slot, failing unit in a known-good slot — does the failure follow the unit or stay
    with the station/slot? This one technique resolves a huge fraction of "is it the board or
    the fixture" questions.
@@ -200,6 +302,23 @@ debugging under pressure: guessing, and changing many things at once.
 7. **Write it down so the next person doesn't re-walk it.** A short, clear writeup with the
    evidence. This is how a debug becomes institutional knowledge and how you build a
    reputation as the person who actually closes things.
+
+**Bisect, don't crawl.** When the fault could be anywhere along a chain — a range of FW/driver
+versions, a long signal path with retimers and connectors, a sequence of test steps — halve the
+search space each step instead of walking it linearly. *Versions:* a failure that appeared
+between two releases is a `git bisect` over the versions, not a line-by-line code read.
+*Topology:* on a cabled board-to-board link, lane margining at the retimer's receiver (the
+Study Guide's PCIe chapter) localizes a marginal eye to "before vs after the retimer" — board
+trace vs cable — in one measurement. *Process:* swap good/bad across slot, fixture, cable, and
+unit to find which variable carries the failure. One good bisection step is worth ten guesses.
+
+**Know when to stop and escalate — with evidence, not a shrug.** Single-variable rigor is not
+the same as working a problem alone forever. If you've localized the failure to a layer you
+don't own (a driver bug, a silicon erratum, a design marginality) or you're past the point of
+diminishing returns, the senior move is to hand it off *with the evidence package already
+built* — decoded errors, the swap matrix, the conditions, the bisection result — so EE or SW
+picks it up at step 5, not step 1. Escalating a well-characterized problem is closing it, not
+giving up; escalating "it's broken" is the thing to avoid.
 
 The trap to avoid under line-down pressure is **shotgunning** — changing several things to
 make it go away. It sometimes "works" and always leaves you without a root cause, so it comes
@@ -229,7 +348,7 @@ tests on units you may never physically touch.
 - **Logs are your eyes.** You debug CM failures through logs and remote access. Every test
   must log enough — measured values, decoded errors, dmesg snippets, versions — that you can
   diagnose a failure from the record alone. The "attach the evidence to the failure" habit
-  from Guide A is non-negotiable here.
+  the Study Guide teaches is non-negotiable here.
 - **Documentation and training.** The CM's operators and engineers run your program. They
   need setup docs, a clear runbook, fixture instructions, and a triage guide for common
   fails. You'll train remotely; assume nothing is obvious.
@@ -281,11 +400,25 @@ argue for better monitoring, you *built* it and let it sell itself. Look for the
 version of that (fleet yield/runtime visibility, failure-mode dashboards) once you've earned
 the context to build it.
 
-**Influence without authority.** As a senior individual contributor you'll often need EE or
-SW to do something and have no authority to make them. What works: bring data not opinions,
+**Influence without authority.** As an experienced individual contributor you'll often need EE
+or SW to do something and have no authority to make them. What works: bring data not opinions,
 frame it as *their* problem solved (a defect they'd want caught, a driver bug repro'd cleanly),
 and make the ask small and specific. The dashboard story is the pattern — solve the real
 problem, show it, let adoption follow.
+
+**Communicate the incident, not the panic.** When a line is down — yours or a CM's — the
+update that calms the room has four parts and fits in five lines: **impact** (which line, how
+many units blocked, since when), **status** (what you know and what you're doing right now),
+**ETA or next checkpoint** ("rolling back now, flow restored in ~15 min" or "next update in 30
+min"), and **the ask** (what you need and from whom). Send it early, send it on a clock, and
+update on the cadence you promised. Silence during an incident reads as "out of control" even
+when you're making progress; a steady, structured drumbeat reads as "this is handled."
+
+**Deliver bad news early and straight.** A slipping schedule, a coverage gap you found, a unit
+that escaped — surface it the moment you're confident, with the impact and your proposed
+options, not after it's unrecoverable. Engineers and managers forgive a problem raised early
+with a plan; they don't forgive being surprised by one you sat on. "Here's the issue, here's
+what I recommend, here's the call I need from you" is how a senior raises a problem.
 
 **Disagree and commit.** You'll sometimes lose an argument about a limit or a coverage call.
 State your case once, clearly, with data; if the decision goes the other way, commit to it
@@ -315,11 +448,27 @@ correlate on golden units → deploy → **measure the before/after** → report
 without a measured delta is just a change. The measurement is what makes it a contribution and
 what makes the next one easier to get approved.
 
+**Translate the delta into the language the business runs on.** "Cut the soak from 300 s to
+90 s" is an engineering result; "freed 3.5 min/unit, which at this line's takt is roughly one
+extra unit per station-hour" is an impact your manager can take upward. Runtime maps to
+**throughput and capacity**; yield maps to **scrap/rework cost and units shipped**; deployment
+speed maps to **time-to-ramp a new board or CM**. You don't need precise dollars, but framing
+the win in throughput/yield/ramp terms is what turns "a nice optimization" into "a result with
+my name on it" — and it's the difference the promotion case is built from.
+
+**Don't optimize a metric that doesn't matter — or game one that does.** Shaving runtime off a
+test step that isn't the takt bottleneck moves nothing; find the *constraint* first (the
+slowest step gating throughput) and work that. And never "improve yield" by quietly loosening a
+limit — that's gaming the number while raising the escape rate, the cardinal sin on
+safety-critical compute. A real CI win improves the metric *without* trading away coverage or
+correctness; if a change helps one leg of the coverage/runtime/yield triad by hurting another,
+say so explicitly and make the trade consciously.
+
 **Examples sized for your first year:**
 
-- *Runtime:* replace a fixed, padded soak with a **confidence-target BERT** (Guide A's math) —
-  run exactly long enough to prove 1e-12 at 95% and stop. Often a large, safe time win with a
-  statistical guarantee.
+- *Runtime:* replace a fixed, padded soak with a **confidence-target BERT** (the Study Guide's
+  Math chapter) — run exactly long enough to prove a BER below 1e-12 at 95% confidence, then
+  stop. Often a large, safe time win with a statistical guarantee.
 - *Yield:* a top failure mode is "PCIe link marginal" with no diagnostic — add **lane
   margining** so marginal-but-passing units are caught earlier and real defects come with
   evidence, *and* set the limit from the fleet distribution instead of a guess.
@@ -342,9 +491,9 @@ as a checklist of "things I'm quietly expected to be good at."
 ## Lab instrumentation & physical-layer measurement *(hidden in "control test instruments")*
 
 - **Bench-instrument fluency** and *what each proves on a compute board*: rail voltages under
-  load, ripple/noise, power-up sequencing, inrush, PERST#/reset timing (Guide A's Instruments
-  chapter). Not "I've seen a scope" — "I scope the rail AC-coupled under the load profile that
-  triggers the AER burst."
+  load, ripple/noise, power-up sequencing, inrush, PERST#/reset timing (the Study Guide's
+  Power and Manufacturing-Test chapters). Not "I've seen a scope" — "I scope the rail
+  AC-coupled under the load profile that triggers the AER burst."
 - **Instrument automation stack:** VISA/SCPI over LAN/LXI/USB/GPIB, and a shared-instrument
   server for multi-station benches (your `equipment_rpc.py`).
 - **Measurement discipline:** 4-wire/Kelvin for low-R and shunts, settling/averaging, fixed vs
@@ -367,9 +516,9 @@ as a checklist of "things I'm quietly expected to be good at."
 ## Data systems, statistics & continuous improvement *(hidden in "analyze results", "yield")*
 
 - **SPC, $C_{pk}$/$P_{pk}$, GR&R/MSA, FPY/RTY, guard-banding, data-driven limit setting** — the
-  statistical backbone of "improve yield" (Guide A's Mass-Production chapter has the detail).
-  This is the difference between "I set the limit at 50 mV" and "the fleet is 20 ± 5 mV, $C_{pk}$
-  against 50 mV is 2.0, here's the histogram."
+  statistical backbone of "improve yield" (the Study Guide's Manufacturing-Test and Math
+  chapters have the detail). This is the difference between "I set the limit at 50 mV" and "the
+  fleet is 20 ± 5 mV, $C_{pk}$ against 50 mV is 2.0, here's the histogram."
 - **A results database + dashboards at fleet scale; Pareto + RCA (5-whys/fishbone)** to pick and
   close the top failure modes; **closed-loop CI** (baseline → change → correlate → deploy →
   measure delta).
@@ -458,7 +607,7 @@ one line ever runs on a Zoox station.
 
 # Pitfalls to Avoid
 
-The common ways a strong senior hire stumbles in the first months — forewarned:
+The common ways a strong, experienced new hire stumbles in the first months — forewarned:
 
 - **Rewriting everything immediately.** You don't have the context yet. Earn it first; the
   existing system has reasons. Ship small, then reshape.
@@ -486,8 +635,11 @@ The common ways a strong senior hire stumbles in the first months — forewarned
 # Living the Leadership Principles (For a Test Engineer)
 
 Zoox operates within Amazon, so the Leadership Principles are the cultural backbone and showed
-up in your interviews. The point isn't to recite them — it's to *live* them in concrete
-test-engineering behavior:
+up in your interviews — and they're not just interview theater: at Amazon/Zoox they are the
+literal axes a promotion case is written and evaluated against. So living them visibly *is* the
+mechanism by which a Test Engineer with senior-level depth gets recognized as senior. The point
+isn't to recite them — it's to *live* them in concrete test-engineering behavior, and to have a
+real story for each:
 
 - **Customer Obsession** — your customers are the **rider's safety** and the **operator/CM**
   who runs your test. "Ship only good units" is customer obsession for a robotaxi; an
@@ -505,13 +657,25 @@ test-engineering behavior:
 - **Invent and Simplify** — the confidence-target BERT and margining-based limits are invention;
   config-over-code and a clean result schema are simplification.
 - **Are Right, A Lot / Have Backbone; Disagree and Commit** — argue the limit with data, then
-  commit to the decision; revisit with new data, don't re-litigate.
+  commit to the decision; revisit with new data, don't re-litigate. (Two distinct principles
+  Amazon lists separately, but for a test engineer they're the same muscle: be right because
+  you're data-driven, push when you believe it, commit once the call is made.)
 - **Frugality** — you built the dashboard with no budget on a spare PC. Build-vs-buy judgment and
-  doing more with less is a strength here, not a constraint.
+  doing more with less is a strength here, not a constraint; a confidence-target soak that frees
+  station time is frugality with the line's capacity.
+- **Learn and Be Curious** — the whole 90-day ramp is this principle: read the framework, pull
+  the topology, learn the silicon you haven't touched (GMSL, the specific GPUs), ask EE *why* a
+  limit is where it is. Your build-to-learn instinct (the toolkit you wrote at home) is this
+  principle made visible.
+- **Deliver Results** — the one the promotion case leans on hardest: not "I worked on PCIe test"
+  but "I cut a module-test soak from 300 s to 90 s with a statistical guarantee and zero
+  escape-rate increase, deployed across two sites." Tie every effort to a measured outcome and
+  you're speaking the language seniority is judged in.
 
-When a behavioral question comes (and they come woven into technical discussions, per your
-study guide), these are lived examples, not memorized values — which is exactly what they're
-listening for.
+When a behavioral question comes (and they come woven into technical discussions, per the Study
+Guide), these are lived examples, not memorized values — which is exactly what they're listening
+for. The strongest answers are STAR-shaped (Situation, Task, Action, Result) and land on a
+*measured* result, because that's where Deliver Results and Dive Deep both get scored.
 
 \newpage
 
@@ -535,9 +699,25 @@ board bring-up; watch operators run the test (you'll learn more about your test'
 hour of watching than a week of reading); ask the quality team what field returns actually look
 like.
 
-**Build the platform map yourself:** on a real unit, pull the full topology and trace a unit
-through the four phases. The mental model of "what's connected to what and what's tested where"
-is the foundation everything else hangs on, and building it yourself cements it.
+**Build the platform map yourself:** on a real unit, pull the full topology (`lspci -tv`,
+`nvme list`, `nvidia-smi topo -m`) and trace a unit through the four phases. The mental model of
+"what's connected to what and what's tested where" is the foundation everything else hangs on,
+and building it yourself cements it.
+
+**Produce artifacts as you learn, don't just absorb.** You retain (and signal competence) by
+making things, not by reading. Concretely, in the first weeks aim to produce: a **one-page
+topology diagram** of the compute platform (root ports → switches/retimers → GPUs/NVMe/GMSL/
+NICs); a **failure-Pareto** of your interface pulled from the results DB; a short **"how the
+existing test program works"** writeup mapping each step to a phase and a defect class; and a
+**glossary of the local vocabulary** (their names for stations, fixtures, board revs, the
+release process). These double as your learning record and as early, low-risk contributions the
+team can actually use.
+
+**A learning checkpoint at each window.** By **30 days** you should be able to draw the topology
+from memory and run the existing program unaided. By **60 days** you should know your interface's
+coverage, limits, and top failure modes cold, and have read the spec chapters behind the
+registers you touch. By **90 days** you should be able to stand up coverage for a *new* board
+from its schematic — the point where reading has turned into capability.
 
 \newpage
 
@@ -560,7 +740,8 @@ yield and runtime improvements with your name on them. EE and SW seek you out du
 because your evidence makes their job faster.
 
 That arc — useful, then trusted, then shaping the strategy — is the whole job. You've walked a
-version of it before at smaller scale. Walk it again, bigger, and you'll have done exactly what
-they hired a senior engineer to do.
+version of it before at smaller scale. Walk it again, bigger, and you'll have done exactly the
+senior-level work you were brought in to do — and turned a Test Engineer title into a senior
+one faster than anyone expected.
 
 Go get it.

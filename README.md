@@ -19,7 +19,7 @@ test & diagnostics): two deep prep guides and a working, tested test toolkit.
     ├── src/computetest/           # PCIe BERT + diagnostics + NVMe/GPU/GMSL/Eth/CAN + harness
     ├── dashboard/app.py           # FastAPI results + heartbeat dashboard
     ├── configs/                   # example test plans (JSON + YAML)
-    ├── tests/                     # 48 pytest tests (all run on the mock backend)
+    ├── tests/                     # 281 pytest tests (all run on the mock backend)
     └── demo_bert.py
 ```
 
@@ -32,7 +32,7 @@ test & diagnostics): two deep prep guides and a working, tested test toolkit.
    cd toolkit
    make demo        # PCIe BERT across a simulated board
    make plan        # full multi-interface test plan
-   make test        # 48 tests
+   make test        # 281 tests
    ```
    See **`toolkit/USAGE.md`** for the step-by-step usage guide (per-command reference,
    exit codes, `--json` shapes, writing test plans, running on a real Linux station,

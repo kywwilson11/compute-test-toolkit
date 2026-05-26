@@ -202,7 +202,8 @@ You build a small matrix:
 | Inter-module link marginal | System | System link enumeration + stress |
 
 You will not get this matrix perfect on day one — nobody does. But showing up
-*thinking in this matrix* is what separates a senior hire from a script-runner.
+*thinking in this matrix* is what separates senior-level judgment from a script-runner —
+and it's the fastest way to show the depth you brought with you.
 
 > **Day-one talking point.** "I think about test coverage as a placement problem:
 > for each defect class, find the earliest, cheapest phase that can detect it, and
