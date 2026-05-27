@@ -14,6 +14,7 @@ pandoc study-guide/_assembled.md \
   -V colorlinks=true -V linkcolor=RoyalBlue -V urlcolor=RoyalBlue -V toccolor=black \
   --toc --toc-depth=2 --number-sections \
   -H header.tex \
+  --lua-filter=breakcode.lua \
   --syntax-highlighting=tango \
   -o pdf/zoox-study-guide.pdf 2> >(grep -i "missing character" | sort -u >&2 || true)
 

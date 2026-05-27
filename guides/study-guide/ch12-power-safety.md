@@ -2,8 +2,8 @@
 
 The most common pattern in compute-board debugging is this: what looks like a PCIe
 enumeration failure, a SerDes lock problem, or an Error-Correcting Code (ECC) storm turns out to be a power
-problem in disguise. A 0.8V core rail that sequenced 2 ms late, a 1.1V DDR rail
-drooping 6% under load, a switching regulator coupling 40 mVpp into an analog PLL
+problem in disguise. A 0.8V core rail that sequenced 2 ms late, a 1.1V Double Data Rate (DDR) rail
+drooping 6% under load, a switching regulator coupling 40 mVpp into an analog Phase-Locked Loop (PLL)
 supply — all of these manifest first as link errors and GPU faults. They do not look
 like power problems because the digital subsystem is the part that screams. This
 chapter builds the instincts to reach for the right tool — scope, DMM, IPMI, `dmesg`,
@@ -32,11 +32,11 @@ manufacturing test.
 | Primary input | 12V (or 48V in newer designs) | +/-5% | From vehicle power bus via connector |
 | 5V standby | 5.0V | +/-3% | Always-on for BMC, RTC, wake logic |
 | 3.3V peripheral | 3.3V | +/-5% | PHYs, SerDes, flash, GPIOs |
-| 1.8V I/O | 1.8V | +/-3% | System-on-Chip (SoC) I/O, LPDDR support, PCIe side-band |
+| 1.8V I/O | 1.8V | +/-3% | SoC I/O, LPDDR support, PCIe side-band |
 | 1.1V DDR | 1.1V | +/-3% | DDR5 VDD; critical for array stability |
-| 0.8-1.0V core | varies by chip | +/-3% | SoC/GPU/Field-Programmable Gate Array (FPGA) compute core; highest current |
+| 0.8-1.0V core | varies by chip | +/-3% | SoC/GPU/FPGA compute core; highest current |
 | PLL / analog | 1.0-1.8V (clean) | +/-2% | SerDes, PLL; ripple spec tighter than logic |
-| PoC (Power over Coax) | 6-12V | +/-10% | Gigabit Multimedia Serial Link (GMSL) camera supply through the coax link |
+| PoC (Power over Coax) | 6-12V | +/-10% | GMSL camera supply through the coax link |
 
 The primary input arrives from the vehicle power bus (12V in traditional vehicle
 architectures, 48V in some newer designs) through a connector, possibly an eFuse or
@@ -78,7 +78,7 @@ internal sequencing registers. In manufacturing test, the PMIC's fault status re
 are readable over I2C or Power Management Bus (PMBus) — they tell you *which* rail tripped and *why* (OV/UV/OC
 event) rather than just that PWRGOOD went low.
 
-**VRM / multi-phase buck (Voltage Regulator Module):** For high-current rails (GPU/SoC
+**VRM / multi-phase buck (Voltage Regulator Module):** For high-current rails (GPU/System-on-Chip (SoC)
 core can demand 50-200A), the board uses a multi-phase synchronous buck VRM. Each
 phase delivers a fraction of the total current and interleaves switching at an offset
 phase angle, which multiplies the effective ripple frequency and reduces per-phase
@@ -87,7 +87,7 @@ vias, package inductance, die capacitance) determines load-transient response an
 ripple at the load.
 
 **Point-of-load regulators (POLs):** Small LDOs or single-phase bucks close to a
-sensitive load (SerDes PLL, DRAM VTT, FPGA analog supply). They often have tighter
+sensitive load (SerDes PLL, Dynamic Random-Access Memory (DRAM) VTT, Field-Programmable Gate Array (FPGA) analog supply). They often have tighter
 ripple specs than the main rails and are the ones where a bad probe tip with a long
 ground clip will fool you into thinking there is more noise than there actually is.
 
@@ -119,7 +119,7 @@ not a suggestion. Violating it causes:
   ID, or wrong SerDes mode.
 - **DDR training failures:** DDR controllers must see VDD, then VPP/VTT, then begin
   training against a stable array. Out-of-order rail arrival causes training to run
-  against an unstable reference → intermittent Error-Correcting Code events that look random because
+  against an unstable reference → intermittent ECC events that look random because
   they only appear under combinations of temperature and load that stress the
   marginally-trained DDR.
 
@@ -247,7 +247,7 @@ bench hacks:**
    pads near the load.
 4. **Probe at the load's bulk decoupling capacitor**, not at the regulator output. The
    spec is what the device sees, which is at its own decoupling caps, downstream of
-   the Power Delivery Network inductance.
+   the PDN inductance.
 5. **Measure Vpp and note the frequency.** Ripple at the regulator's switching
    frequency is normal switching ripple. Ripple synchronous with a load event is
    droop from insufficient bulk capacitance or high PDN impedance. Broadband fuzz
@@ -271,7 +271,7 @@ Measure:
 - Overshoot after recovery
 
 A well-designed VRM with adequate bulk capacitance droops less than 3% and recovers
-within a few microseconds. A weak Power Delivery Network droops through the spec limit and may not
+within a few microseconds. A weak PDN droops through the spec limit and may not
 recover before the next load step — which is exactly when the GPU starts reporting
 PCIe errors.
 
@@ -475,12 +475,12 @@ mortalities and field failures at operating temperature.
 ### Voltage Margining
 
 Voltage margining deliberately shifts a rail above and below nominal to find the
-functional operating margin. The VRM output is adjusted either through a Power Management Bus command
+functional operating margin. The VRM output is adjusted either through a PMBus command
 or by changing the feedback-resistor DAC on a supported regulator. A shmoo sweeps both
 voltage and (where possible) temperature simultaneously:
 
 - **Pass/fail shmoo:** for each (V, T) point, run the critical test (PCIe link train,
-  DDR Error-Correcting Code test, GMSL lock). Mark pass or fail. The boundary of the passing region is
+  DDR ECC test, Gigabit Multimedia Serial Link (GMSL) lock). Mark pass or fail. The boundary of the passing region is
   the functional operating region — compare it to the spec window.
 - **Margin shmoo:** instead of pass/fail, capture a margin metric (PCIe eye height,
   Bit Error Rate Test (BERT) error count, Advanced Error Reporting (AER) correctable-error count) as a function of V and T. The margin
@@ -528,8 +528,8 @@ the current phase passes cleanly.
 
 Have the **schematic, board layout, BOM, power-sequencing diagram, and all connector
 pinouts** open before touching the board. Know the expected device list: which PCIe
-endpoints at which root ports, bifurcation settings, retimers, NIC/Non-Volatile Memory Express (NVMe)/GPU devices,
-which I2C addresses and buses, which rails and their tolerances. Set up at an Electrostatic Discharge (ESD)-safe
+endpoints at which root ports, bifurcation settings, retimers, Network Interface Card (NIC)/Non-Volatile Memory Express (NVMe)/GPU devices,
+which I2C addresses and buses, which rails and their tolerances. Set up at an ESD-safe
 station: wrist strap on and verified, dissipative mat grounded to the station common
 point. Stage: current-limited bench supply, 4-wire DMM, scope with current probe,
 USB-TTL console adapter at the correct logic voltage (3.3V or 1.8V — confirm before
@@ -601,7 +601,7 @@ health — save it. When the boot stops:
 | Immediately, blank screen | No clock, no reset release, or a severe sequencing problem |
 | During POST/BIOS self-test | Firmware crash; CPU or chip-level fault |
 | "Initializing memory controller" hang | DDR rail marginal, DDR training failure; check 1.1V rail |
-| "PCI probe" hang | PCIe root port or endpoint power problem; check that device's rail and PERST# |
+| "PCI probe" hang | PCIe root port or endpoint power problem; check that device's rail and PERST# (PERST#) |
 | Kernel panic on "loading initramfs" | Storage (NVMe/eMMC) issue; check NVMe rail and reset |
 | After full kernel boot, hang on device driver | Driver probe failure; read dmesg carefully |
 
@@ -675,7 +675,7 @@ measured under the full range of expected conditions.
 - **PCIe margin characterization:** run `lspci` to confirm link width and speed under
   load, use PCIe lane-margining (PCIe 4.0+ receivers support `PCIeLinkMarginReq`
   via the margining registers) to measure voltage and timing margin per lane, capture
-  Advanced Error Reporting counters before and after a 30-minute stress run.
+  AER counters before and after a 30-minute stress run.
 - **Temperature corners:** soak at cold, run stress, capture; soak at hot, run stress,
   capture. The distribution at each corner is the input to the hot and cold test limits.
 - **Inrush characterization:** measure peak current and duration; compare to eFuse
@@ -741,16 +741,16 @@ produce evidence that the unit as built meets the requirements defined on the le
 
 The safety lifecycle phases relevant to a test engineer:
 
-1. **Hazard Analysis and Risk Assessment (HARA):** defines the Automotive Safety Integrity Level for each safety
+1. **Hazard Analysis and Risk Assessment (HARA):** defines the ASIL for each safety
    goal. You consume the ASIL classification; you do not derive it. But you need to
    understand it because it determines what your test must prove.
 
 2. **Safety Requirements:** derived from the safety goals. System-level safety
    requirements flow down to hardware and software. Hardware safety requirements
-   include things like "the Error-Correcting Code memory shall detect and correct single-bit errors" and
-   "the compute module shall detect loss of a Gigabit Multimedia Serial Link camera within 50ms."
+   include things like "the ECC memory shall detect and correct single-bit errors" and
+   "the compute module shall detect loss of a GMSL camera within 50ms."
 
-3. **Failure Mode and Effects Analysis (FMEA) / FMEDA (Failure Mode and Effects Analysis / Failure Modes, Effects, and
+3. **Failure Mode and Effects Analysis (FMEA) / FMEDA (FMEA / Failure Modes, Effects, and
    Diagnostic Analysis):** a systematic enumeration of all hardware failure modes, their
    effects at the system level, and the safety mechanisms that detect or control them.
    FMEDA also computes:
@@ -771,12 +771,12 @@ The safety lifecycle phases relevant to a test engineer:
 
 4. **Safety Mechanisms:** the hardware and software features that detect or tolerate
    faults. Examples on a compute board:
-   - **ECC / EDAC:** detects and corrects single-bit DRAM errors; detects (but does not
+   - **ECC / Error Detection and Correction (EDAC):** detects and corrects single-bit DRAM errors; detects (but does not
      correct) double-bit errors.
-   - **PCIe Advanced Error Reporting:** detects correctable and uncorrectable PCIe
+   - **PCIe AER:** detects correctable and uncorrectable PCIe
      errors.
    - **Watchdog timers:** detect software hangs by requiring a periodic heartbeat.
-   - **Redundant Gigabit Multimedia Serial Link links:** tolerate a single coax failure.
+   - **Redundant GMSL links:** tolerate a single coax failure.
    - **Voltage monitors / PWRGOOD:** detect rail out-of-spec events.
    - **Thermal trip logic:** prevents thermal runaway from reaching catastrophic
      junction temperatures.
@@ -818,7 +818,7 @@ functionality, because a robotaxi depends on those mechanisms to fail safe.
 
 ### ASIL Decomposition and Dual-Channel Architectures
 
-When a single component cannot meet the required Automotive Safety Integrity Level alone, the standard allows **ASIL
+When a single component cannot meet the required ASIL alone, the standard allows **ASIL
 decomposition**: split the safety requirement between two independent channels, each
 achieving a lower ASIL, such that the combination meets the original:
 
@@ -1004,7 +1004,7 @@ at the camera end (read via I2C through the GMSL reverse channel). A serializer
 undervoltage causes re-initialization events that look identical to a coax signal-
 integrity problem.
 
-**Symptom: Error-Correcting Code correctable errors increasing with temperature and time under load.**
+**Symptom: ECC correctable errors increasing with temperature and time under load.**
 Check the DDR VDD and VTT rails under load. DDR5 at 1.1V with insufficient bulk
 capacitance or a weak VRM droops during burst accesses — that droop widens the DDR
 timing eye and causes correctable (then uncorrectable) errors. Also check the DDR
@@ -1015,7 +1015,7 @@ $V_{nominal} - 5\%$ at 85°C due to regulator thermal derating.
 **Symptom: Intermittent boot failures, especially after cold starts.**
 Scope the 3.3V peripheral rail and the 1.8V I/O rail during cold power-on. LDOs and
 linear regulators can have sluggish startup at -40°C; a rail that comes up 5ms late
-at cold causes the System-on-Chip to sample incorrect strap pins or begin DDR training against an
+at cold causes the SoC to sample incorrect strap pins or begin DDR training against an
 unstable reference. The failure is inconsistent because most cold soaks only go to
 -20°C, not the -40°C corner where the startup time shifts enough to violate the
 sequencing window.

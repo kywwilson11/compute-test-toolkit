@@ -35,16 +35,16 @@ cover.
 - **Automated Optical Inspection (AOI)** — cameras check for missing / misplaced / wrong
   / tombstoned parts and gross solder defects. Fast, before anything is powered.
 - **In-Circuit Test (ICT)** — a bed-of-nails fixture probes nets to measure R/C, find
-  shorts and opens, and verify component values. The workhorse Printed Circuit Board Assembly (PCBA) test for
+  shorts and opens, and verify component values. The workhorse PCBA test for
   high-volume, *fixtured* boards.
 - **Boundary scan / JTAG** (IEEE 1149.1) — shifts test patterns through device scan
   chains to test interconnects you cannot physically probe (BGA balls under the package)
   and to program flash/CPLD. Often the *first* test on a new board, before you try to
   boot it. (See Design for Testability (DFT), §1.5.)
-- **Flying probe** — In-Circuit Test without a custom fixture, for low volume and prototypes (slower,
+- **Flying probe** — ICT without a custom fixture, for low volume and prototypes (slower,
   no fixture cost).
-- **X-ray (Automated X-ray Inspection (AXI))** — sees solder voids and bridges *under* BGAs that Automated Optical Inspection cannot. The only
-  way to catch a void under the GPU or a large connector at Printed Circuit Board Assembly.
+- **X-ray (AXI)** — sees solder voids and bridges *under* BGAs that AOI cannot. The only
+  way to catch a void under the GPU or a large connector at PCBA.
 - **First power-on / boot** — does it come up, draw the right current, reach a prompt.
   Often programs the initial bootloader/firmware here.
 
@@ -53,13 +53,13 @@ cover.
 The unit is now a sealed, functional module *with its thermal solution*. **This is the
 heart of your job.** Almost every interface test in the guide runs here:
 
-- **Enumerate everything** — `lspci`, `nvme list`, `nvidia-smi`, Network Interface Card (NIC)/Controller Area Network (CAN)/Gigabit Multimedia Serial Link (GMSL) presence.
+- **Enumerate everything** — `lspci`, `nvme list`, `nvidia-smi`, NIC/CAN/GMSL presence.
 - **Prove each link trains at the *expected* speed and width** — PCIe Gen4 x16, Non-Volatile Memory Express (NVMe)
   Gen4 x4, etc. Trained-below-max is your first Signal Integrity (SI) finding (PCIe chapter).
-- **Stress + error counting** — drive traffic and watch Advanced Error Reporting (AER) / SMART / Error-Correcting Code (ECC) / Error Detection and Correction (EDAC) counters
-  (the Bit Error Rate Test (BERT) and diagnostic tools live here; PCIe/Non-Volatile Memory Express/GPU/Memory chapters).
+- **Stress + error counting** — drive traffic and watch AER / SMART / ECC / Error Detection and Correction (EDAC) counters
+  (the BERT and diagnostic tools live here; PCIe/NVMe/GPU/Memory chapters).
 - **Thermal / burn-in** — soak at temperature and/or under load, re-check links and
-  errors. **This is the phase that catches marginal-at-temperature defects Printed Circuit Board Assembly (PCBA)
+  errors. **This is the phase that catches marginal-at-temperature defects PCBA
   structurally cannot** (§7).
 - **Power characterization** — measure rail voltages/currents under load with a DMM/scope
   (Instruments chapter); out-of-window-under-load is a power-delivery defect and a common
@@ -80,18 +80,18 @@ module-phase coverage so it never gets here.
 
 ### 1.4 Vehicle (End-of-Line (EOL) — End Of Line) — "does it work in the car, end to end?"
 
-Compute is installed in the vehicle with real sensors. Cameras must lock over *real* Gigabit Multimedia Serial Link (GMSL)
-harnesses (15 m of coax, real connectors, real Electromagnetic Interference (EMI)), all sensors stream, Controller Area Network (CAN) talks to
+Compute is installed in the vehicle with real sensors. Cameras must lock over *real* GMSL
+harnesses (15 m of coax, real connectors, real Electromagnetic Interference (EMI)), all sensors stream, CAN talks to
 the vehicle bus, and the vehicle-level functional checks pass before it ships. **This is
-where channel-marginal SerDes defects surface** — a Gigabit Multimedia Serial Link link that locks on a short bench
+where channel-marginal SerDes defects surface** — a GMSL link that locks on a short bench
 cable can drop over a full harness at temperature, the GMSL version of the PCIe "passes
 at 25 °C" escape (Automotive buses chapter). You cannot move this coverage earlier
 because the *real channel* only exists at the vehicle.
 
 ### 1.5 Design for Testability (DFT) — earning the coverage before the board exists
 
-Design for Testability (DFT) means designing the hardware so it *can* be tested effectively in manufacturing. If
-Design for Testability is neglected, you get boards that work but can't be verified — and you discover the
+DFT means designing the hardware so it *can* be tested effectively in manufacturing. If
+DFT is neglected, you get boards that work but can't be verified — and you discover the
 defects in the field instead of the factory. As the test engineer you push for DFT *in
 design reviews*, before there is a board to test. What you ask for:
 
@@ -127,11 +127,11 @@ curve drives the entire test strategy.
 
 | Caught at | Rough relative cost | Why |
 |---|---|---|
-| Printed Circuit Board Assembly (PCBA) | 1x | Rework a single board in the line, often automatically |
+| PCBA | 1x | Rework a single board in the line, often automatically |
 | Module | 10x | Disassemble enclosure/heatsink, rework, re-test |
 | System | 100x | Tear down an integrated system, isolate which module |
 | Vehicle | 1000x | Pull compute from a vehicle, diagnose in situ |
-| Field (Return Merchandise Authorization (RMA)) | 10,000x+ | Truck roll, downtime, brand/safety risk |
+| Field (RMA) | 10,000x+ | Truck roll, downtime, brand/safety risk |
 
 The economic version of the same curve (the classic semiconductor framing): wafer test
 ~\$1, package test ~\$10, board test ~\$100, system test ~\$1,000, field ~\$10,000+. The
@@ -143,11 +143,11 @@ detects it there? You build a small matrix:
 
 | Failure mode | Catchable at | Test |
 |---|---|---|
-| Missing/wrong component | Printed Circuit Board Assembly | Automated Optical Inspection (AOI) / In-Circuit Test (ICT) |
-| BGA solder void under the GPU | PCBA (X-ray) + Module (thermal cycling surfaces it) | Automated X-ray Inspection (AXI); thermal soak + link-error monitor |
-| PCIe lane marginal at temperature | Module (not PCBA) | Stress + Advanced Error Reporting (AER) + lane margining, hot and cold |
-| Non-Volatile Memory Express (NVMe) throttles under sustained write | Module | `fio` soak + SMART temperature/throttle log |
-| Gigabit Multimedia Serial Link (GMSL) won't lock over full harness | Vehicle (real harness) | Link-lock + frame capture at End-of-Line (EOL) |
+| Missing/wrong component | PCBA | AOI / ICT |
+| BGA solder void under the GPU | PCBA (X-ray) + Module (thermal cycling surfaces it) | AXI; thermal soak + link-error monitor |
+| PCIe lane marginal at temperature | Module (not PCBA) | Stress + AER + lane margining, hot and cold |
+| NVMe throttles under sustained write | Module | `fio` soak + SMART temperature/throttle log |
+| GMSL won't lock over full harness | Vehicle (real harness) | Link-lock + frame capture at End-of-Line (EOL) |
 | Inter-module link marginal | System | System link enumeration + stress |
 
 The expensive mistakes are defects that are only *detectable* late but were
@@ -160,10 +160,10 @@ point: **test coverage is a placement problem.**
 ## 3. Design Verification vs Manufacturing Test, In Depth
 
 Design Verification (DV) and Manufacturing Test (MT) share instruments, code, and physics but differ in goal, statistics, and
-consumer. (The framing is introduced in the Platform chapter, on Design Verification vs Manufacturing Test; this is the
+consumer. (The framing is introduced in the Platform chapter, on DV vs MT; this is the
 working depth.)
 
-| Dimension | **Design Verification** | **Manufacturing Test** |
+| Dimension | **DV** | **MT** |
 |---|---|---|
 | Question | How good is the *design*? Where are its margins/edges? | Is *this unit* good enough — and fast? |
 | Output | Characterization data, margin maps, **the limits themselves** | A go/no-go verdict (+ a few captured parameters) |
@@ -171,45 +171,45 @@ working depth.)
 | Method | Characterization, shmoo, margining, corner/stress sweeps | Go/no-go against fixed limits, fast |
 | Conditions | Voltage/temp/frequency corners, worst-case combos | Nominal (+ targeted stress where a defect demands it) |
 | Time budget | Hours-days per unit acceptable | Seconds-minutes per unit (takt-bound) |
-| Run by | Test/Electrical Engineering (EE) engineers in the lab | Operators on the line / at the Contract Manufacturer (CM) |
-| Statistic | Distribution shape, design margin, $C_{pk}$ of the *design* | First Pass Yield (FPY), escape/false-fail rates, $C_{pk}/P_{pk}$ vs limits |
+| Run by | Test/EE engineers in the lab | Operators on the line / at the CM |
+| Statistic | Distribution shape, design margin, $C_{pk}$ of the *design* | FPY, escape/false-fail rates, $C_{pk}/P_{pk}$ vs limits |
 
 **The build-phase vocabulary maps onto this.** **EVT** (Engineering Validation, ~20-50
-units, "does it meet functional requirements") and **DVT** (Design Verification, ~50-500
-units, "can it be *manufactured* to spec" — heavy characterization/margining) are Design Verification
+units, "does it meet functional requirements") and **DVT** (DV, ~50-500
+units, "can it be *manufactured* to spec" — heavy characterization/margining) are DV
 work. **PVT** (Production Validation, ~300-2,000 units, "can the *line* hit its metrics")
-is where Manufacturing Test is proven out before mass production runs it.
+is where MT is proven out before mass production runs it.
 
 ### 3.1 Shmoo, margining, go/no-go
 
 - A **shmoo plot** is a 2-D pass/fail map across two operating parameters (classically
   supply voltage × clock frequency), shading where the part works. It is a *design
   characterization* tool — it shows the design is stable across process so it "can be
-  manufactured with virtually zero yield loss." You produce shmoos in **Design Verification (DV)**; you do
+  manufactured with virtually zero yield loss." You produce shmoos in **DV**; you do
   **not** shmoo every unit on the line.
 - **Margining** is the continuous-parameter cousin: step an operating point (sampling
   time/voltage, a Transmit (TX) preset) until errors appear and record *how much margin* there was.
-  In Design Verification you margin across corners to characterize; in Manufacturing Test (MT) you margin once at nominal and
+  In DV you margin across corners to characterize; in MT you margin once at nominal and
   compare to a limit. PCIe **lane margining** (PCIe chapter) is exactly this.
-- **Go/no-go** is the Manufacturing Test default: run, compare each measured value to its limit, emit
+- **Go/no-go** is the MT default: run, compare each measured value to its limit, emit
   PASS/FAIL. Fast, repeatable, operator-runnable.
 
 ### 3.2 The unifying idea — capture the parameter, not just the verdict
 
 This is the single most important design principle for your test code:
 
-> **Capture the parameter, not just the verdict.** In Design Verification (DV) you sweep and *plot* the captured
-> parameter (the shmoo, the margin-vs-temperature curve). In Manufacturing Test (MT) you compare that *same*
+> **Capture the parameter, not just the verdict.** In DV you sweep and *plot* the captured
+> parameter (the shmoo, the margin-vs-temperature curve). In MT you compare that *same*
 > captured parameter to a limit for a fast pass/fail. **Same measurement code, same
-> captured field; the only difference is whether you sweep-and-plot (Design Verification) or compare-to-
-> limit (Manufacturing Test).**
+> captured field; the only difference is whether you sweep-and-plot (DV) or compare-to-
+> limit (MT).**
 
 Concretely:
 
-- A **Bit Error Rate Test (BERT)** measures `(errors, bits)` → a Bit Error Rate (BER) upper bound. **DV:** run it across
+- A **BERT** measures `(errors, bits)` → a Bit Error Rate (BER) upper bound. **DV:** run it across
   voltage/temperature corners and Transmit (TX) presets and *plot the surface*. **MT:** run it once
-  to a confidence target (prove Bit Error Rate < 1e-12 at 95% and stop) and emit pass/fail. Same
-  engine. (Confidence math: Math chapter, the BER/Bit Error Rate Test confidence section.)
+  to a confidence target (prove BER < 1e-12 at 95% and stop) and emit pass/fail. Same
+  engine. (Confidence math: Math chapter, the BER/BERT confidence section.)
 - **Lane margining** yields a per-lane **timing margin in UI**. **DV:** sweep it across
   temperature to characterize the eye and *set* the limit. **MT:** compare the one nominal
   number to that limit.
@@ -217,7 +217,7 @@ Concretely:
 The lane-margin number is the bridge: DV uses it to *set* a data-driven per-lane eye
 limit; MT uses it to *check* that limit per unit — replacing "pass on link-up" with a
 margin number. That is why MT must capture parameters: the captured stream is what later
-feeds Statistical Process Control (SPC), $C_{pk}$, and guard-banding (§4). **You cannot set a good limit on data you
+feeds SPC, $C_{pk}$, and guard-banding (§4). **You cannot set a good limit on data you
 didn't keep.**
 
 ---
@@ -255,20 +255,20 @@ have measured `sigma_gauge`.
 Do not pull a limit from a guess or a datasheet round number. Set it from the *measured
 fleet distribution*, then check that the limit gives an acceptable capability:
 
-1. **Capture the parameter on many units across corners (Design Verification (DV)).** This is the EVT/DVT
+1. **Capture the parameter on many units across corners (DV).** This is the EVT/DVT
    characterization data.
 2. **Build the distribution.** Mean, spread, shape, tails.
-3. **Set the Manufacturing Test (MT) limit from the distribution + a guard band.** Place it so the process
+3. **Set the MT limit from the distribution + a guard band.** Place it so the process
    sits comfortably inside it — i.e. so $C_{pk}$ is healthy. *Example phrasing you will
    actually write in a limit-justification doc:* "fleet timing margin is 0.42 ± 0.04 UI;
    a 0.25 UI limit gives $C_{pk} \approx 1.4$ with room for gauge error."
-4. **Monitor with Statistical Process Control (SPC) and re-tune when the process moves.**
+4. **Monitor with SPC and re-tune when the process moves.**
 
 The capability bars you target (Math chapter, capability section): **$C_{pk} \ge 1.33$** is the industry
 "capable" floor (~32 PPM one-sided), **≥ 1.67** is strong, **≥ 2.0** is world-class. A
 **low $C_{pk}$ is itself a finding**, not a limit problem: it means the process spread
 and the spec are too close, and you will bleed yield *no matter how good the test is* —
-hand that back to Electrical Engineering (EE)/process as "the design margin is too tight," not "loosen the limit."
+hand that back to EE/process as "the design margin is too tight," not "loosen the limit."
 Note also $P_p/P_{pk}$ vs $C_p/C_{pk}$: use the long-term $P_{pk}$ in DVT/PVT *before* the
 process is proven stable, $C_{pk}$ once control charts show stability (Math chapter,
 capability section).
@@ -278,7 +278,7 @@ capability section).
 ## 5. Per-Unit Data, Traceability, and SPC
 
 Every unit a station tests must leave a record richer than PASS/FAIL. That record is the
-raw material for limit-setting, yield analysis, Statistical Process Control (SPC), Return Merchandise Authorization (RMA) root-cause, and the safety case.
+raw material for limit-setting, yield analysis, SPC, Return Merchandise Authorization (RMA) root-cause, and the safety case.
 
 ### 5.1 Traceability and genealogy
 
@@ -288,9 +288,9 @@ row with **which unit, which station, which test-program version, when**. **Gene
 records which component lots and sub-assembly serials went into each finished unit, so
 when a bad lot or a failing test mode appears you can trace *every affected unit* quickly
 (top-down: "which units got lot X"; bottom-up: "what went into this failing unit"). For
-Zoox compute this is also a *quality* lever — it is how logging a Non-Volatile Memory Express (NVMe) drive's
+Zoox compute this is also a *quality* lever — it is how logging a NVMe drive's
 `power_on_hours` / `data_units_written` catches re-labeled or returned stock entering the
-line even when the unit otherwise passes (Non-Volatile Memory Express chapter). And it is a **safety-case
+line even when the unit otherwise passes (NVMe chapter). And it is a **safety-case
 requirement**: serial → genealogy → program version → measured results → disposition must
 be an auditable chain (functional-safety chapter).
 
@@ -302,7 +302,7 @@ station_id, dut_serial, test_program_version, operator, timestamp,
   artifacts_on_failure: { decoded_AER, dmesg_snippet, margin_matrix, ... }
 ```
 
-A test that records only PASS/FAIL throws away the data you need for Statistical Process Control (SPC) and
+A test that records only PASS/FAIL throws away the data you need for SPC and
 limit-setting — and forces the next engineer to *reproduce* a failure to diagnose it
 instead of reading its attached evidence.
 
@@ -319,13 +319,13 @@ observed variation into the gauge versus the part:
 The AIAG study is **10 parts × 3 operators × 3 repeats** (90 measurements). Acceptance:
 **%GRR < 10%** good, **10-30%** conditional, **> 30%** unacceptable (and `ndc > 5`). If
 gauge variation is large relative to the tolerance, *your pass/fail is noise.* This is
-where `sigma_gauge` for the guard band (§4.1) comes from, and — crucially — **cross-Contract Manufacturer (CM)
+where `sigma_gauge` for the guard band (§4.1) comes from, and — crucially — **cross-CM
 correlation is a reproducibility study across sites** (§5.4). (Derivation and the
 variance math: Math chapter, Gage R&R section.)
 
 ### 5.3 SPC — the process talks to you before it makes scrap
 
-Capability ($C_{pk}$) is a snapshot; **Statistical Process Control (SPC)** is the movie. Plot each captured parameter
+Capability ($C_{pk}$) is a snapshot; **SPC** is the movie. Plot each captured parameter
 over time with center line and ±1/2/3σ zones. For per-unit test data the natural chart is
 the **I-MR** (individuals / moving-range) pair. The control limits are the *process's
 own* voice (mean ± 3σ), **not** the spec limits — a key distinction:
@@ -350,7 +350,7 @@ uses:
   known-good and fails the known-bad**. This catches a too-tight (false-fail) or too-loose
   (escape) change *before* the line, not on it.
 - **Cross-station / cross-site correlation.** Run the *same* golden unit at Zoox and at
-  the Contract Manufacturer (CM); the stations must agree. A correlation gap is a fixture / calibration /
+  the CM; the stations must agree. A correlation gap is a fixture / calibration /
   environment difference you must resolve before you trust their yield numbers.
   Operationally this *is* a Gage R&R reproducibility study across sites (§5.2).
 
@@ -359,14 +359,14 @@ uses:
 ## 6. Yield and Test Economics
 
 These are the three numbers a test engineer is judged on, and the JD names them: **test
-deployment, test runtime, and yield.** (Yield/Rolled Throughput Yield (RTY)/throughput/cost-of-test derivations:
+deployment, test runtime, and yield.** (Yield/RTY/throughput/cost-of-test derivations:
 Math chapter, yield and cost-of-test.)
 
 ### 6.1 Yield
 
-- **First Pass Yield (FPY)** — fraction passing the *first* time, no retest/rework. The
+- **FPY** — fraction passing the *first* time, no retest/rework. The
   primary KPI.
-- **Rolled Throughput Yield (RTY)** — product of FPY across all steps. Five steps each at
+- **RTY** — product of FPY across all steps. Five steps each at
   98% → `0.98^5 ~= 90%`. **This is why every added test step costs yield**, and why you
   do not add coverage casually.
 - **Pareto analysis** — bar chart of failure modes by frequency with a cumulative line.
@@ -386,12 +386,12 @@ capital). Scale intuition: a station producing one record per cycle at a 30 s ta
 generates ~100,000 records/month — that sets the data-volume scale you design the results
 store for. The levers:
 
-- **Parallelize.** Run independent tests concurrently — Non-Volatile Memory Express (NVMe) `fio` soak ∥ GPU `gpu-burn`
-  ∥ PCIe Advanced Error Reporting (AER) monitor — and test **N DUTs at once** on one station (multisite / multi-up).
+- **Parallelize.** Run independent tests concurrently — NVMe `fio` soak ∥ GPU `gpu-burn`
+  ∥ PCIe AER monitor — and test **N DUTs at once** on one station (multisite / multi-up).
   This is how you amortize a fixed soak across throughput.
-- **Right-size soaks.** The **Bit Error Rate Test (BERT) confidence target** is an *economic* tool: run exactly
+- **Right-size soaks.** The **BERT confidence target** is an *economic* tool: run exactly
   long enough to prove 1e-12 at 95% confidence and **stop**, not a padded fixed duration
-  (Math chapter, Bit Error Rate (BER)/Bit Error Rate Test confidence). Choosing a confidence level instead of a wall-clock time is a
+  (Math chapter, BER/BERT confidence). Choosing a confidence level instead of a wall-clock time is a
   runtime optimization *with a statistical guarantee*.
 - **Adaptive testing.** If a unit passes a quick screen, skip the extended version.
 - **Move tests left** — run a test at the cheapest phase that still catches its defect
@@ -404,7 +404,7 @@ store for. The levers:
 ### 6.3 The false-fail vs escape trade — asymmetric here
 
 Normally false-fail vs escape is a pure economic optimization. **In a robotaxi it is
-asymmetric.** A **false fail** costs throughput, retest labor, and (at a Contract Manufacturer (CM)) remote
+asymmetric.** A **false fail** costs throughput, retest labor, and (at a CM) remote
 firefighting. An **escape** costs the 10×-per-phase curve *and*, for safety-critical
 compute, a field/safety event whose cost is effectively unbounded. So the standing rule
 is **"ship only good units":** you do **not** buy yield by loosening a limit that lets a
@@ -414,8 +414,8 @@ rate.
 
 ### 6.4 Deployment
 
-How fast and how reliably a new/updated test reaches every station and Contract Manufacturer (CM). Levers: config
-over code (no code change to retarget a board revision or a Contract Manufacturer), versioned releases with
+How fast and how reliably a new/updated test reaches every station and CM. Levers: config
+over code (no code change to retarget a board revision or a CM), versioned releases with
 rollback, golden-unit correlation gating a rollout, remote station update, and clear
 release notes. A test that takes a week to deploy to a CM is operationally *worse* than a
 slightly-less-thorough one that deploys in an hour — which is why deployment is a
@@ -443,26 +443,26 @@ development begins. The order is "fail fast, cheap first":
    *last* message tells you what failed.
 4. **Device enumeration** — `lspci -vvv`, `lsusb`, `ip link show`, `dmesg | grep -i error`;
    compare against the expected device list from the schematic.
-5. **Basic functional** — each subsystem individually: GPU `nvidia-smi`, Non-Volatile Memory Express (NVMe) `nvme list`,
-   Network Interface Card (NIC) `ethtool`, memory `free -h` / `dmidecode --type memory`, Controller Area Network (CAN) a test frame.
+5. **Basic functional** — each subsystem individually: GPU `nvidia-smi`, NVMe `nvme list`,
+   NIC `ethtool`, memory `free -h` / `dmidecode --type memory`, CAN a test frame.
 6. **Characterization** — stress, thermals, PCIe equalization, power under load. **This
-   data informs the production test limits** — bring-up is where the Design Verification (DV) characterization
+   data informs the production test limits** — bring-up is where the DV characterization
    that *sets* limits (§4) happens.
 
 For *custom* PCIe cards (the JD's "custom PCIe devices") you work from the schematic:
 which root port feeds the slot, is the slot **bifurcated** (a top cause of
 "device-not-detected" when BIOS bifurcation doesn't match layout), where are the
-retimers, which rails feed the PHY. Bring-up is where you and Electrical Engineering (EE) are closest; your job is
+retimers, which rails feed the PHY. Bring-up is where you and EE are closest; your job is
 to produce evidence sharp enough that a layout or stuffing fix is *obvious* (PCIe chapter
 has the full bring-up checklist).
 
 ### 7.2 Production
 
 The unit is no longer a question, it is a verdict. The test is locked, versioned,
-operator-run, takt-bound, and measured on First Pass Yield (FPY); the properties that matter flip from
+operator-run, takt-bound, and measured on FPY; the properties that matter flip from
 "deep and exploratory" to "fast, robust, repeatable, operator-proof, correlated across
 stations." The *measurements* are often the same code as bring-up — the difference is
-sweep-and-characterize (bring-up) vs compare-to-limit-and-move-on (production): the Design Verification (DV)→Manufacturing Test (MT)
+sweep-and-characterize (bring-up) vs compare-to-limit-and-move-on (production): the DV→MT
 transition (§3) made concrete in the life of one board.
 
 ---
@@ -470,7 +470,7 @@ transition (§3) made concrete in the life of one board.
 ## 8. The Debug-to-Root-Cause Workflow
 
 When a unit fails — or worse, when *yield* drops — you need a method, not a hunch. The
-goal is always to get from a **symptom** to a **physical root cause** you can hand to Electrical Engineering (EE),
+goal is always to get from a **symptom** to a **physical root cause** you can hand to EE,
 process, or the supply chain as an actionable correction.
 
 ### 8.1 The reflex (single-unit failure)
@@ -487,10 +487,10 @@ failure
 
 The meta-skill is not memorizing flags; it is the *reflex* and the discipline of **arming
 counters before you measure** (clear → stress → read) so you count errors from *your*
-stress window, not from boot. The interface chapters supply the decode tables (which Advanced Error Reporting (AER)
+stress window, not from boot. The interface chapters supply the decode tables (which AER
 bit means which layer; which XID code means which GPU subsystem; which Dual Inline Memory Module (DIMM) label a CE
-maps to). Many "digital" failures are really **power / Signal Integrity (SI)** failures wearing
-a digital costume — the engineer who reaches for the scope *and* the Advanced Error Reporting decode together
+maps to). Many "digital" failures are really **power / SI** failures wearing
+a digital costume — the engineer who reaches for the scope *and* the AER decode together
 is the one who closes the hard intermittent bugs (Instruments / Power chapters).
 ### 8.2 Structured RCA (yield drop / repeated failure)
 
@@ -529,13 +529,13 @@ per engineering hour:
 | Failure mode | Count | % | Cumulative % |
 |---|---|---|---|
 | PCIe link degraded | 45 | 36% | 36% |
-| Non-Volatile Memory Express (NVMe) not detected | 25 | 20% | 56% |
-| GPU Error-Correcting Code (ECC) error | 15 | 12% | 68% |
+| NVMe not detected | 25 | 20% | 56% |
+| GPU ECC error | 15 | 12% | 68% |
 | Thermal throttle | 12 | 10% | 78% |
-| Network Interface Card (NIC) link down | 8 | 6% | 84% |
+| NIC link down | 8 | 6% | 84% |
 | All others | 20 | 16% | 100% |
 
-Fixing the top two here (PCIe + Non-Volatile Memory Express = 56% of all failures) is where the leverage is.
+Fixing the top two here (PCIe + NVMe = 56% of all failures) is where the leverage is.
 **Always verify the fix moved the bar** — re-Pareto after the corrective action; if the
 top bar didn't shrink, you fixed a symptom, not the cause.
 
@@ -547,9 +547,9 @@ top bar didn't shrink, you fixed a symptom, not the cause.
 why a thermal forcer / chamber is on the bench. Two physics facts to keep in hand:
 
 1. **High-speed links lose margin with temperature.** Conductor loss and jitter rise with
-   temperature, so a SerDes link (PCIe, Gigabit Multimedia Serial Link (GMSL), automotive Ethernet) that equalizes to an
+   temperature, so a SerDes link (PCIe, GMSL, automotive Ethernet) that equalizes to an
    open eye at 25 °C can have a *closed* eye — errors, retrains, or a speed/width fallback
-   — at 55-85 °C. **This is why lane margining and Advanced Error Reporting (AER)/Error-Correcting Code (ECC) monitoring must be done hot**,
+   — at 55-85 °C. **This is why lane margining and AER/ECC monitoring must be done hot**,
    not just at ambient, and why module-phase burn-in exists.
 2. **Failure rate is Arrhenius in temperature** — temperature-activated mechanisms follow
    an exponential law; rule of thumb, **failure rate roughly doubles per ~10 °C**.
@@ -564,21 +564,21 @@ The stress techniques and — the part people get wrong — **where each belongs
 
 | Technique | Stress | Applied to | Where in flow |
 |---|---|---|---|
-| **HALT** (Highly Accelerated Life Test) | Temp + multi-axis vibration *beyond* spec, to destruction | Prototypes (Design Verification (DV)) | New Product Introduction (NPI) / reliability — finds the design's limits and *derives the HASS profile* |
+| **HALT** (Highly Accelerated Life Test) | Temp + multi-axis vibration *beyond* spec, to destruction | Prototypes (DV) | NPI / reliability — finds the design's limits and *derives the HASS profile* |
 | **HASS** (Highly Accelerated Stress Screen) | HALT-derived profile, near/just beyond operating limits | Production units | Production screen (post-assembly) |
 | **ESS** (Environmental Stress Screening) | Thermal cycling + vibration *within* spec | Production units | Production screen — infant-mortality / workmanship escapes |
 | **Burn-in** | Steady elevated temp, powered / under load, hours | Production units | Module/system — screens infant mortality |
-| **Thermal cycling** | Repeated hot<->cold ramps | Both | Design Verification reliability + production ESS — solder-fatigue / CTE-mismatch |
+| **Thermal cycling** | Repeated hot<->cold ramps | Both | DV reliability + production ESS — solder-fatigue / CTE-mismatch |
 
 **Your contribution to every one of these is the in-soak functional monitor.** The screen
 *precipitates* the latent defect (the oven/shaker supplies the stress); *your* test
 supplies the **at-temperature link/error/throttle checks** — margin the lanes hot, watch
-the Advanced Error Reporting/Error-Correcting Code/Error Detection and Correction (EDAC)/SMART/XID deltas vs temperature — that turn "we baked it" into "we baked
+the AER/ECC/EDAC/SMART/XID deltas vs temperature — that turn "we baked it" into "we baked
 it *and proved every interface still trains clean hot*." A thermal test that never
 actually gets the part hot, or a soak with no functional monitor running during it, is a
 test that cannot catch the defect it exists for.
 
-**ESD discipline** belongs here too: a fixture without proper ESD grounding makes *you*
+**Electrostatic Discharge (ESD) discipline** belongs here too: a fixture without proper ESD grounding makes *you*
 the failure mechanism — a board can pass test with latent ESD damage and die in the field.
 Wrist-strap monitors, dissipative mats, controlled humidity, ESD-safe fixture contacts;
 verify the strap monitors work on every station (Power/Safety chapter).
@@ -588,13 +588,13 @@ verify the strap monitors work on every station (Power/Safety chapter).
 ## 10. The CM Relationship: NPI to Mass-Production Ramp
 
 Contract Manufacturers (CM) (EMS partners — Flex/Jabil-type) build at volume on units you may
-never physically touch. Releasing a test program *to* a Contract Manufacturer and supporting it remotely is a
+never physically touch. Releasing a test program *to* a CM and supporting it remotely is a
 large part of the job, and it spans the whole product life cycle: **New Product Introduction (NPI) → sustaining.**
 
 ### 10.1 NPI (New Product Introduction)
 
 Test development, **first-article testing**, yield-target establishment. You work closely
-with the Contract Manufacturer (CM) to validate that your test coverage works on *real* boards built on *their*
+with the CM to validate that your test coverage works on *real* boards built on *their*
 line with *their* fixtures — not just on the golden unit in your lab. **FAI (First Article
 Inspection)** is the production-side gate: the first unit(s) off a new line/process/revision
 get a thorough, documented verification before volume is released, proving the line is set
@@ -604,17 +604,17 @@ up correctly.
 
 Ongoing test maintenance, yield improvement, test-time reduction, handling field returns,
 and updating tests for board revisions. The recurring ritual is the **yield meeting**:
-review the Contract Manufacturer's (CM) yield data, Pareto the failures (§9), trend-analyze, and assign corrective
-actions. This is where the captured per-unit data (§5) and the Pareto/Root Cause Analysis (RCA) discipline earn
+review the CM's (CM) yield data, Pareto the failures (§9), trend-analyze, and assign corrective
+actions. This is where the captured per-unit data (§5) and the Pareto/RCA discipline earn
 their keep against a partner you cannot stand next to.
 
 ### 10.3 The release package
 
 A test program is a **released artifact**, versioned and tagged like firmware (the
-Bash/Linux chapter covers the git mechanics). What you hand a Contract Manufacturer (CM):
+Bash/Linux chapter covers the git mechanics). What you hand a CM:
 
 - **Versioned code + config** — config separate from code so the *same* code runs at Zoox
-  and at the Contract Manufacturer with different fixtures.
+  and at the CM with different fixtures.
 - **Setup / runbook** — how to provision a station, connect the fixture, run the program.
 - **Fixture specification** — what hardware the station needs.
 - **Acceptance criteria** — the limits and what each test proves.
@@ -628,7 +628,7 @@ board in another country from the result row.
 
 ### 10.4 MES / OEE — the system the line runs on
 
-The Contract Manufacturer's (CM) floor runs on a **MES (Manufacturing Execution System)** that owns work-order
+The CM's (CM) floor runs on a **MES (Manufacturing Execution System)** that owns work-order
 release, electronic work instructions, serialization, genealogy/traceability,
 quality/NCR handling, and **OEE** (Overall Equipment Effectiveness = Availability ×
 Performance × Quality). Your station typically **checks in/out** with MES (is this serial
@@ -741,10 +741,10 @@ handle the dead-instrument case** (a GPIB hang with no timeout stops the whole l
 | Instrument | Measures | Where it shows up in this guide |
 |---|---|---|
 | **Programmable PSU / electronic load** | Supply the DUT; sweep/limit V and I; sink current to load a rail | Bring-up power-on; power-under-load characterization |
-| **DMM (6.5-digit)** | DC rail voltage, current (shunt), resistance | Rail-in-window checks, In-Circuit Test (ICT)-style continuity |
-| **Oscilloscope** | Time-domain: ripple, rise/fall, clocks, glitches, eye diagrams (with the right probe/SW) | Signal Integrity (SI) debug, ripple-vs-Advanced Error Reporting (AER) correlation, clock integrity |
-| **Bit Error Rate Test (BERT) / built-in eye+margining** | Bit-error ratio and eye/timing margin on a SerDes lane | The PCIe/Gigabit Multimedia Serial Link (GMSL) margining story |
-| **Protocol analyzer/exerciser** | Decoded PCIe/Controller Area Network (CAN)/Ethernet/USB traffic, inject + capture | Link bring-up, CAN bus-off, packet-level faults |
+| **DMM (6.5-digit)** | DC rail voltage, current (shunt), resistance | Rail-in-window checks, ICT-style continuity |
+| **Oscilloscope** | Time-domain: ripple, rise/fall, clocks, glitches, eye diagrams (with the right probe/SW) | SI debug, ripple-vs-AER correlation, clock integrity |
+| **BERT / built-in eye+margining** | Bit-error ratio and eye/timing margin on a SerDes lane | The PCIe/GMSL margining story |
+| **Protocol analyzer/exerciser** | Decoded PCIe/CAN/Ethernet/USB traffic, inject + capture | Link bring-up, CAN bus-off, packet-level faults |
 | **Thermal forcer / chamber** | Force the DUT (or a part) to a set temperature | The "passes at 25 C, fails at 85 C" screen |
 | **Thermal/IR camera** | Surface temperature map; find the hot part | Power-on "what's getting hot," heatsink coverage |
 | **Switch / multiplexer matrix** | Route one instrument to many nets or many DUTs | Multisite stations, sharing a costly instrument |
@@ -754,7 +754,7 @@ The deep how-to for each (probing, bandwidth, eye reading, thermal-forcer setup)
 the **Instruments / Power** chapter; the point here is the *mapping* — a measurement
 implies an instrument, and a station's bill of materials is just that mapping made
 physical. A recurring failure-analysis move (§8.1) is reaching for the **scope + the
-protocol decode together**: many "digital" failures are a power or Signal Integrity
+protocol decode together**: many "digital" failures are a power or SI
 problem wearing a digital costume, and you only see it when the rail trace and the error
 counter are on the same screen.
 
@@ -852,9 +852,9 @@ read the warehouse; they are **not** in the per-unit test path.
 - **yieldWerx** and **PDF Solutions Exensio** are commercial yield-management /
   test-data-analytics platforms (Exensio is the bigger, fab-oriented one, with a stated
   automotive-semiconductor push; both ingest STDF and other formats). They provide
-  automated Statistical Process Control (SPC), parametric outlier/bin rules, wafer-map and cross-lot correlation, and
+  automated SPC, parametric outlier/bin rules, wafer-map and cross-lot correlation, and
   the alerting that flags a yield signature before it becomes scrap. A board/module shop
-  may not run a full fab-grade platform, but the *capabilities* — automated Statistical Process Control on every
+  may not run a full fab-grade platform, but the *capabilities* — automated SPC on every
   parameter, outlier detection, cross-site correlation — are the target, whether bought or
   built on the warehouse + Grafana + notebooks.
 - **JMP** (from SAS) is the analyst's bench for *deep* statistics — the tool you open to
@@ -864,7 +864,65 @@ read the warehouse; they are **not** in the per-unit test path.
   Python/`pandas`+`statsmodels` notebook) answers "*why*, with statistical rigor." They are
   complementary: monitoring is continuous and shallow, JMP is occasional and deep.
 
-### 12.4 CI for the test *software* — a separate lifecycle
+### 12.4 Version control for test programs
+
+A test program is not a script you run once — it is a **released, versioned artifact** that deploys to multiple identical stations, at Zoox and at contract manufacturers you may never physically visit, and decides whether a safety-critical unit ships. Three forces make version control stricter here than in ordinary application development:
+
+1. **Traceability (a safety-case requirement).** Every result row a station writes must record *which program version* produced it. When a field issue or a bad lot surfaces, you trace serial → genealogy → test-program version → measured results → disposition. If "the test version" is "whatever was on the laptop that day," that chain is broken and the safety argument collapses.
+2. **Reproducibility across sites.** Many identical stations run the same version and report to the same dashboard. A yield difference between Zoox and a CM must be a *fixture/calibration* difference, not a *code* difference — which you can only assert if you can prove both ran the same tagged commit.
+3. **Deployment and rollback are first-class.** "Push v2.4.1 to all stations, then revert to v2.4.0 if FPY drops" must be a one-command operation. A clean tag-and-release process is what makes that safe.
+
+**Daily workflow.** Review before you stage — `git add -p` forces a hunk-by-hunk pass that stops a stray debug print or a hardcoded station IP from shipping.
+
+```
+git status                  # working-tree state: staged / unstaged / untracked
+git diff / git diff --staged
+git add -p                  # interactively stage hunks, REVIEWING each change
+git commit -m "Raise NVMe fw-activate reset wait to 10s; Micron 7450 needs ~8s to re-enumerate"
+git push origin feature/gmsl-timeout
+```
+
+Write commit messages a CM engineer can use at 2 a.m. during a line-down: *what changed and why the value is what it is.* "Fix bug" is useless; the message above is a debugging document.
+
+**Branching and review discipline** for a manufacturing-test repo:
+
+| Element | Practice | Why |
+|---|---|---|
+| **main** | always deployable to production | a station can be re-provisioned from `main` to a known-good state at any time |
+| **feature branches** | one per driver, board revision, or test change | isolates in-progress work from the deployable tip |
+| **pull requests** | review before merge | a second set of eyes on a change that can scrap good units or pass bad ones |
+| **CI** | `pytest` + lint on every PR | a red gate blocks merge (see the next section) |
+| **golden-unit gate** | re-run known-good + known-bad references before release | catches a too-tight (false-fail) or too-loose (escape) change *before* the line, not on it |
+| **tags** | mark each version deployed to the line | the traceability anchor |
+
+**Config over code.** Limits, bus/topology maps, station IDs, and CM-specific fixture settings live in versioned *config*, not in the Python. A retarget to a new CM or board revision is then a config change, not a code release that re-qualifies the whole program.
+
+**Tags turn a commit into a release.** Prefer annotated tags (they carry tagger, date, and message, and are what you sign):
+
+```
+git tag -a v2.4.0 -m "Release 2.4.0: add MAX96712 quad-cam config, hot-margin path"
+git push origin v2.4.0
+git describe --tags         # "v2.4.0-3-gA1B2C3D" -- embed in every result row so even an
+                            # unreleased dev build is uniquely identifiable
+```
+
+Semantic versioning maps cleanly onto test programs: **MAJOR** = incompatible change (new limit schema, dropped test, new result format the dashboard must understand), **MINOR** = added coverage or board config (backward compatible), **PATCH** = bug fix or limit re-tune within the same schema. The shipped artifact is more than code: versioned code + config + runbook + fixture spec + acceptance criteria + golden-unit correlation data + triage guide, with the git tag as the spine that proves what was shipped.
+
+**Recovery and forensics:**
+
+```
+git log --oneline --graph        # branch/merge history at a glance
+git blame limits.yaml            # who set this limit, when, in which commit
+git revert <hash>                # NEW commit that undoes <hash> -- SAFE on shared branches
+                                 # (does not rewrite history); how you roll back a bad release
+git bisect start                 # binary-search the commit that introduced a regression
+```
+
+**Rule of thumb:** never `reset --hard` or force-push a branch a station or CM might be pulling from — use `revert` for shared history. Rewriting history is fine only on a private feature branch you have not shared.
+
+---
+
+### 12.5 CI for the test *software* — a separate lifecycle
 
 This is the category error to avoid, so it gets its own callout. **Continuous Integration (CI — GitLab CI, GitHub Actions, Jenkins)** belongs to the *software development
 lifecycle of the test code*, **not** to per-unit production execution. The test program is
@@ -941,7 +999,7 @@ station ops, one Grafana** stitching them into role-specific dashboards.
 A useful MFG-test Grafana deployment is usually a few focused dashboards, not one giant
 wall. The panels that earn their place:
 
-- **Live fleet & per-station First Pass Yield (FPY).** Today's first-pass yield overall and broken
+- **Live fleet & per-station FPY.** Today's first-pass yield overall and broken
   out by station and by product, as stat tiles + a trend line. This is the number the line
   is run on (§6.1). Example (TimescaleDB SQL, last 24 h FPY by station):
 
@@ -982,12 +1040,12 @@ GROUP BY failure_mode
 ORDER BY n DESC;     -- render as a sorted bar panel; optionally add a cumulative line
 ```
 
-- **Parametric Statistical Process Control (SPC) / control charts.** Per-parameter I-MR-style control charts with the
+- **Parametric SPC / control charts.** Per-parameter I-MR-style control charts with the
   process's own center line and ±3σ zones (§5.3) — *not* the spec limits. A timing-margin
   or rail-voltage panel with control limits drawn lets you *see* a Western Electric
   violation (a run, a 2-of-3-beyond-2σ) before it makes scrap.
 - **Parametric drift / distribution.** A heatmap or time-series of a key parameter's
-  distribution (e.g. PCIe per-lane margin, Non-Volatile Memory Express (NVMe) soak temperature) over days/lots. A slow
+  distribution (e.g. PCIe per-lane margin, NVMe soak temperature) over days/lots. A slow
   slide of the mean is the *gradual* signal §5.3 calls out — tool wear, fixture aging,
   incoming-material shift — visible long before yield drops.
 - **Throughput / cycle time vs takt.** Units/hour and per-station cycle time against the
@@ -1000,11 +1058,11 @@ A dashboard nobody is staring at is useless at 2 a.m. Grafana's alerting engine 
 rules on the same queries and routes notifications (Slack/PagerDuty/email). The alerts a
 MFG-test setup wants are the *Western-Electric-on-the-fleet* analogs:
 
-- **Yield-drop alert** — First Pass Yield (FPY) on any station falls below a floor (a *sudden* drop = process
+- **Yield-drop alert** — FPY on any station falls below a floor (a *sudden* drop = process
   change / equipment / bad material, §5.3) → page the on-call test engineer.
 - **Station-down alert** — no result in N minutes during a shift (the heartbeat query
   above).
-- **Statistical Process Control (SPC)-violation alert** — a control parameter trips a Western Electric rule (point beyond
+- **SPC-violation alert** — a control parameter trips a Western Electric rule (point beyond
   3σ, or a run), catching *drift* before it becomes a yield event.
 - **New-failure-mode alert** — a failure mode that was rare this month suddenly climbs the
   Pareto.
@@ -1044,7 +1102,7 @@ as **unverified**; what is public is the shape, not the stack:
   test — plausible here, but not something I could source for Zoox specifically, so treat
   them as the general EOL pattern rather than confirmed Zoox steps. Either way it maps onto
   the EOL realities this chapter names: real sensors, real harnesses, environmental checks —
-  the Gigabit Multimedia Serial Link (GMSL)-over-full-harness and end-to-end streaming that *only* exist at the vehicle (§1.4).
+  the GMSL-over-full-harness and end-to-end streaming that *only* exist at the vehicle (§1.4).
 - **The compute itself is "data-center parts in a car."** The role and Zoox's public
   description point at server-grade compute assemblies, **custom PCIe devices**, networking,
   storage and memory — which is exactly the module/system test surface (§1.2-§1.3) the
@@ -1081,18 +1139,18 @@ Strip the chapter to its load-bearing sentences:
 - **Place each test at the earliest phase that can catch its defect** — coverage is a
   placement problem, governed by the 10× curve and by what is physically detectable where
   (§1-§2).
-- **Design Verification (DV) sets the limits; Manufacturing Test (MT) checks them — same measurement code.** Capture the parameter,
+- **DV sets the limits; MT checks them — same measurement code.** Capture the parameter,
   not just the verdict, because the captured stream is what tunes the limits and proves the
   safety case (§3).
 - **Set limits from data + a guard band, sized by the Gage R&R.** A low $C_{pk}$ is a
   design/process finding, not a reason to loosen the limit (§4-§5).
-- **Yield is First Pass Yield (FPY)/Rolled Throughput Yield (RTY); runtime is takt; deployment is config-over-code + rollback.** Buy
+- **Yield is FPY/RTY; runtime is takt; deployment is config-over-code + rollback.** Buy
   yield by killing false-fails, never by raising the escape rate — because for a robotaxi
   the trade is asymmetric (§6).
 - **Debug to a *physical* root cause** with the enumerate → dmesg → arm/stress/read →
   isolate → measure → decode reflex, and use Pareto/5-Whys/fishbone on a population (§8).
 - **Bring-up characterizes and *sets* limits; production *checks* them, fast and
-  correlated, at Zoox and at the Contract Manufacturer (CM) across the New Product Introduction (NPI)→sustaining life cycle** (§7, §10).
+  correlated, at Zoox and at the CM across the NPI→sustaining life cycle** (§7, §10).
 - **Know the stack and its boundaries:** a sequencer runs the test, the MES routes and
   traces the unit, the warehouse keeps every parameter, Grafana shows humans the trend,
   and Continuous Integration (CI) versions the test *software* — never the units (§11-§13). Most failures of a test

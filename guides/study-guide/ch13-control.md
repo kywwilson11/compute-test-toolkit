@@ -285,7 +285,7 @@ the gain, not the other way around.
 
 | Sensor | Physical Quantity | Interface | Test Relevance |
 |---|---|---|---|
-| On-die DTS | Junction temperature | Memory-Mapped I/O (MMIO) / hwmon sysfs | Primary thermal monitoring |
+| On-die DTS | Junction temperature | MMIO / hwmon sysfs | Primary thermal monitoring |
 | Thermistor / thermocouple | Board ambient / case temp | ADC / I2C | Heatsink and case temperature |
 | Shunt + INA-class IC | Rail current | I2C / PMBus | Power consumption monitoring |
 | Hall-effect / tachometer | Fan speed (RPM) | GPIO pulse count | Fan health and speed control |
@@ -344,7 +344,7 @@ cat /sys/class/hwmon/hwmon3/temp1_input       # read temperature (millidegrees C
 
 Every switching regulator is a closed-loop controller: the output voltage is the
 measured variable; the PWM duty cycle is the control output. The loop compensator
-(Type II or Type III op-amp compensator, or a digital controller in a PMBus VRM) is
+(Type II or Type III op-amp compensator, or a digital controller in a Power Management Bus (PMBus) VRM) is
 designed for a specific phase margin and transient response. From a test perspective:
 
 - **Steady-state rail accuracy** is the DC gain of the loop — verify with DMM.

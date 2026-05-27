@@ -458,7 +458,7 @@ threshold=70
 awk -v t="$threshold" '$2 > t {print $1, "OVERHEAT", $2}' temps.txt
 ```
 
-Multi-line awk to walk `lspci -vvv` output and emit a clean BDF/Speed/Width table:
+Multi-line awk to walk `lspci -vvv` output and emit a clean Bus/Device/Function (BDF)/Speed/Width table:
 
 ```bash
 lspci -vvv 2>/dev/null | awk '

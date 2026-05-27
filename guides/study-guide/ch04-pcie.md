@@ -58,10 +58,10 @@ The hierarchy fans out from the CPU:
 
 | Port type | Code (DevType[3:0]) | Role |
 |---|---|---|
-| Endpoint | 0x0 | A leaf: GPU, NVMe controller, Network Interface Card (NIC), custom Field-Programmable Gate Array (FPGA) card |
+| Endpoint | 0x0 | A leaf: GPU, NVMe controller, NIC, custom FPGA card |
 | Root Port | 0x4 | A Root Complex egress port; a **downstream** port |
-| Switch Upstream Port | 0x5 | The single port of a switch that faces the root |
-| Switch Downstream Port | 0x6 | One of N switch ports that face leaves; **downstream** |
+| Switch USP | 0x5 | The single port of a switch that faces the root |
+| Switch DSP | 0x6 | One of N switch ports that face leaves; **downstream** |
 
 The term **Downstream Port (DSP)** = root port *or* switch downstream port; it **owns the
 link below it** (and the link's bandwidth-change latches). **Upstream Port (USP)** = an
@@ -70,7 +70,7 @@ DSP is where speed/width and the Link Bandwidth Management Status (LBMS)/Link Au
 is the only place the kernel assembles the OS-level error story (§5).
 
 A **switch** is internally one USP bridged to N DSPs; **every one of those ports has its own
-Link Training and Status State Machine (LTSSM), its own Advanced Error Reporting (AER) capability, and its own link registers.** A fallback or an error cluster
+Link Training and Status State Machine (LTSSM), its own AER capability, and its own link registers.** A fallback or an error cluster
 can be on *any* segment — so when you debug a device behind a switch you walk the whole tree
 (`lspci -tv`) and check each link, not just the endpoint (§12).
 
@@ -79,7 +79,7 @@ can be on *any* segment — so when you debug a device behind a switch you walk 
 Every PCIe function is named by **Bus/Device/Function (BDF) = `domain:bus:device.function`**, e.g.
 `0000:03:00.0`. Domain (a.k.a. segment) is usually `0000`; bus is assigned during
 enumeration; device is 0–31 on a bus; function is 0–7 (multi-function devices, and Single Root I/O Virtualization (SR-IOV)
-VFs, use the function digit). Config reads/writes are addressed by Bus/Device/Function; Advanced Error Reporting's **Error Source
+VFs, use the function digit). Config reads/writes are addressed by BDF; AER's **Error Source
 ID** reports the BDF of the requester that caused an error. Throughout this chapter
 `BDF=0000:03:00.0` is the running example.
 
@@ -90,23 +90,23 @@ failure is *"which layer?"*
 
 | Layer | Packet | Job | What breaks here |
 |---|---|---|---|
-| **Transaction (TL)** | **Transaction Layer Packet (TLP)** | Carries reads/writes/completions/messages | Protocol: wrong address, timeout, malformed packet |
-| **Data Link (Data Link Layer (DLL))** | **Data Link Layer Packet (DLLP)** | Reliability: sequence numbers, Link CRC (LCRC), ACK/NAK, replay, flow-control credits | Link-level: corrupted TLPs get NAK'd and replayed |
-| **Physical (PL)** | **PLP / ordered sets** | SerDes, 8b/10b or 128b/130b coding, equalization, lane bonding, the LTSSM | Signal Integrity (SI): symbol errors, closed eye, retrains |
+| **Transaction (TL)** | **TLP** | Carries reads, writes, completions, messages | Protocol: wrong address, timeout, malformed packet |
+| **Data Link (DLL)** | **DLLP** | Reliability: sequence numbers, LCRC, ACK/NAK, replay, flow-control credits | Link-level: corrupted TLPs get NAK'd and replayed |
+| **Physical (PL)** | **PLP / ordered sets** | SerDes, 8b/10b or 128b/130b coding, equalization, lane bonding, the LTSSM | SI: symbol errors, closed eye, retrains |
 
 - **TLP — Transaction Layer Packet.** The payload-carrying unit. Types: **Memory Read/Write**
   (access a device's Base Address Register (BAR) space — a write is *posted*, no completion; a read is *non-posted*,
-  needs a Completion), **Config Read/Write** (Bus/Device/Function-addressed access to config space),
+  needs a Completion), **Config Read/Write** (BDF-addressed access to config space),
   **Completion** (the response to a non-posted request — carries read data or a status code),
   **I/O** (legacy), and **Message** (Message Signaled Interrupt (MSI)/Message Signaled Interrupt Extended (MSI-X) interrupts, error signaling, power management).
 - **DLLP — Data Link Layer Packet.** Small, link-local, never routed: ACK/NAK, flow-control
   credit updates, power-management. DLLPs are **not retried** — a corrupted one is just
   dropped (which is why a *Bad DLLP* correctable is a pure signal-integrity tell, §5).
 - **PLP / ordered sets** — the physical-layer framing and training sequences (TS1/TS2, SKP,
-  EIEOS) that the Link Training and Status State Machine uses to bring a link up and keep it locked.
+  EIEOS) that the LTSSM uses to bring a link up and keep it locked.
 
-**Reliability is at the Data Link Layer, by replay.** Every TLP gets a **sequence number** and an
-**LCRC**. The receiver checks the Link CRC, and ACKs good TLPs / NAKs bad ones; an un-ACKed TLP
+**Reliability is at the Data Link Layer (DLL), by replay.** Every TLP gets a **sequence number** and an
+**Link CRC (LCRC)**. The receiver checks the LCRC, and ACKs good TLPs / NAKs bad ones; an un-ACKed TLP
 is **replayed** from a retry buffer. This is the mechanism behind the correctable-error
 counters you live in (Bad TLP, Replay Timer Timeout, REPLAY_NUM Rollover) — they are the
 DLL telling you the physical layer is corrupting packets and the link is retrying.
@@ -121,7 +121,7 @@ uncorrectable (§5).
 
 ## 2. Generations, widths, encoding, and the GT/s → GB/s math
 
-This is a place to be precise — getting the bandwidth math wrong in front of EE is an easy
+This is a place to be precise — getting the bandwidth math wrong in front of Electrical Engineering (EE) is an easy
 own-goal, and the numbers drive your pass/fail expectations.
 
 | Gen | Raw rate | Encoding | Coding overhead | Effective BW/lane | x16 bandwidth (one dir) |
@@ -131,7 +131,7 @@ own-goal, and the numbers drive your pass/fail expectations.
 | Gen3 | 8.0 GT/s | 128b/130b | ~1.5% | ~984.6 MB/s | ~15.75 GB/s |
 | Gen4 | 16 GT/s | 128b/130b | ~1.5% | ~1.969 GB/s | ~31.5 GB/s |
 | Gen5 | 32 GT/s | 128b/130b | ~1.5% | ~3.938 GB/s | ~63 GB/s |
-| Gen6 | 64 GT/s | PAM4 + 256B FLIT + FEC/CRC | ~few % (FEC/CRC/FLIT framing) | ~7.56 GB/s | ~121 GB/s |
+| Gen6 | 64 GT/s | PAM4 + 256B FLIT + FEC/CRC | ~few % (FEC, CRC, FLIT framing) | ~7.56 GB/s | ~121 GB/s |
 
 **The math, worked.** "GT/s" is **giga-transfers per second** — one bit per transfer for the
 Non-Return-to-Zero (NRZ) gens (Gen1–5), so the raw bit rate per lane equals the GT/s number in Gbit/s. Apply the
@@ -156,12 +156,12 @@ Two facts to internalize:
 
 **Gen6 changes the signaling and the error model.** Gen6 uses **Pulse Amplitude Modulation 4-level (PAM4)** (4 voltage levels →
 2 bits per symbol, so 64 GT/s at the same ~32 GBaud as Gen5), moves to a fixed **256-byte
-Fixed-size Link Packet (FLIT)** with **Forward Error Correction (FEC) (lightweight LDPC FEC) + a strong CRC + replay** instead
+Fixed-size Link Packet (FLIT)** with **FEC (lightweight LDPC Forward Error Correction (FEC)) + a strong CRC + replay** instead
 of LCRC-retry, and **eliminates standalone DLLPs** (ACK/NAK and flow-control move *inside* the
 FLIT). The 256-byte FLIT budgets roughly **236 B of TLP payload, ~6 B of DLP (the old DLLP
 content), 8 B CRC, and ~6 B FEC** — so the DLLP information is still there, just carried in the
 FLIT rather than as separate, droppable link packets. Because PAM4 has a *raw* symbol-error
-rate orders of magnitude worse than NRZ (three eyes instead of one), the spec leans on Forward Error Correction to
+rate orders of magnitude worse than NRZ (three eyes instead of one), the spec leans on FEC to
 pull the post-correction error rate back down — FEC keeps the link-retry probability under
 ~1e-5. The practical consequence for your tools: **an AER-correctable Bit Error Rate Test (BERT) under-measures a
 Gen6 link**, because most symbol errors are FEC-corrected and never become Bad-TLP/replay
@@ -179,7 +179,7 @@ x4 link ≈ 3.5 GB/s. These set how long a confidence BERT must run (§11): 3×1
 ## 3. Config space is just a file you can read
 
 Every PCIe function exposes a **256-byte** legacy config space, extended to **4096 bytes**
-for PCIe (where Advanced Error Reporting and the other extended capabilities live). On Linux it is literally a
+for PCIe (where AER and the other extended capabilities live). On Linux it is literally a
 file:
 
 ```bash
@@ -219,15 +219,15 @@ The header registers you check first on any device:
 |---|---|---|---|
 | 0x00 | Vendor ID | 16-bit | Expected vendor (0x10DE NVIDIA, 0x144D Samsung NVMe, 0x8086 Intel) |
 | 0x02 | Device ID | 16-bit | Expected GPU/NVMe/card model |
-| 0x04 | Command | 16-bit | **Bit 2 = Bus Master Enable** (must be set for Direct Memory Access (DMA)) |
+| 0x04 | Command | 16-bit | **Bit 2 = Bus Master Enable** (must be set for DMA) |
 | 0x06 | Status | 16-bit | Capabilities-list present (bit 4); error summary bits |
 | 0x08 | Revision ID | 8-bit | Silicon revision |
 | 0x09 | Class Code | 24-bit | 0x030000 VGA, 0x030200 3D controller, 0x010802 NVMe |
 | 0x0E | Header Type | 8-bit | 0x00 = Type 0 (endpoint), 0x01 = Type 1 (bridge/switch port) |
-| 0x10–0x27 | BAR 0–5 | 32-bit ea | Base Address Registers — where the device's Memory-Mapped I/O (MMIO) is mapped |
+| 0x10–0x27 | BAR 0–5 | 32-bit ea | Base Address Registers — where the device's MMIO is mapped |
 
-> **MMIO vs the BARs, and why "unassigned" = dead.** A modern PCIe device's registers are
-> mapped into the CPU's memory space (Memory-Mapped I/O); the BAR tells the OS where. If `lspci -vvv` shows
+> **Memory-Mapped I/O (MMIO) vs the BARs, and why "unassigned" = dead.** A modern PCIe device's registers are
+> mapped into the CPU's memory space (MMIO); the BAR tells the OS where. If `lspci -vvv` shows
 > `Region 0: Memory at <unassigned>` or `BAR ... can't assign`, the device is **visible but
 > non-functional** — software cannot reach its registers. On a custom card this usually means
 > the BIOS couldn't fit the requested window (often a 64-bit-prefetch/`above-4G` setting). It
@@ -243,7 +243,7 @@ toolkit's `find_ext_cap()` work.
   Capability** has ID `0x10` — Link/Device control and status hang off it.
 - **Extended caps** start at `0x100`. Each has a 32-bit header:
   `[cap_id:16][cap_version:4][next_offset:12]`. Follow `next_offset` until 0 (or the header
-  reads `0x00000000`/`0xFFFFFFFF`). **Advanced Error Reporting = ID `0x0001`**, **Secondary PCIe = `0x0019`**,
+  reads `0x00000000`/`0xFFFFFFFF`). **AER = ID `0x0001`**, **Secondary PCIe = `0x0019`**,
   **Lane Margining = `0x0027`**, **Downstream Port Containment (DPC) = `0x001D`**.
 
 ```python
@@ -259,7 +259,7 @@ while offset:
 ```
 
 `setpci` gives you symbolic aliases so you don't hard-code these: **`CAP_EXP`** = the PCIe
-capability base, **`ECAP_AER`** = the Advanced Error Reporting extended-cap base, `ECAP_VSEC` = a vendor-specific
+capability base, **`ECAP_AER`** = the AER extended-cap base, `ECAP_VSEC` = a vendor-specific
 extended cap. So `setpci -s $BDF CAP_EXP+0x12.W` reads Link Status regardless of where the
 PCIe cap physically sits.
 
@@ -269,17 +269,17 @@ PCIe cap physically sits.
 
 ### 4.1 The LTSSM
 
-The **Link Training and Status State Machine (LTSSM)** brings a link up and maintains it.
+The **LTSSM** brings a link up and maintains it.
 Knowing the states maps a "stuck" symptom directly onto a physical cause:
 
 | State | What happens | "Stuck here" means |
 |---|---|---|
-| **Detect** | Look for a partner (sense far-end Receive termination) | No device / no power / **PCIe Reset signal (PERST#)** not released / missing AC-cap or termination / dead PHY — the classic *"device not detected."* |
-| **Polling** | Establish bit + symbol lock, exchange TS1/TS2, agree polarity (always at 2.5 GT/s) | **Reference Clock (REFCLK)** absent/wrong, **Spread Spectrum Clocking (SSC)** mismatch, RX DC offset, gross Signal Integrity, inverted polarity. |
+| **Detect** | Look for a partner (sense far-end Receive termination) | No device / no power / **PERST# (PERST#)** not released / missing AC-cap or termination / dead PHY — the classic *"device not detected."* |
+| **Polling** | Establish bit + symbol lock, exchange TS1/TS2, agree polarity (always at 2.5 GT/s) | **REFCLK** absent/wrong, **SSC** mismatch, RX DC offset, gross SI, inverted polarity. |
 | **Configuration** | Negotiate **link width** + lane numbers (x16→x8 falls out here) | Dead/noisy high lanes, **lane-reversal** unsupported, **bifurcation mismatch**, scrambler problem. |
 | **L0** | **Normal operation** — data flows. This is where you want to live. | — |
 | **Recovery** | Re-enter training to change speed, run equalization (Gen3+), or recover from errors | **Looping** Recovery = marginal SI / equalization (EQ) preset mismatch / RX won't lock at the new rate / thermal drift. The #1 *dynamic* failure. |
-| **L0s / L1 / L2** | Low-power link states (see §6) | A too-slow exit can manufacture a Completion Timeout (CTO) (§9). |
+| **L0s / L1 / L2** | Low-power link states (see §6) | A too-slow exit can manufacture a CTO (§9). |
 
 **Speed changes happen in Recovery**, and so does **equalization** (§8). For Gen3+ the link
 first trains to Gen1 in Polling, reaches L0, then renegotiates up through Recovery —
@@ -289,15 +289,15 @@ bit over the soak, not just the final state.
 
 ### 4.2 Reading link speed, width, and the latches (PCIe Capability)
 
-The negotiated link state lives in the **PCIe Capability** (not Advanced Error Reporting). Offsets are relative to
+The negotiated link state lives in the **PCIe Capability** (not AER). Offsets are relative to
 the PCIe-cap base (`CAP_EXP`):
 
 | Register | Offset | Key fields |
 |---|---|---|
-| Link Capabilities (`LnkCap`) | `+0x0C` | Max speed [3:0], max width [9:4], **Data Link Layer (DLL) Link Active Reporting Capable (bit 20)** |
-| Link Control (`LnkCtl`) | `+0x10` | Active State Power Management (ASPM) control [1:0], **Retrain Link (bit 5)**, Link Disable (bit 4), Common Clock (bit 6) |
+| Link Capabilities (`LnkCap`) | `+0x0C` | Max speed [3:0], max width [9:4], **DLL Link Active Reporting Capable (bit 20)** |
+| Link Control (`LnkCtl`) | `+0x10` | ASPM control [1:0], **Retrain Link (bit 5)**, Link Disable (bit 4), Common Clock (bit 6) |
 | Link Status (`LnkSta`) | `+0x12` | **Current speed [3:0]**, **current width [9:4]**, **Link Training (bit 11)**, **DLLLA (bit 13)**, **LBMS (bit 14)**, **LABS (bit 15)** |
-| Device Control 2 (`DevCtl2`) | `+0x28` | **Completion Timeout Value [3:0]**, CTO Disable (bit 4) |
+| Device Control 2 (`DevCtl2`) | `+0x28` | **CTO Value [3:0]**, CTO Disable (bit 4) |
 | Device Capabilities 2 (`DevCap2`) | `+0x24` | Supported CTO ranges, CTO-disable-supported |
 | Link Control 2 (`LnkCtl2`) | `+0x30` | **Target Link Speed [3:0]** (force a gen for retrain) |
 | Link Status 2 (`LnkSta2`) | `+0x32` | **Flit Mode Status (bit 10)** — set in Gen6 FLIT mode |
@@ -324,8 +324,8 @@ transients:
 |---|---|---|
 | 11 | **Link Training (LT)** | Set *while* retraining (in Recovery). Flicking = the link is bouncing. |
 | 13 | **DLLLA** (DL Link Active) | Drops to 0 on a link-down (DL_Down). A **latched link-down** detector — *but only meaningful if `LnkCap` bit 20 is set.* |
-| 14 | **LBMS** (Link Bandwidth Management Status) | **Write-1-to-Clear latch**: set when speed/width changed via a *managed* retrain (software/hardware initiated). |
-| 15 | **LABS** (Link Autonomous Bandwidth Status) | **W1C latch**: set when the hardware changed speed/width **autonomously** — i.e. it couldn't *hold* the higher rate. |
+| 14 | **LBMS** (LBMS) | **W1C latch**: set when speed/width changed via a *managed* retrain (software/hardware initiated). |
+| 15 | **LABS** (LABS) | **W1C latch**: set when the hardware changed speed/width **autonomously** — i.e. it couldn't *hold* the higher rate. |
 
 > **`LABS` is the gem.** `LABS` latching after a soak means **the hardware autonomously
 > dropped speed/width during your test** — it trained to Gen4 x16 but couldn't hold it. A
@@ -387,7 +387,7 @@ exposes them.
 
 ## 5. AER in depth — the bits are the layer
 
-**Advanced Error Reporting (AER)** is the extended capability (ID `0x0001`) where the hardware
+**AER** is the extended capability (ID `0x0001`) where the hardware
 **latches** correctable and uncorrectable errors. Its entire diagnostic value is that **the
 bit names the layer**, which names the root-cause class. Your tool must never just say
 `errors=5` — it must say *which bits*, because that's the first fork in the debug tree.
@@ -397,14 +397,14 @@ bit names the layer**, which names the root-cause class. Your tool must never ju
 | Offset | Register | Notes |
 |---|---|---|
 | `+0x00` | Capability Header | Cap ID `0x0001` |
-| `+0x04` | **Uncorrectable Error Status** (`UNCOR_STATUS`) | **Write-1-to-Clear (W1C)**. Non-zero after a clean run = FAIL |
+| `+0x04` | **Uncorrectable Error Status** (`UNCOR_STATUS`) | **W1C**. Non-zero after a clean run = FAIL |
 | `+0x08` | Uncorrectable Error **Mask** | 1 = not *reported* (may still latch in status) |
-| `+0x0C` | Uncorrectable Error **Severity** | 1 = Fatal (→ ERR_FATAL, link reset / Downstream Port Containment), 0 = Non-Fatal |
+| `+0x0C` | Uncorrectable Error **Severity** | 1 = Fatal (→ ERR_FATAL, link reset / DPC), 0 = Non-Fatal |
 | `+0x10` | **Correctable Error Status** (`COR_STATUS`) | **W1C**. Recovered errors; rising count = SI concern |
 | `+0x14` | Correctable Error **Mask** | 1 = masked |
-| `+0x18` | **Adv. Error Cap & Control** (`ERR_CAP`) | **First Error Pointer [4:0]** (which UNCOR bit the header log belongs to); End-to-End CRC (ECRC) gen/chk enables |
+| `+0x18` | **Adv. Error Cap & Control** (`ERR_CAP`) | **First Error Pointer [4:0]** (which UNCOR bit the header log belongs to); ECRC gen/chk enables |
 | `+0x1C` | **Header Log** (16 bytes) | First 4 DWORDs of the TLP that caused the **first** uncorrectable error |
-| `+0x2C` | **Root Error Command** | **Root ports / Root Complex Event Collector (RCEC) only** |
+| `+0x2C` | **Root Error Command** | **Root ports / RCEC only** |
 | `+0x30` | **Root Error Status** | **Root ports only** |
 | `+0x34` | **Error Source ID** | **Root ports only** — requester ID of the COR / UNCOR source |
 
@@ -412,19 +412,19 @@ bit names the layer**, which names the root-cause class. Your tool must never ju
 > Status` (+0x30), and `Error Source ID` (+0x34) exist **only on Root Ports and Root Complex
 > Event Collectors (RCECs)** — *not* on endpoints or switch downstream ports. To learn "which
 > requester caused this," read **Error Source ID on the root port above the device**, not on
-> the device. The root port is where the kernel Advanced Error Reporting driver assembles the OS-level story.
+> the device. The root port is where the kernel AER driver assembles the OS-level story.
 
 ### 5.2 Correctable Error Status (`COR_STATUS`, `+0x10`) — the SI early-warning system
 
 | Bit | Mask | Name | Meaning / typical root cause |
 |---|---|---|---|
-| 0 | 0x0001 | **Receiver Error** | Raw PHY symbol / 8b10b / 128b130b / sync-header error. **Pure Signal Integrity** (loss, jitter, crosstalk, marginal EQ). |
-| 6 | 0x0040 | **Bad TLP** | TLP with bad **Link CRC (LCRC)**/sequence → NAK'd & replayed. **SI** (corruption on the wire). |
-| 7 | 0x0080 | **Bad DLLP** | An ACK/NAK/FC/PM Data Link Layer Packet failed CRC. **SI** (DLLPs aren't retried, just dropped). |
+| 0 | 0x0001 | **Receiver Error** | Raw PHY symbol / 8b10b / 128b130b / sync-header error. **Pure SI** (loss, jitter, crosstalk, marginal EQ). |
+| 6 | 0x0040 | **Bad TLP** | TLP with bad **LCRC**/sequence → NAK'd & replayed. **SI** (corruption on the wire). |
+| 7 | 0x0080 | **Bad DLLP** | An ACK/NAK/FC/PM DLLP failed CRC. **SI** (DLLPs aren't retried, just dropped). |
 | 8 | 0x0100 | **REPLAY_NUM Rollover** | Replay counter wrapped (4 consecutive replays of one TLP). **SI / marginal link.** |
 | 12 | 0x1000 | **Replay Timer Timeout** | No ACK before REPLAY_TIMER expired → replay. **Classic marginal-link symptom.** |
 | 13 | 0x2000 | **Advisory Non-Fatal** | An uncorrectable error was *demoted* to advisory. **Read `UNCOR_STATUS` to see what was demoted.** |
-| 14 | 0x4000 | **Corrected Internal Error** | Device-internal corrected error (its own RAM Error-Correcting Code (ECC)). Device-side, not the link. |
+| 14 | 0x4000 | **Corrected Internal Error** | Device-internal corrected error (its own RAM ECC). Device-side, not the link. |
 | 15 | 0x8000 | **Header Log Overflow** | More uncorrectables than the 1-deep log could hold → *many* uncorrectables; go fix those. |
 
 **The single most important correctable signature:** *Replay Timer Timeout + Bad TLP +
@@ -439,21 +439,21 @@ meanings so a decode reads like a sentence.
 |---|---|---|---|
 | 4 | 0x0000_0010 | **Data Link Protocol** | ACK/sequence-number protocol violation. **Protocol/IP bug**, sometimes severe SI corrupting seq#s. |
 | 5 | 0x0000_0020 | **Surprise Down** | Link dropped to DL_Down unexpectedly. **Device/power lost, cable yanked, far-end PHY died, hot-unplug.** |
-| 12 | 0x0000_1000 | **Poisoned TLP Received** | TLP arrived with the **EP (poison) bit** set (sender marked its own data bad). **Upstream data corruption**, not this link's Signal Integrity. |
+| 12 | 0x0000_1000 | **Poisoned TLP Received** | TLP arrived with the **EP (poison) bit** set (sender marked its own data bad). **Upstream data corruption**, not this link's SI. |
 | 13 | 0x0000_2000 | **Flow Control Protocol** | Credit accounting violated the rules. **Firmware/IP bug** (or corrupted FC DLLPs). |
-| 14 | 0x0000_4000 | **Completion Timeout** | A non-posted request (usually a read) never got its completion before the CTO timer fired. **Upstream hung / wrong address / Active State Power Management-L1 exit too slow / switch dropped it / FW.** (§9) |
+| 14 | 0x0000_4000 | **CTO** | A non-posted request (usually a read) never got its completion before the CTO timer fired. **Upstream hung / wrong address / ASPM-L1 exit too slow / switch dropped it / FW.** (§9) |
 | 15 | 0x0000_8000 | **Completer Abort** | The completer refused the request (returned CA). **Target-side**: bad address, permission, completer-internal error. |
 | 16 | 0x0001_0000 | **Unexpected Completion** | A completion with no matching outstanding request. **Switch mis-routing / duplicate tags / firmware.** |
 | 17 | 0x0002_0000 | **Receiver Overflow** | More TLP data than advertised credits. **Flow-control/IP bug** (transmitter overran). |
 | 18 | 0x0004_0000 | **Malformed TLP** | Structurally invalid TLP (bad length/byte-enables/addr/type). **FW/IP bug** or severe corruption. Usually **Fatal** by default. |
-| 19 | 0x0008_0000 | **End-to-End CRC (ECRC) Error** | End-to-End CRC mismatch (only if ECRC gen+check enabled). **End-to-end corruption** an LCRC didn't catch through a switch/retimer. |
-| 20 | 0x0010_0000 | **Unsupported Request** | Target doesn't support the request (access to an unimplemented Base Address Register/region). **Address-map / enumeration / driver bug.** |
-| 21 | 0x0020_0000 | **Access Control Services (ACS) Violation** | Access Control Services blocked a peer-to-peer TLP. **Input-Output Memory Management Unit (IOMMU)/ACS policy** (often *expected* under virtualization). |
+| 19 | 0x0008_0000 | **ECRC Error** | ECRC mismatch (only if ECRC gen+check enabled). **End-to-end corruption** an LCRC didn't catch through a switch/retimer. |
+| 20 | 0x0010_0000 | **Unsupported Request** | Target doesn't support the request (access to an unimplemented BAR/region). **Address-map / enumeration / driver bug.** |
+| 21 | 0x0020_0000 | **ACS Violation** | ACS blocked a peer-to-peer TLP. **IOMMU/ACS policy** (often *expected* under virtualization). |
 | 22 | 0x0040_0000 | **Uncorrectable Internal** | Device-internal uncorrectable (its own logic/RAM). Device-side. |
-| 23–31 | — | MC-Blocked / AtomicOp-Egress / TLP-Prefix-Blocked / IDE / PCRC | Newer-spec integrity/encryption/translation errors. **Decode them anyway** so an unexpected high bit reads as a name, not "unknown bit 24." |
+| 23–31 | — | MC-Blocked / AtomicOp-Egress / TLP-Prefix-Blocked / IDE / PCRC | Newer-spec integrity, encryption, translation errors. **Decode them anyway** so an unexpected high bit reads as a name, not "unknown bit 24." |
 
 The fork this table encodes: **Receiver Error / Bad TLP / Replay Timer** cluster → physical
-Signal Integrity (reseat, temperature, margining, equalization). **Completion Timeout / Malformed /
+SI (reseat, temperature, margining, equalization). **Completion Timeout (CTO) / Malformed /
 Unexpected Completion / FCP** → transaction/protocol (upstream device, switch, firmware).
 *Where* the bit sits is the first half of triage.
 
@@ -467,7 +467,7 @@ Unexpected Completion / FCP** → transaction/protocol (upstream device, switch,
 `UNCOR_SEVERITY` (+0x0C) selects **Fatal(1)/Non-Fatal(0) per bit**; a Fatal error triggers
 ERR_FATAL → link reset / DPC. `*_MASK` selects whether the error is *reported* (generates a
 message/interrupt); masked errors may still latch in status. **Read severity + mask in the arm
-step** so you know which bits will trigger Downstream Port Containment or a link reset *under you* mid-stress —
+step** so you know which bits will trigger DPC or a link reset *under you* mid-stress —
 otherwise the device vanishes and you blame the wrong thing.
 
 ```bash
@@ -478,7 +478,7 @@ setpci -s $BDF ECAP_AER+0x14.L     # COR mask
 
 ### 5.5 The write-1-to-clear discipline (your tool's core primitive)
 
-Advanced Error Reporting status bits are **write-1-to-clear (W1C)**: writing a `1` clears a bit, writing `0` does
+AER status bits are **write-1-to-clear (W1C)**: writing a `1` clears a bit, writing `0` does
 nothing. Two consequences drive the tool design:
 
 1. **You must arm (clear) before a measurement.** The latches accumulate **from boot** —
@@ -510,7 +510,7 @@ if (sts != 0) {                              // only act if something is set
 
 ### 5.6 Who else is clearing your latches (the reconciliation trap)
 
-The kernel `pcieport`/Advanced Error Reporting driver attaches to **root ports and RCECs** and will read-and-clear
+The kernel `pcieport`/AER driver attaches to **root ports and RCECs** and will read-and-clear
 AER status out from under you to print its `dmesg` lines. If both your tool and the kernel
 clear the same W1C bits, each hides errors from the other and your counts are wrong and
 irreproducible. Three options, in order of preference:
@@ -535,7 +535,7 @@ irreproducible. Three options, in order of preference:
 
 ### 5.7 The Device Status fallback when AER is absent
 
-Not every function has an Advanced Error Reporting capability (some endpoints, many simple devices). **Every PCIe
+Not every function has an AER capability (some endpoints, many simple devices). **Every PCIe
 function has a Device Status register** in the PCIe Capability (`+0x0A`) with coarse
 error-detected summary bits — your universal fallback:
 
@@ -547,7 +547,7 @@ error-detected summary bits — your universal fallback:
 | 3 | `DEVSTA_UR` | Unsupported Request detected |
 
 The toolkit codifies the preference explicitly: `aer.error_source()` returns `"aer"` (rich
-per-type), else `"devstatus"` (coarse summary), else `"none"`. The Bit Error Rate Test honors it — a device
+per-type), else `"devstatus"` (coarse summary), else `"none"`. The BERT honors it — a device
 with **no error source at all returns status `"skip"`**, never a false `pass` from zero errors
 it couldn't actually measure. That "skip not pass" rule is a manufacturing-safety property: a
 test must never claim a unit good on the strength of a measurement it didn't make.
@@ -563,7 +563,7 @@ management (the link decides, in hardware) is **Active State Power Management (A
 |---|---|---|---|
 | **L0** | Active — normal operation | 0 | none |
 | **L0s** | Standby — one direction idle | <1 µs | low |
-| **L1** | Both directions idle, Phase-Locked Loop (PLL) may stay on | 2–4 µs (spec target; real parts advertise up to 32–64 µs) | medium |
+| **L1** | Both directions idle, PLL may stay on | 2–4 µs (spec target; real parts advertise up to 32–64 µs) | medium |
 | **L1.1** | L1 substate — common-mode kept, clock/PLL off | order ~10–20 µs | high |
 | **L1.2** | L1 substate — common-mode *off* too (lowest power) | order ~100 µs (CLKREQ + common-mode re-establish) | highest |
 | **L2** | Link off — full retrain on wake | >100 µs | maximum |
@@ -572,7 +572,7 @@ ASPM is controlled by `LnkCtl[1:0]`; the **L1 substates (L1SS)** have their own 
 capability (`L1SubCtl1/2`). They are great for idle power and **a recurring source of two
 failure modes in test:**
 
-- **Latency that manufactures a Completion Timeout.** If the link is in L1/L1.1/L1.2 and the
+- **Latency that manufactures a CTO.** If the link is in L1/L1.1/L1.2 and the
   time to wake it and return to L0 exceeds the CTO timer, an in-flight read **times out** —
   surfacing as a `Completion Timeout` uncorrectable that *looks* like a link error but is
   really power-management latency (§9).
@@ -580,8 +580,8 @@ failure modes in test:**
   states briefly makes the link unavailable; under a tight poll this can read as a transient
   or a retrain.
 
-> **MT implication: usually disable ASPM during test.** ASPM transitions add noise that can
-> masquerade as link errors, and lane margining (§10) *requires* Active State Power Management off. Disable it during
+> **Manufacturing Test (MT) implication: usually disable ASPM during test.** ASPM transitions add noise that can
+> masquerade as link errors, and lane margining (§10) *requires* ASPM off. Disable it during
 > the stress window and re-run to confirm observed errors aren't ASPM-related:
 > ```bash
 > # runtime, per-policy:
@@ -598,13 +598,13 @@ device between test phases).
 ## 7. Enumeration and bring-up: when the link never reaches L0
 
 If `lspci -nn` doesn't show the device (or shows it with no BARs), the link never reached
-**L0** — the LTSSM is stuck early, and you can't read Advanced Error Reporting on a link that never came up. This
+**L0** — the LTSSM is stuck early, and you can't read AER on a link that never came up. This
 branch is about the *physical bring-up* facts.
 
 | Stuck in (LTSSM) | First moves |
 |---|---|
-| **Detect** | Far-end **power** off? **PERST#** released at the right time after rails are up? **AC-coupling cap** / termination missing on a lane? Dead PHY? |
-| **Polling** | **REFCLK** present (100 MHz, SSC if expected)? **SSC mismatch**? RX DC offset? Inverted polarity? Gross Signal Integrity (impedance/crosstalk)? |
+| **Detect** | Far-end **power** off? **PERST# (PERST#)** released at the right time after rails are up? **AC-coupling cap** / termination missing on a lane? Dead PHY? |
+| **Polling** | **REFCLK** present (100 MHz, SSC if expected)? **SSC mismatch**? RX DC offset? Inverted polarity? Gross SI (impedance/crosstalk)? |
 | **Configuration** | Dead/noisy high lanes (configures smaller width), **lane-reversal** unsupported, **bifurcation mismatch**, scrambler problem. A link that comes up **x8 instead of x16** fell out here. |
 
 ```bash
@@ -635,17 +635,17 @@ lspci -vvv -s $BDF | grep -iE 'Region|BAR|ignoring'   # "can't assign"/"ignoring
 **The custom-card bring-up order** (the JD's "custom PCIe devices" — for an off-the-shelf GPU
 you have NVIDIA's tools; for Zoox's own card you have a schematic and a problem):
 
-1. **Does it enumerate?** `lspci -nn` — right Vendor/Device ID at the expected Bus/Device/Function? If not:
-   rails, REFCLK, PERST#, LTSSM stuck in Detect/Polling, or a layout error.
+1. **Does it enumerate?** `lspci -nn` — right Vendor/Device ID at the expected BDF? If not:
+   rails, Reference Clock (REFCLK), PCIe Reset signal (PERST#), LTSSM stuck in Detect/Polling, or a layout error.
 2. **Right class/BARs?** `lspci -vvv -s $BDF` — are BARs assigned? Unassigned = dead to
    software even though visible.
 3. **Right link?** Current vs max speed/width. x16→x8 or Gen4→Gen3 on a new board is your
-   first Signal Integrity finding.
-4. **Does it respond?** Read a known register over MMIO; for a custom FPGA the design team
+   first Signal Integrity (SI) finding.
+4. **Does it respond?** Read a known register over MMIO; for a custom Field-Programmable Gate Array (FPGA) the design team
    gives you a scratch/ID register to prove the datapath.
 5. **Driver / interrupts?** `lspci -k` — does the driver bind? Is `/proc/interrupts` counting
    during activity? (MSI/MSI-X: the device writes a special address to signal an interrupt;
-   Message Signaled Interrupt Extended scales to 2048 vectors with per-vector masking. A device that looks fine in `lspci`
+   MSI-X scales to 2048 vectors with per-vector masking. A device that looks fine in `lspci`
    but never interrupts is dead from the OS's view.)
 6. **Errors under stress?** Now the BERT/AER monitor, hot and cold (§5, §11).
 7. **Margin?** Lane margining for the per-lane eye (§10).
@@ -672,7 +672,7 @@ it.
   losses (P0 ≈ no emphasis for a short channel; higher presets add post/pre-emphasis for lossy
   channels). During training the hardware negotiates a preset *per lane*.
 - **RX equalization**: **Continuous-Time Linear Equalizer (CTLE)** (continuous-time linear EQ — frequency-dependent gain that
-  boosts high frequencies) + **Decision Feedback Equalizer (DFE)** (decision-feedback EQ — cancels ISI using past bit
+  boosts high frequencies) + **Decision Feedback Equalizer (DFE)** (decision-feedback EQ — cancels Inter-Symbol Interference (ISI) using past bit
   decisions). The receiver *adapts* these during training, which is why a marginal link can
   *still train* — the RX compensates until it can't. **That is exactly why lane margining
   (§10) matters more than pass/fail-on-link-up.**
@@ -681,13 +681,13 @@ it.
 
 | Phase | Who tunes what | What happens |
 |---|---|---|
-| 0 | Downstream Port TX -> Upstream Port RX | Link is now at the higher rate. The DSP transmits using the **preset values** it sent in its training sets; the USP applies those starting presets (and RxHint) to **its own** transmitter. Coarse setup, no coefficient requests yet. |
-| 1 | both directions | Both partners exchange the **FS (Full Swing) / LF (Low Frequency)** bounds — the upper/lower limits on TX coefficients — and confirm they can hold the higher rate at a coarse Bit Error Rate (BER < 1e-4). |
+| 0 | DSP TX -> USP RX | Link is now at the higher rate. The DSP transmits using the **preset values** it sent in its training sets; the USP applies those starting presets (and RxHint) to **its own** transmitter. Coarse setup, no coefficient requests yet. |
+| 1 | both directions | Both partners exchange the **FS (Full Swing) / LF (Low Frequency)** bounds — the upper/lower limits on TX coefficients — and confirm they can hold the higher rate at a coarse BER. |
 | 2 | **USP tunes the DSP's TX** | The **upstream** port evaluates *its own* receiver and requests TX coefficient changes **from the downstream** port; the downstream adjusts its transmitter until the USP's Receive is optimized. |
 | 3 | **DSP tunes the USP's TX** | The **downstream** port evaluates *its own* receiver and requests TX coefficient changes **from the upstream** port; fine-tuning until the DSP's RX hits its eye target. |
 
 > **The phase ownership is a localization lever.** Phase 2 optimizes the **downstream-pointing**
-> direction (Downstream Port transmitter → Upstream Port receiver); Phase 3 optimizes the **upstream-pointing**
+> direction (DSP transmitter → USP receiver); Phase 3 optimizes the **upstream-pointing**
 > direction (USP transmitter → DSP receiver). A board that equalizes one direction fine but
 > not the other (an asymmetric channel — a long TX trace on one side, a connector on one side
 > only) shows up as an EQ failure or downgrade you can map back to a phase, which maps to a
@@ -727,7 +727,7 @@ Before lane margining was standard, the way to find the best equalization for a 
 sweep TX presets and measure link quality at each — the grid-search a signal-integrity
 engineer does manually on a bench, automated. At X-ES this was a script that iterated TX
 pre-emphasis on a PLX/Broadcom switch, retrained, ran a quick functional check, then ran the
-Bit Error Rate Test to measure quality — producing a **(preset, lane) → BER** matrix that told you which
+BERT to measure quality — producing a **(preset, lane) → BER** matrix that told you which
 preset gave the best eye for that specific board revision. Once characterized, the optimal
 preset was locked into switch firmware for production.
 
@@ -746,13 +746,13 @@ validate per switch model; the *concept* is what transfers.
 
 ## 9. Completion Timeout: the ASPM / L1SS / CTO story
 
-`Completion Timeout` (UNCOR bit 14) is the uncorrectable bit **most often misdiagnosed as Signal Integrity**
+`Completion Timeout` (UNCOR bit 14) is the uncorrectable bit **most often misdiagnosed as SI**
 when it's actually **power-management latency or a hung completer**. A non-posted request
-(usually a memory read) didn't get its completion before the Completion Timeout (CTO) timer fired. The header log
+(usually a memory read) didn't get its completion before the CTO timer fired. The header log
 (§10.3) names *what* read and *who* issued it; this chapter finds *why it was slow.*
 
 **The CTO timer lives in Device Control 2.** The timeout *range* is programmable in `DevCtl2`
-(`+0x28`), **Completion Timeout Value field [3:0]**; `DevCap2` (`+0x24`) advertises supported
+(`+0x28`), **CTO Value field [3:0]**; `DevCap2` (`+0x24`) advertises supported
 ranges and whether CTO can be disabled.
 
 ```bash
@@ -791,7 +791,7 @@ echo performance | sudo tee /sys/module/pcie_aspm/parameters/policy
 
 ## 10. Lane margining at the receiver — the scope-free eye
 
-This is the modern technique that turns "sweep presets and run a Bit Error Rate Test" into a spec-standard,
+This is the modern technique that turns "sweep presets and run a BERT" into a spec-standard,
 push-button measurement, and it's a genuinely strong thing to bring to Zoox.
 
 **Lane Margining at the Receiver** is a **mandatory PCIe Gen4+ feature** (extended capability
@@ -829,8 +829,8 @@ sudo pcilmr -o ./csv --full                     # margin every ready link, CSV o
 
 Key flags: `-e <errlimit>` (default 4), `-d <dwell-sec>` (default 1), `-l <lanes>`,
 `-r <recv#>` (1 = the port's own RX … 6 = far-end RX, **including retimers 2–5**), `-t/-T`
-(timing), `-v/-V` (voltage), `-g` (grade in %UI or ps), `-c` (capabilities only). **Requires
-root**, the link in **D0**, and **Active State Power Management + HW-autonomous features disabled** during the test
+(timing), `-v/-V` (voltage), `-g` (grade in %Unit Interval (UI) or ps), `-c` (capabilities only). **Requires
+root**, the link in **D0**, and **ASPM + HW-autonomous features disabled** during the test
 (pcilmr does the latter and warns).
 
 ### 10.1 Converting steps to UI and mV
@@ -841,7 +841,7 @@ $$ \text{timing\_margin\_UI} = \frac{\text{passing\_timing\_steps}}{\text{NumTim
 
 $$ \text{voltage\_margin\_mV} = \frac{\text{passing\_voltage\_steps}}{\text{NumVoltageSteps}} \times \text{MaxVoltageOffset} $$
 
-`MaxTimingOffset` is a **percent of a Unit Interval** (so `/100` gives UI); `MaxVoltageOffset` is in mV
+`MaxTimingOffset` is a **percent of a UI** (so `/100` gives UI); `MaxVoltageOffset` is in mV
 (or 10 mV units on some parts — verify per silicon). The conversion is anchored on the **UI**:
 at 16 GT/s one UI ≈ 62.5 ps (1/16e9 s), at 32 GT/s ≈ 31.25 ps — so a "% of UI" margin halves in
 picoseconds when you double the rate even though the percentage looks the same. Spec eye targets
@@ -887,9 +887,9 @@ sudo pcilmr --margin -TV -r 1,2,3,6 0000:03:00.0
 
 ### 10.3 Decoding the AER Header Log — turning a bit into a sentence
 
-When an uncorrectable error latches, Advanced Error Reporting captures the **first 4 DWORDs of the offending TLP**
+When an uncorrectable error latches, AER captures the **first 4 DWORDs of the offending TLP**
 in the **Header Log** (`+0x1C`), and the **First Error Pointer** (`ERR_CAP[4:0]`, `+0x18`)
-says which uncorrectable bit that log belongs to. Decoding it turns "Completion Timeout" into
+says which uncorrectable bit that log belongs to. Decoding it turns "CTO" into
 "a 4-byte memory read of address `0x05010000` by requester `00:04.0` timed out" — the
 difference between a guess and a root cause.
 
@@ -924,9 +924,9 @@ DW3 = 0x00050100  -> next captured DWORD (for a 4DW/64-bit header, DW2/DW3 = Add
 
 **Read it as a sentence:** *"A 4-byte memory read of `0x05010000` by requester `00:04.0`
 (tag 0x0a) triggered the first uncorrectable error."* Now go look: is `0x05010000` inside a
-Base Address Register that exists? Is `00:04.0` the device you expect? If the bit set was **Completion Timeout**,
+BAR that exists? Is `00:04.0` the device you expect? If the bit set was **CTO**,
 that read never completed — so the **completer of `0x05010000`** is the suspect (hung endpoint,
-slow L1 exit, or a switch that dropped the completion), not the requester's link Signal Integrity.
+slow L1 exit, or a switch that dropped the completion), not the requester's link SI.
 
 > **Decode shortcuts.** Fmt `[7:5]`: `000`=3DW/no-data, `001`=4DW/no-data, `010`=3DW/with-data,
 > `011`=4DW/with-data, `100`=TLP-prefix. Type `[4:0]`: `00000`=Memory, `00010`=I/O,
@@ -945,7 +945,7 @@ diagnostic addition over `errors=N`.
 
 This is your tool's core, and it's the X-ES pattern: a **C engine counts errors and bits
 fast**; a **Python layer decides whether you've proven the link good**. The goal of a
-manufacturing Bit Error Rate Test (BERT) is *not* to measure the exact Bit Error Rate (BER) — it's to **prove BER < target (e.g.
+manufacturing BERT is *not* to measure the exact BER — it's to **prove BER < target (e.g.
 1e-12) at a stated confidence, in the shortest time**, and to fail fast when it can't.
 
 ### 11.1 The math, in one paragraph (full derivation: Math chapter §10)
@@ -983,7 +983,7 @@ than running forever.
 
 `bert.run_bert()` implements exactly this:
 
-1. **Idle baseline (begin).** Quiesce the link, clear Advanced Error Reporting, read what's set with *no* traffic.
+1. **Idle baseline (begin).** Quiesce the link, clear AER, read what's set with *no* traffic.
    Bits set at idle are a **constant fault** (or severe marginality), not a per-error rate —
    recorded and excluded from the rate count so a real fault can't run the count away.
 2. **Arm.** Clear AER status with the W1C read-back primitive (§5.5) and confirm zero; start
@@ -1008,7 +1008,7 @@ clear-and-recount fast enough; that's the `engine="c"` path — the C binary cou
 increments while the same Python "conductor" makes the sequential decision and bounds the
 runtime.)
 
-> **The Design Verification (DV) ↔ Manufacturing Test (MT) bridge (why MT must capture the parameter, not just the verdict).** The *same*
+> **The DV ↔ MT bridge (why MT must capture the parameter, not just the verdict).** The *same*
 > BERT engine serves both modes. **DV:** run it across voltage/temperature corners and TX
 > presets and *plot the surface*. **MT:** run it once to a confidence target and emit
 > pass/fail. The captured `(errors, bits, BER-bound)` is what later feeds Statistical Process Control (SPC) and
@@ -1034,13 +1034,13 @@ done
 
 A switch is itself a unit-under-test: bad switch SerDes (→ correctable cluster on a DSP), a
 switch-firmware flow-control bug (→ FCP / RX_OVER), or a switch that drops completions (→
-**Completion Timeout at the endpoint above it**, even though the endpoint's own link is clean).
+**CTO at the endpoint above it**, even though the endpoint's own link is clean).
 On the **root port** (only), **Error Source ID** (+0x34) gives the requester ID of the COR/
 UNCOR source — on a tree with switches that's how you attribute an error to the *true*
 originating device rather than the port that happened to log it.
 
 The toolkit makes this first-class. `topology.analyze_chain()` decomposes an endpoint's path
-into **per-Bus/Device/Function error directions** (each BDF's AER reports *one direction of one link* — its
+into **per-BDF error directions** (each BDF's AER reports *one direction of one link* — its
 receiver side) and **per-link downgrade targets** (speed/width is a per-*link* property owned
 by the downstream port, read *once*). `diagnostics.diagnose_chain()` then runs **one** stress
 window (the endpoint BERT — its traffic traverses every link), monitors AER per-direction on
@@ -1088,7 +1088,7 @@ a defensible order, with the exact commands.
 ```
 
 The reason it works: **different root causes leave different evidence in different
-registers.** Signal Integrity (SI) = correctable clusters that move with temperature and shrink the eye margin;
+registers.** SI = correctable clusters that move with temperature and shrink the eye margin;
 protocol = uncorrectable bits whose header log names a transaction; power = Surprise Down /
 load-correlated bursts; firmware = reproducible, temperature-independent, version-tied
 uncorrectables.
@@ -1098,7 +1098,7 @@ a symptom actually arrives at the bench — by what you *observe* first:
 
 | Observed signature | Most likely root cause | The one test that confirms it |
 |---|---|---|
-| Device absent from `lspci -nn` | LTSSM stuck pre-L0 (power/REFCLK/PERST#/bifurcation/dead PHY) | dmesg "training"/"timed out"; scope rails+REFCLK+PERST#; BIOS bifurcation vs schematic |
+| Device absent from `lspci -nn` | LTSSM stuck pre-L0 (power/REFCLK/PERST# (PERST#)/bifurcation/dead PHY) | dmesg "training"/"timed out"; scope rails+REFCLK+PERST#; BIOS bifurcation vs schematic |
 | Present, `Region N: <unassigned>` / "can't assign BAR" | BIOS couldn't fit the MMIO window (often 64-bit/above-4G) | Toggle above-4G decoding / resize BAR; re-enumerate |
 | `Speed ...(downgraded)`, width OK | EQ / SI margin / BIOS gen-cap / thermal | Retest hot AND cold; `pcilmr` margin; check LnkCtl2 Target Link Speed cap |
 | `Width ...(downgraded)`, speed OK | Dead lane / connector / bifurcation / lane-reversal | Per-lane `pcilmr` finds the dead lane; reseat; BIOS bifurcation |
@@ -1106,8 +1106,8 @@ a symptom actually arrives at the bench — by what you *observe* first:
 | `Train+` flickering across reads | Link bouncing through Recovery | Poll LnkSta over the soak; correlate with temperature/load |
 | COR cluster RxErr+BadTLP+ReplayTO | Physical / SI on the wire | Count rises with temp; one-lane `pcilmr` low; reseat/cable swap moves it; better preset helps |
 | `Bad DLLP` heavy, little else | SI on the DLLP path (same SI workup) | Same as above; DLLPs aren't retried so this is a pure-SI tell |
-| UNCOR Completion Timeout, no SI cluster | ASPM/L1-exit latency OR hung/mis-addressed completer | `pcie_aspm=off` A/B: vanishes => L1 latency; persists => header-log the completer |
-| UNCOR Malformed/UnexpCmpl/FCP/RxOverflow | Protocol / firmware / IP bug | Reproducible regardless of temp/reseat; tied to traffic pattern or FW/driver version |
+| UNCOR CTO, no SI cluster | ASPM/L1-exit latency OR hung/mis-addressed completer | `pcie_aspm=off` A/B: vanishes => L1 latency; persists => header-log the completer |
+| UNCOR Malformed, UnexpCmpl, FCP, RxOverflow | Protocol / firmware / IP bug | Reproducible regardless of temp/reseat; tied to traffic pattern or FW/driver version |
 | UNCOR Poisoned TLP / ECRC | Data corruption upstream / through a switch or retimer | Walk the chain; check Error Source ID at the root port; margin each segment |
 | UNCOR Surprise Down | Power lost / browned out / connector opened / hot-unplug | Scope the device rail at the load step; reseat; swap PSU |
 | Device vanishes then re-enumerates | DPC contained a fatal OR a power glitch reset it | dmesg DPC containment + trigger reason vs a clean re-enumerate; rail scope at the event |
@@ -1136,7 +1136,7 @@ setpci -s $BDF ECAP_AER+0x10.L ECAP_AER+0x04.L
 
 ### 13.3 Decoding `lspci -vvv` for a GPU
 
-`lspci -vvv` already decodes the PCIe-cap and Advanced Error Reporting words for you — the skill is knowing which
+`lspci -vvv` already decodes the PCIe-cap and AER words for you — the skill is knowing which
 lines carry a verdict. A realistic (lightly edited) capture of a degraded GPU link, with the
 load-bearing lines called out:
 
@@ -1179,7 +1179,7 @@ How to read it, top to bottom:
 - **`Train-`** is the LT bit at the instant of capture; if it flickers `Train+` across repeated
   reads the link is bouncing through Recovery (the live-retrain tell a single read misses).
 - **`CESta: RxErr+ BadTLP+ ... Timeout+`** — the correctable cluster. RxErr + BadTLP + Replay
-  Timer Timeout together is the canonical **physical-layer / Signal Integrity** signature.
+  Timer Timeout together is the canonical **physical-layer / SI** signature.
 - **`UESvrt:`** — read this in the **arm** step: it tells you which uncorrectable bits are Fatal
   and will trip DPC / a link reset *under you* mid-stress.
 - **`EqualizationComplete+ EqualizationPhase3+`** on `LnkSta2` — the link finished all four EQ
@@ -1210,7 +1210,7 @@ dmesg | grep -iE 'pcie|aer|link|train|dpc|bifurcation'
 
 - **Link-down** = the link dropped out of L0 entirely. Evidence: **DLLLA** drops (if capable),
   **Surprise Down** (UNCOR 5) latches, `dmesg` "link is down," the device may vanish. Causes:
-  power/mechanical (§14), a far-end PHY dying, Downstream Port Containment (DPC) containment (§13.6).
+  power/mechanical (§14), a far-end PHY dying, DPC containment (§13.6).
 - **Link-degrade** = the link stayed up but at a lower speed/width, or it's bouncing. Evidence:
   `LnkSta` current < max, **LABS** latched (autonomous downgrade — the "couldn't hold it" tell,
   §4.3), **LT** flicking (retrains), correctable clusters rising. Causes: equalization/SI
@@ -1221,7 +1221,7 @@ it degraded and recovered during the soak = a **fail** a one-shot test passes.
 
 ### 13.6 DPC — when the device vanishes on purpose
 
-**Downstream Port Containment (DPC)** (DPC, ext-cap ID `0x001D`) is a root/switch downstream-port
+**DPC** (DPC, ext-cap ID `0x001D`) is a root/switch downstream-port
 mechanism that, on a Fatal/Non-Fatal error, **automatically disables the link** to contain the
 error (stops bad TLPs propagating, stops a hung read from hanging the CPU). When DPC fires,
 **the device disappears**, then the kernel attempts recovery and re-enumerates.
@@ -1251,7 +1251,7 @@ sensitivity**:
 2. **Margin the lanes** (`pcilmr -TV`) — a margin **below limit on one lane** localizes it to
    a connector pin, a via, a SerDes, or an AC-cap on that lane.
 3. **Sweep temperature** — count correctables hot vs cold; **margin shrinking with
-   temperature** is the Signal Integrity fingerprint (the reason to test hot).
+   temperature** is the SI fingerprint (the reason to test hot).
 4. **Reseat / swap the cable** — if the symptom moves with the connector/cable, it's
    mechanical/contact SI, not silicon.
 5. **Try a better TX preset** — if a preset change improves margin/error rate, the channel was
@@ -1292,7 +1292,7 @@ steps**, suspect **power integrity or a mechanical/contact problem**, not the Se
 
 > **The discriminator (power droop vs thermal SI):** power droop is **load-correlated** (it
 > tracks current transients and improves when you reduce load even at the same temperature);
-> thermal Signal Integrity is **temperature-correlated** (it tracks junction temperature and improves when
+> thermal SI is **temperature-correlated** (it tracks junction temperature and improves when
 > you cool the part even at the same load). **Vary load at fixed temperature, then temperature
 > at fixed load, to separate them.** A lot of "digital" PCIe failures are power/SI failures —
 > the engineer who reaches for the **scope and the AER decode together** closes the
@@ -1300,7 +1300,7 @@ steps**, suspect **power integrity or a mechanical/contact problem**, not the Se
 
 ### 13.10 Self-testing the AER pipeline with `aer-inject`
 
-Before you trust a station's Advanced Error Reporting decode/clear/count path, validate it with **no bad hardware**
+Before you trust a station's AER decode/clear/count path, validate it with **no bad hardware**
 by *injecting* a known error and asserting the pipeline reports exactly that (needs a kernel
 with `CONFIG_PCIEAER_INJECT` → `/dev/aer_inject`).
 
@@ -1316,11 +1316,11 @@ dmesg | tail        # confirm the injected BadTLP appears AND decodes correctly
 ```
 
 Inject one COR (`RCVR, BAD_TLP, BAD_DLLP, REP_ROLL, REP_TIMER`) and one UNCOR (`TRAIN, DLP,
-POISON_TLP, FCP, COMP_TIME, COMP_ABORT, UNX_COMP, RX_OVER, MALF_TLP, ECRC, UNSUP`) and assert
+POISON_TLP, FCP, COMP_TIME, COMP_ABORT, UNX_COMP, RX_OVER, MALF_TLP, End-to-End CRC (ECRC), UNSUP`) and assert
 the five-point test: (a) the correct bit is set in status, (b) the header log matches what you
 injected, (c) the First Error Pointer points at the right uncorrectable bit, (d) your W1C clear
 actually clears it, (e) your kernel-counter delta is exactly one. That **is** the AER
-self-test — the analog of a golden-unit correlation. A station whose Advanced Error Reporting decode is subtly
+self-test — the analog of a golden-unit correlation. A station whose AER decode is subtly
 wrong (off-by-one bit, doesn't read the header log, races the kernel) mis-triages every real
 failure; `aer-inject` proves the pipeline correct on a *known* input so you trust it on
 *unknown* hardware.
@@ -1333,12 +1333,12 @@ The whole point: turn each PCIe finding into a **test placed at the earliest pha
 catch it**, with a defensible pass/fail and a captured parameter. The two structural facts
 that shape every PCIe test:
 
-> **Bit errors are per-Bus/Device/Function and per-direction, evaluated at the receiver. Link downgrades are
+> **Bit errors are per-BDF and per-direction, evaluated at the receiver. Link downgrades are
 > per-link and seen at both ends.**
 
 That's not pedantry — it's the data model:
 
-- A link's two directions are independent differential pairs. **Advanced Error Reporting on a given BDF reports the
+- A link's two directions are independent differential pairs. **AER on a given BDF reports the
   errors its receiver saw** — one direction of one link. Four BDFs in a chain = **four
   independent error counts**, each pinned to a direction. So a bit-error problem is attributed
   to a **BDF + direction** (the toolkit's `ChainSegmentResult`), never lumped per link.
@@ -1384,16 +1384,16 @@ toolkit's `ChainSegmentResult` (per BDF + direction) and `ChainLinkResult` (per 
 
 | Failure mode | Catchable at | Test |
 |---|---|---|
-| Wrong/missing PCIe device (BOM/stuffing) | **Printed Circuit Board Assembly (PCBA)** (enumeration) + Module | `lspci` enumeration vs expected topology config |
+| Wrong/missing PCIe device (BOM/stuffing) | **PCBA** (enumeration) + Module | `lspci` enumeration vs expected topology config |
 | BGA solder void under a GPU | **PCBA** (X-ray) + **Module** (thermal cycling surfaces it) | X-ray; thermal soak + AER monitor |
 | Lane marginal at temperature | **Module** (*not* PCBA — room temp passes it) | Stress + AER + **lane margining hot/cold** |
 | Speed/width fallback (EQ/SI) | **Module** | Enumerate at expected Gen/width; `LABS` latch over soak; margining |
-| Marginal eye that still trains | **Module** | **Lane margining** vs a Unit Interval (UI) limit (link-up alone passes it) |
+| Marginal eye that still trains | **Module** | **Lane margining** vs a UI limit (link-up alone passes it) |
 | Inter-module / cabled-link marginal | **System** (real cable/connector) | Chain BERT + per-segment margining (retimer localizes board-vs-cable) |
 | Custom card not detected (bifurcation) | **PCBA/Module** | Enumeration + bifurcation-vs-schematic check |
 
 The shift-left rule: a marginal Gen4 lane that only fails at 85 °C **cannot** be caught at
-room-temperature PCBA — it needs the **module-level thermal stress**, which is where your
+room-temperature Printed Circuit Board Assembly (PCBA) — it needs the **module-level thermal stress**, which is where your
 BERT/AER/margining tools live. A solder short, by contrast, should die at PCBA (ICT), never
 surface as a PCIe link failure at system test.
 
@@ -1450,7 +1450,7 @@ done
 
 Every gate above **captures its parameter** (the speed/width, the AER bit-set, the BER bound,
 the per-lane margin, the temperature) into the test record — because the captured stream is
-what later sets limits, feeds Statistical Process Control (SPC)/Cpk, and flags a bad lot. *Capture the parameter, not just
+what later sets limits, feeds SPC/Cpk, and flags a bad lot. *Capture the parameter, not just
 the verdict* is the rule the whole toolkit is built on.
 
 \newpage
@@ -1531,7 +1531,7 @@ driving it (a wrong offset on a live link turns a diagnosis into an outage):
   sequence; it hardcodes per-vendor quirks.
 - **`MaxVoltageOffset` units** — mV vs 10 mV on some parts. Verify before converting steps to
   mV.
-- **Gen6 Fixed-size Link Packet layout / Forward Error Correction error model** — the operational point (FEC-corrected symbols + CRC +
+- **Gen6 FLIT layout / FEC error model** — the operational point (FEC-corrected symbols + CRC +
   replay replace AER-LCRC-retry accounting; DLLPs are gone) is what changes your measurement;
   the precise FLIT byte-split is spec-final.
 - **TX preset dB rounding / P10 definition** — the coefficient *ratios* are authoritative; some
@@ -1543,5 +1543,5 @@ driving it (a wrong offset on a live link turns a diagnosis into an outage):
 LnkCap/Ctl/Sta, DPC, DEVCTL2 defines) and docs (PCIe AER HOWTO, sysfs-pci); `pciutils`
 `pcilmr(8)` man page + ChangeLog; lane-margining tools (OCP `pci_lmt`, `google/pcie_lmt`,
 `oxidecomputer/lmar`); `aer-inject` SPEC + kernel `aer_inject.c`; PCI-SIG/vendor material on
-equalization, the preset table, and Gen6 PAM4/FLIT/FEC. The Bit Error Rate confidence math is derived in
+equalization, the preset table, and Gen6 PAM4/FLIT/FEC. The BER confidence math is derived in
 the Math & Statistics chapter (§10).

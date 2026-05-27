@@ -31,7 +31,7 @@ Read a section, then go read and run the code that does it.
 This is the context opener for the rest of the guide. It answers three questions
 before any register appears: *what* you are testing (the compute platform and the
 autonomy data path it serves), *where* you test it (the four manufacturing phases),
-and *why the discipline is shaped the way it is* (Design Verification vs Manufacturing
+and *why the discipline is shaped the way it is* (Design Verification (DV) vs Manufacturing
 Test — different goals, statistics, and consumers). Everything here is deliberately
 shallow on detail; each interface and technique gets its own deep chapter, and this
 opener tells you which one to reach for at which phase.
@@ -62,20 +62,20 @@ bridges that gap: it proves the data-center part survives the automotive environ
 The shape of the platform:
 
 - **Server-class SoCs/CPUs + GPUs** for the AI/perception workload — data-center-grade
- compute (lots of PCIe lanes, ECC memory, high power and heat) in an automotive
+ compute (lots of PCIe lanes, Error-Correcting Code (ECC) memory, high power and heat) in an automotive
  enclosure. (Deep dive: the **GPU chapter**.)
 - **Custom PCIe devices.** Zoox designs its own PCIe cards — sensor-interface cards,
- GMSL camera aggregators, FPGA/accelerator cards, switch/fan-out boards. *Custom* is
+ Gigabit Multimedia Serial Link (GMSL) camera aggregators, Field-Programmable Gate Array (FPGA)/accelerator cards, switch/fan-out boards. *Custom* is
  the load-bearing word: there is no vendor datasheet test plan and no supplier-provided
  diagnostic. *You* write the test that proves the board works. This is the
  highest-leverage part of the job — there is no fallback, so the quality of the test
  is entirely on you. (Deep dive: the **PCIe chapter**.)
-- **Storage and memory.** NVMe SSDs (OS, logging, maps and models — sensor logging
- alone is enormous) and ECC DRAM (DDR4/DDR5). (Deep dives: the **NVMe** and **Memory**
+- **Storage and memory.** Non-Volatile Memory Express (NVMe) SSDs (OS, logging, maps and models — sensor logging
+ alone is enormous) and ECC Dynamic Random-Access Memory (DRAM) (DDR4/DDR5). (Deep dives: the **NVMe** and **Memory**
  chapters.)
 - **High-speed links — every one a SerDes that can train wrong, drift with temperature,
  or fail a marginal lane.** PCIe (Gen3/4/5) between everything; **GMSL** from cameras;
- **automotive Ethernet** for radar/lidar/inter-module; **CAN/CAN-FD** on the vehicle
+ **automotive Ethernet** for radar/lidar/inter-module; **Controller Area Network (CAN)/Controller Area Network Flexible Data-Rate (CAN-FD)** on the vehicle
  bus. Most of what you debug lives here. (Deep dives: the **PCIe** and **automotive/
  serial-bus** chapters.)
 - **Redundancy and safety.** Because a single compute fault could mean loss of vehicle
@@ -83,7 +83,7 @@ The shape of the platform:
  memory, dual-path links where it matters. Your tests don't just find defects; they
  **verify that the safety and detection mechanisms actually work** (ECC really corrects,
  the redundant link really carries traffic, bus-off recovery really recovers). More on
- this framing in the **functional-safety** chapter (ISO 26262 / ASIL).
+ this framing in the **functional-safety** chapter (ISO 26262 / Automotive Safety Integrity Level (ASIL)).
 - **Linux, everywhere.** The platform runs Linux and your test stations run Linux. Your
  command-line debugging fluency is load-bearing, not incidental.
 
@@ -98,11 +98,11 @@ The shape of the platform:
 ```
 
 Why this picture matters to a test engineer: a single weak PCIe lane, a GMSL link that
-won't lock at 85 °C, or an NVMe drive that throttles under sustained logging can
+won't lock at 85 °C, or a NVMe drive that throttles under sustained logging can
 *silently* degrade perception. In a robotaxi that is a safety issue, not a
 customer-annoyance issue. Manufacturing test is the gate that keeps a marginal board
 from ever reaching a vehicle. That is the weight behind "ship only good units" — and
-the reason the false-fail-vs-escape trade is asymmetric here (see the Manufacturing Test
+the reason the false-fail-vs-escape trade is asymmetric here (see the Manufacturing Test (MT)
 chapter on yield and test economics).
 
 ### Where you sit {.unnumbered}
@@ -112,16 +112,16 @@ orbit:
 
 - **Electrical Engineering (EE) / hardware design** — they design the boards; you test
  them. You receive schematics, board files, and bring-up reports; when your test finds
- a failure, EE is who you hand the evidence to. The sharper your evidence (decoded AER,
+ a failure, EE is who you hand the evidence to. The sharper your evidence (decoded Advanced Error Reporting (AER),
  per-lane margin, eye/thermal correlation), the faster the fix.
-- **Software / firmware** — drivers, BSP, firmware images. Your tests run on their Linux
+- **Software / firmware** — drivers, Board Support Package (BSP), firmware images. Your tests run on their Linux
  image and flash their firmware; a new firmware drop means you re-qualify the test.
-- **Manufacturing / NPI / operations** — the people who run your tests on the line. Your
+- **Manufacturing / New Product Introduction (NPI) / operations** — the people who run your tests on the line. Your
  test must be fast, robust, and operator-proof.
 - **Contract Manufacturers (CMs)** — external partners who build at volume. You release
- test programs *to them* and support them remotely (see the Manufacturing Test chapter
- on the CM relationship).
-- **Quality / reliability** — yield data, RMA/field returns, corrective action.
+ test programs *to them* and support them remotely (see the MT chapter
+ on the Contract Manufacturer (CM) relationship).
+- **Quality / reliability** — yield data, Return Merchandise Authorization (RMA)/field returns, corrective action.
 
 You are the person who turns "the hardware team thinks it works" into "we have data
 proving 1,000 units work, and a gate that stops the ones that don't."
@@ -130,17 +130,17 @@ proving 1,000 units work, and a gate that stops the ones that don't."
 
 ## The Four Manufacturing Test Phases {.unnumbered}
 
-This is the backbone of the whole job: **PCBA → module → system → vehicle.** Every test
+This is the backbone of the whole job: **Printed Circuit Board Assembly (PCBA) → module → system → vehicle.** Every test
 you write lives at one of these phases, and the central skill is **placing each test at
 the earliest phase that can catch its defect.** This section is the orientation; the
-phases get worked in depth in the Manufacturing Test chapter (The Four Phases, In Depth).
+phases get worked in depth in the MT chapter (The Four Phases, In Depth).
 
 | Phase | What the unit is | Who runs it | What you're proving |
 |---|---|---|---|
 | **PCBA** | Bare PCB + components, off the SMT line | CM, usually | Built correctly: right parts, good solder, no shorts/opens, powers on, basic boot |
 | **Module** | PCBA + heatsink + enclosure + connectors = a functional unit | CM or Zoox | Every interface works at speed, under load, at temperature; firmware loaded; calibrated |
 | **System** | Multiple modules integrated into the compute box/rack | Zoox | Modules talk to each other; full-load power/thermal; system boots and runs the stack |
-| **Vehicle** | Compute installed in the car with real sensors | Zoox | End-to-end: real cameras lock over GMSL, sensors stream, vehicle-level EOL checks |
+| **Vehicle** | Compute installed in the car with real sensors | Zoox | End-to-end: real cameras lock over GMSL, sensors stream, vehicle-level End-of-Line (EOL) checks |
 
 The reason the phase matters is economic and it is steep: **the cost to find and fix a
 defect rises roughly 10× at each phase you let it escape to** — rework a board in the
@@ -151,7 +151,7 @@ detect a given defect class. The catch is that "earliest phase that can detect i
 not always "earliest phase you can introduce it" — a marginal Gen4 lane that only fails
 at 85 °C *cannot* be caught at room-temperature PCBA test; it needs a thermal stress at
 module test. Knowing which defects are catchable where is the core of "correct test
-coverage." (Worked allocation matrix and the full 10× table: Manufacturing Test chapter,
+coverage." (Worked allocation matrix and the full 10× table: MT chapter,
 the phases and the 10× rule.)
 
 ---
@@ -160,8 +160,8 @@ the phases and the 10× rule.)
 
 These two modes share instruments, code, and physics but differ in **goal, statistics,
 and who consumes the result.** Conflating them is a classic mistake; fluently moving a
-test between them is the high-leverage skill. Full treatment in the Manufacturing Test
-chapter, on Design Verification vs Manufacturing Test; here is the framing you carry into
+test between them is the high-leverage skill. Full treatment in the MT
+chapter, on DV vs MT; here is the framing you carry into
 every later chapter.
 
 > **One line.** *DV asks "how good is this **design**, and where are its edges?" (measure
@@ -169,7 +169,7 @@ every later chapter.
 > (go/no-go against limits, huge N, capture the few parameters that let you tune those
 > limits later).*
 
-| Dimension | **Design Verification (DV)** | **Manufacturing Test (MT)** |
+| Dimension | **DV** | **MT** |
 |---|---|---|
 | Question | How good is the *design*? Where are its margins? | Is *this unit* good enough — and fast? |
 | Output | Characterization, margin maps, **the limits themselves** | A go/no-go verdict (+ a few captured parameters) |
@@ -191,8 +191,8 @@ bottleneck and forces more capital).
 The same measurement code that DV sweeps-and-plots to characterize a design is what MT
 compares-to-a-limit for a fast pass/fail. DV uses the captured distribution to *set* a
 data-driven limit; MT *checks* that limit per unit and keeps capturing, which is what
-later feeds SPC, $C_{pk}$, and guard-banding. **You cannot set a good limit on data you
-didn't keep** (Manufacturing Test chapter, on DV-vs-MT and on yield/economics).
+later feeds Statistical Process Control (SPC), $C_{pk}$, and guard-banding. **You cannot set a good limit on data you
+didn't keep** (MT chapter, on DV-vs-MT and on yield/economics).
 
 ---
 
@@ -203,17 +203,17 @@ register-level detail is deferred to the named chapters — this table only poin
 
 | Phase | What you're chasing | Primary chapters |
 |---|---|---|
-| **PCBA** | Build correctness: shorts/opens, missing/wrong parts, basic boot | Manufacturing Test (ICT/AOI/boundary-scan, DFT); Power/Bring-Up |
+| **PCBA** | Build correctness: shorts/opens, missing/wrong parts, basic boot | MT (ICT/AOI/boundary-scan, DFT); Power/Bring-Up |
 | **Module** | Every interface at speed, under load, hot; firmware; calibration | PCIe (link/AER/margining); NVMe; GPU; Memory; Automotive buses; Instruments (rails, scope, thermal forcer) |
 | **System** | Inter-module links, system power/thermal budget, full-stack boot | PCIe (switch/retimer tree-walk); Networking; Power/Bring-Up |
-| **Vehicle (EOL)** | Real harnesses: GMSL camera lock, sensor streaming, CAN, vehicle checks | Automotive buses (GMSL/CAN/Auto-Ethernet); Networking |
-| **All phases** | Limits, yield, SPC, traceability, CM correlation, debug-to-root-cause | Manufacturing Test; Math & Statistics (Cpk/SPC/Gage R&R/BER); Bash/Linux (the debug toolbox) |
+| **Vehicle (End-of-Line (EOL))** | Real harnesses: GMSL camera lock, sensor streaming, CAN, vehicle checks | Automotive buses (GMSL/CAN/Auto-Ethernet); Networking |
+| **All phases** | Limits, yield, SPC, traceability, CM correlation, debug-to-root-cause | MT; Math & Statistics (Cpk/SPC/Gage R&R/BER); Bash/Linux (the debug toolbox) |
 
 Two cross-cutting chapters underpin every phase. The **Math & Statistics** chapter holds
 the derivations the discipline rests on — capability ($C_{pk}/P_{pk}$), SPC and the
-Western Electric rules, Gage R&R, yield/RTY/cost-of-test, and the BER/BERT confidence
+Western Electric rules, Gage R&R, yield/Rolled Throughput Yield (RTY)/cost-of-test, and the Bit Error Rate (BER)/Bit Error Rate Test (BERT) confidence
 math. The **Bash/Linux** chapter is the command-line debug toolbox you reach for on every
-failure. The Manufacturing Test chapter (next) is the discipline itself: the phases in
+failure. The MT chapter (next) is the discipline itself: the phases in
 depth, DV-vs-MT, limits and guard-banding, yield and economics, the tooling and
 dashboards the line runs on, CM correlation, traceability, bring-up vs production, the
 debug-to-root-cause workflow, and the NPI-to-mass-production ramp.
@@ -655,6 +655,152 @@ class LRUCache:
  self._cache[key] = val
  if len(self._cache) > self._cap:
  self._cache.popitem(last=False) # evict oldest
+```
+
+---
+
+## Control Flow
+
+### if / elif / else
+
+```python
+if speed == "16GT/s" and width == "x16":
+ status = "PASS"
+elif speed == "16GT/s":
+ status = "WARN - degraded width"
+else:
+ status = "FAIL"
+```
+
+Python uses `and`, `or`, `not` (not `&&`, `||`, `!`). These are **short-circuit** operators: `and` stops at the first falsy operand, `or` stops at the first truthy operand, and they return the operand value (not necessarily a bool).
+
+```python
+x = a or "default" # x is a if a is truthy, else "default"
+y = a and a.strip() # avoids calling .strip() on None
+```
+
+**Truthiness:** empty containers (`[]`, `{}`, `()`, `set()`, `""`), `0`, `0.0`, `None`, and `False` are falsy. Everything else is truthy. Test for emptiness Pythonically:
+
+```python
+if not devices: # GOOD: empty list/dict/str is falsy
+ ...
+if len(devices) == 0: # works but verbose
+ ...
+```
+
+### Ternary expression
+
+```python
+status = "PASS" if measured <= limit else "FAIL"
+# Chaining is legal but hurts readability; prefer a lookup or a function:
+# grade = "A" if s >= 90 else "B" if s >= 80 else "C"
+```
+
+### for loops and the iteration helpers
+
+```python
+for device in devices: # iterate elements directly
+ test(device)
+
+for i, device in enumerate(devices): # index + element
+ print(f"{i}: {device}")
+
+for i, device in enumerate(devices, start=1): # 1-based index
+ print(f"Test {i}: {device}")
+
+for name, result in zip(names, results): # parallel iteration (stops at shortest)
+ print(f"{name}: {result}")
+
+# range variants
+for i in range(10): ... # 0..9
+for i in range(2, 10): ... # 2..9
+for i in range(0, 100, 5): ... # 0, 5, 10, ..., 95
+for i in range(10, 0, -1): ... # 10, 9, ..., 1 (descending)
+```
+
+Prefer `enumerate` over manual index counters, and `zip` over indexing two lists in lockstep. Avoid `for i in range(len(xs))` unless you genuinely need the index.
+
+### for/else and while/else
+
+The `else` block runs **only if the loop completed without hitting `break`**. This replaces the "found" flag pattern.
+
+```python
+for dev in devices:
+ if dev.degraded:
+ print(f"FAIL: {dev}")
+ break
+else:
+ # Reached only if we NEVER broke out -> all devices passed
+ print("All devices passed link check")
+```
+
+```python
+retries = 0
+while retries < max_retries:
+ if connect():
+ break
+ retries += 1
+ time.sleep(0.5 * (2 ** retries)) # exponential backoff
+else:
+ raise ConnectionError("Max retries exceeded") # ran out of retries
+```
+
+### break, continue, pass
+
+- `break` exits the innermost loop immediately.
+- `continue` skips to the next iteration.
+- `pass` is a no-op placeholder (an empty body that is syntactically required).
+
+### Walrus operator := (Python 3.8+)
+
+Assigns and returns a value in a single expression. Useful in `while` conditions and comprehensions to avoid computing something twice.
+
+```python
+# Read lines until EOF without a separate pre-read
+while (line := f.readline()):
+ process(line)
+
+# Filter + transform without calling strip() twice
+cleaned = [c for raw in data if (c := raw.strip())]
+# Keeps only non-empty stripped lines, computing the strip exactly once.
+
+# Reuse an expensive result inside the condition
+if (n := len(devices)) > 8:
+ print(f"Too many devices: {n}")
+```
+
+### match / case (Python 3.10+): structural pattern matching
+
+More than a `switch`: it destructures and binds.
+
+```python
+match command:
+ case "start":
+ start_test()
+ case "pause":
+ pause_test()
+ case str(x) if x.startswith("set_"): # guard clause with binding
+ set_parameter(x[4:])
+ case _: # wildcard (default)
+ print(f"Unknown command: {command}")
+
+# Destructuring dicts and matching on values
+match event:
+ case {"type": "error", "code": code, "message": msg}:
+ log_error(code, msg)
+ case {"type": "result", "value": float(v)} if v > threshold:
+ handle_high_value(v)
+ case {"type": "result", "value": float(v)}:
+ handle_normal(v)
+
+# Destructuring sequences
+match point:
+ case (0, 0):
+ print("origin")
+ case (x, 0):
+ print(f"on x-axis at {x}")
+ case (x, y):
+ print(f"at {x}, {y}")
 ```
 
 ---
@@ -1150,7 +1296,7 @@ class SpecViolation(TestInfraError):
  self.param, self.value, self.limit = param, value, limit
 ```
 
-EAFP ("Easier to Ask Forgiveness than Permission") is idiomatic Python: try the operation, handle the exception. LBYL ("Look Before You Leap") uses guard checks before attempting the operation. EAFP is preferred when the operation is likely to succeed; LBYL is fine for configuration validation at startup.
+Easier to Ask Forgiveness than Permission (EAFP) is idiomatic Python: try the operation, handle the exception. Look Before You Leap (LBYL) uses guard checks before attempting the operation. EAFP is preferred when the operation is likely to succeed; LBYL is fine for configuration validation at startup.
 
 ---
 
@@ -1605,7 +1751,7 @@ def run_privileged(args: list[str], timeout: float = 30) -> tuple[int, str, str]
  return 127, "", "sudo not found"
 ```
 
-`--non-interactive` (equivalent to `-n`) makes sudo fail immediately with a clear error instead of hanging waiting for a TTY password prompt — critical when running inside a CI job or a test daemon.
+`--non-interactive` (equivalent to `-n`) makes sudo fail immediately with a clear error instead of hanging waiting for a TTY password prompt — critical when running inside a Continuous Integration (CI) job or a test daemon.
 
 ### Environment Isolation for Subprocess Calls
 
@@ -1976,7 +2122,7 @@ log.exception("unexpected exception") # includes traceback
 
 ### The GIL
 
-CPython's Global Interpreter Lock serializes bytecode execution to one thread at a time. Threads are appropriate for I/O-bound work (disk, network, serial port, SCPI) — one thread blocks in the kernel and releases the GIL while others run. They don't parallelize CPU-bound computation. Use `multiprocessing` for CPU-bound work (waveform FFT, large numpy reductions), or `concurrent.futures.ProcessPoolExecutor`.
+CPython's Global Interpreter Lock (GIL) serializes bytecode execution to one thread at a time. Threads are appropriate for I/O-bound work (disk, network, serial port, SCPI) — one thread blocks in the kernel and releases the GIL while others run. They don't parallelize CPU-bound computation. Use `multiprocessing` for CPU-bound work (waveform FFT, large numpy reductions), or `concurrent.futures.ProcessPoolExecutor`.
 
 ### Threads for Instrument I/O
 
@@ -2274,6 +2420,62 @@ with SCPIInstrument("TCPIP::10.0.1.50::INSTR") as psu:
 
 ---
 
+## Socket Programming — the equipment_rpc Pattern
+
+A common manufacturing-test design is a small TCP RPC server that fronts an instrument: the GUI or test runner sends a JSON command, the server executes it against the hardware and returns JSON. This decouples the UI process from the hardware process and lets multiple clients share one instrument.
+
+### TCP server
+
+```python
+import socket
+import json
+
+def start_server(host="0.0.0.0", port=5000):
+ server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+ # AF_INET = IPv4; SOCK_STREAM = TCP (reliable, ordered byte stream). UDP would use SOCK_DGRAM.
+ server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+ # SO_REUSEADDR lets you re-bind a port still in TIME_WAIT after a restart,
+ # avoiding "Address already in use" for ~60 s.
+ server.bind((host, port))
+ server.listen(5) # backlog: max queued pending connections
+ print(f"Listening on {host}:{port}")
+ while True:
+ conn, addr = server.accept() # blocks until a client connects
+ with conn:
+ data = conn.recv(4096).decode()
+ request = json.loads(data)
+ response = handle_request(request)
+ conn.sendall(json.dumps(response).encode())
+
+def handle_request(req):
+ cmd = req.get("command")
+ if cmd == "read_voltage":
+ return {"status": "ok", "value": 48.01}
+ return {"status": "error", "message": f"unknown command: {cmd}"}
+```
+
+### TCP client
+
+```python
+def send_command(host, port, command):
+ with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+ sock.settimeout(5.0) # ALWAYS set a timeout; a hung instrument must not block forever
+ sock.connect((host, port))
+ sock.sendall(json.dumps(command).encode())
+ # TCP is a stream, not messages: read until the peer closes (or use a length prefix).
+ chunks = []
+ while True:
+ chunk = sock.recv(4096)
+ if not chunk: # empty bytes -> peer closed the connection
+ break
+ chunks.append(chunk)
+ return json.loads(b"".join(chunks).decode())
+```
+
+Two essentials: always `settimeout`, and remember that `recv` returns whatever bytes are available, so you must loop and reassemble. For request/response framing, prefer a newline-delimited protocol or a fixed-length header that states the body length.
+
+---
+
 ## NumPy for Measurement Data
 
 ```python
@@ -2540,7 +2742,7 @@ class SpecWindow:
 
 ### MRO and Mixins
 
-Python uses C3 linearization for MRO. When using multiple inheritance, keep base classes narrow (mixins), avoid diamond-of-death data attributes, and always use `super()`.
+Python uses C3 linearization for Method Resolution Order (MRO). When using multiple inheritance, keep base classes narrow (mixins), avoid diamond-of-death data attributes, and always use `super()`.
 
 ```python
 class LogMixin:
@@ -2561,6 +2763,215 @@ class PowerSupply(LogMixin, RetryMixin, Instrument):
  def measure_voltage(self):
  return self.with_retry(lambda: float(self.query("MEAS:VOLT?")))
 ```
+
+---
+
+## SQLite for Test Results
+
+SQLite is a serverless, file-based database: zero setup, the whole database is one file, and it survives restarts. Ideal for a single-server dashboard with one writer and fast reads. Reach for PostgreSQL/MySQL only when many clients must write concurrently.
+
+```python
+import sqlite3
+import json, time
+
+conn = sqlite3.connect("dashboard.db") # opens or creates the file (no server process)
+
+conn.execute("""
+ CREATE TABLE IF NOT EXISTS stations (
+ hostname TEXT PRIMARY KEY,
+ data TEXT,
+ updated REAL
+ )
+""")
+
+# Upsert: insert, or overwrite the row if the primary key already exists
+conn.execute(
+ "INSERT OR REPLACE INTO stations (hostname, data, updated) VALUES (?, ?, ?)",
+ (hostname, json.dumps(data), time.time()),
+)
+conn.commit() # writes to disk; without it the change is lost
+```
+
+The `?` placeholders are **parameterized queries**: they prevent SQL injection and handle quoting. Never build SQL by string interpolation/f-strings.
+
+```python
+# Query one row
+cur = conn.execute("SELECT data FROM stations WHERE hostname = ?", (hostname,))
+row = cur.fetchone() # a tuple, or None if not found
+if row:
+ station = json.loads(row[0])
+
+# Query many rows + aggregate
+cur = conn.execute("""
+ SELECT keyword, AVG(duration_s) AS avg_s
+ FROM keyword_timings
+ WHERE model = ?
+ GROUP BY keyword
+""", (model,))
+averages = {kw: avg for kw, avg in cur.fetchall()} # fetchall returns a list of tuples
+
+conn.close()
+```
+
+Set `conn.row_factory = sqlite3.Row` to access columns by name (`row["hostname"]`) instead of by index. Use a `with conn:` block to wrap a transaction that auto-commits on success and rolls back on exception.
+
+---
+
+## FastAPI — the Station Dashboard Pattern
+
+FastAPI is a modern Python web framework. A typical use is a monitoring dashboard: each test station POSTs a heartbeat with its status, and the server stores it and serves a live view.
+
+```python
+from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel
+from typing import Any, Optional
+
+app = FastAPI(title="Station Dashboard")
+# FastAPI() is the app object; routes are registered on it. On each request, FastAPI
+# finds the handler whose path/method match and calls it.
+
+@app.get("/api/stations")
+def list_stations():
+ # GET = read, no side effects. Returning a dict/list -> FastAPI serializes it to JSON.
+ return [{"hostname": "STATION-1", "state": "RUN"}]
+```
+
+### Pydantic models: automatic request validation
+
+You declare the expected shape as a class; FastAPI validates the incoming JSON against it and rejects bad input with a 422 automatically.
+
+```python
+class HeartbeatPayload(BaseModel):
+ model_config = {"extra": "allow"} # accept unknown fields (forward-compatible payloads)
+ hostname: str # required; must be a string
+ state: str = "IDLE" # optional, defaults to "IDLE"
+ keyword_index: int = 0 # optional int (bad type -> 422)
+ failures: list[Any] = [] # optional list
+ actuator_connected: Optional[bool] = None
+
+@app.post("/heartbeat")
+def receive_heartbeat(payload: HeartbeatPayload):
+ # If validation fails, the function is never called; FastAPI returns 422.
+ data = payload.model_dump() # convert the model back to a plain dict
+ db.upsert(payload.hostname, data)
+ return {"status": "ok"}
+```
+
+### Path and query parameters
+
+```python
+@app.get("/api/stations/{hostname}")
+def get_station(hostname: str): # {hostname} in the path -> path parameter
+ station = db.get(hostname)
+ if station is None:
+ raise HTTPException(status_code=404, detail="Station not found")
+ return station
+
+@app.get("/api/summary")
+def summary(period: str = "24h"): # not in the path -> query parameter (?period=week)
+ if period not in {"24h", "week", "month"}:
+ raise HTTPException(status_code=400, detail="Invalid period")
+ return db.summary(period)
+```
+
+### Serving static files and the dashboard page
+
+```python
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
+
+app.mount("/static", StaticFiles(directory="static"), name="static") # /static/app.js etc.
+
+@app.get("/")
+def dashboard():
+ return FileResponse("static/index.html") # the browser UI; correct Content-Type set for you
+```
+
+### Lifespan (startup/shutdown)
+
+```python
+import asyncio
+from contextlib import asynccontextmanager
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+ task = asyncio.create_task(background_purge()) # before yield = startup
+ yield
+ task.cancel() # after yield = shutdown
+ try:
+ await task
+ except asyncio.CancelledError:
+ pass
+
+app = FastAPI(lifespan=lifespan)
+```
+
+### Running it and key concepts
+
+```bash
+uvicorn server:app --reload --host 0.0.0.0 --port 8080 # dev: auto-reload
+uvicorn server:app --host 0.0.0.0 --port 8080 --workers 1 # prod (single worker if state is in-memory)
+```
+
+Talking points if asked: sync route handlers (`def`, not `async def`) run in a thread pool, which is fine for fast handlers doing dict ops and a SQLite write. Pydantic removes all the manual `if "hostname" not in data` validation. FastAPI auto-generates interactive OpenAPI docs at `/docs`. Use a single worker when the server keeps in-memory caches, since multiple workers would each hold a separate copy.
+
+---
+
+## PySide6 — Desktop Instrument GUIs
+
+PySide6 is the official Qt binding for Python (LGPL, free for commercial use). It is the standard choice for responsive desktop instrument-control GUIs with live graphing, where a web app would add unacceptable HTTP latency between operator and hardware.
+
+### Signals and slots: Qt's event system
+
+A **signal** is an event an object can emit; a **slot** is a function that receives it. Objects connect signals to slots, decoupling emitter from receiver.
+
+```python
+from PySide6.QtCore import QObject, Signal
+
+class ServoController(QObject):
+ state_changed = Signal(str, str) # declares a signal carrying (state, detail)
+ error_occurred = Signal(str)
+ stopped = Signal() # carries nothing
+
+ def go(self):
+ self.state_changed.emit("RAMP", "Ramping to 65 ft-lb") # notify every connected slot
+
+servo = ServoController()
+servo.state_changed.connect(lambda s, d: print(f"{s}: {d}")) # connect a slot
+servo.error_occurred.connect(show_error_dialog) # many slots may connect
+servo.go() # fires all connected slots in order
+```
+
+Emitting a signal with no connections is harmless (does nothing). Multiple slots can connect to one signal, and one slot can serve many signals.
+
+### QTimer: periodic work without blocking the UI
+
+```python
+from PySide6.QtCore import QTimer
+
+self.tick_timer = QTimer()
+self.tick_timer.timeout.connect(self.handle_tick) # timeout fires every interval
+self.tick_timer.setInterval(500) # milliseconds
+self.tick_timer.start()
+# ... later:
+self.tick_timer.stop()
+```
+
+Use `QTimer` instead of `time.sleep()` in a loop: the timer fires on the main event loop, so the GUI stays responsive (buttons, repaints, dialogs work between ticks). `time.sleep()` freezes the entire UI. And use `QTimer` rather than a background thread when the callback touches widgets, because Qt widgets may only be modified from the main thread.
+
+### The loop-variable capture pattern in connections
+
+```python
+from PySide6.QtWidgets import QCheckBox
+for iface in ["RS232", "RS485", "ETH", "CAN", "ANALOG"]:
+ cb = QCheckBox(iface)
+ cb.toggled.connect(lambda checked, i=iface: self.on_toggle(i, checked))
+ # i=iface captures the CURRENT iface; without it every callback would see "ANALOG".
+```
+
+### Threading rule of thumb
+
+Do slow I/O on a worker thread, then deliver results to the GUI by emitting a signal (Qt marshals it to the main thread). Never update widgets directly from a worker thread.
 
 ---
 
@@ -2689,7 +3100,7 @@ def merge_sorted_runs(a: list[float], b: list[float]) -> list[float]:
 
 ### Stack: Balanced Protocol Framing
 
-Validate that protocol open/close tags are balanced — e.g., PCIe TLP framing in log analysis.
+Validate that protocol open/close tags are balanced — e.g., PCIe Transaction Layer Packet (TLP) framing in log analysis.
 
 ```python
 def is_balanced(s: str) -> bool:
@@ -2723,7 +3134,7 @@ def two_sum_indices(readings: list[float], target: float) -> list[tuple[int, int
 
 ### Bit-Field Decoder: Register Status Report
 
-Decode a 32-bit hardware status register into a structured dict — the everyday pattern for PCIe or NVMe register parsing.
+Decode a 32-bit hardware status register into a structured dict — the everyday pattern for PCIe or Non-Volatile Memory Express (NVMe) register parsing.
 
 ```python
 from dataclasses import dataclass
@@ -2875,7 +3286,7 @@ class TestSuite(TestNode):
 # Bash and Shell Scripting
 
 
-Shell fluency is a daily multiplier on this job. Python orchestrates tests; Bash is how you interrogate hardware the moment it misbehaves — "the board failed" becomes "endpoint `0000:03:00.0` trained Gen3 x8, BadTLP AER counter climbing, here is the sysfs value" in the time it takes to type one pipeline. This chapter is a working reference organized around the problems you actually hit on the station.
+Shell fluency is a daily multiplier on this job. Python orchestrates tests; Bash is how you interrogate hardware the moment it misbehaves — "the board failed" becomes "endpoint `0000:03:00.0` trained Gen3 x8, BadTLP Advanced Error Reporting (AER) counter climbing, here is the sysfs value" in the time it takes to type one pipeline. This chapter is a working reference organized around the problems you actually hit on the station.
 
 ### When to Reach for Bash vs. Python
 
@@ -2884,9 +3295,9 @@ The boundary matters. Choosing wrong costs you either time (bash where you need 
 | Reach for Bash when | Reach for Python when |
 |---|---|
 | Interactive hardware query at a prompt | Structured logic — state machines, retries with backoff |
-| Piping CLI tools (`lspci`, `nvme`, `ethtool`, `dmesg`) | Instrument comms (serial/SCPI/USB/TCP) |
+| Piping Command-Line Interface (CLI) tools (`lspci`, `nvme`, `ethtool`, `dmesg`) | Instrument comms (serial/SCPI/USB/TCP) |
 | System-admin one-offs under ~100 lines | Parsing structured data robustly (JSON, CSV, XML) |
-| Cron/systemd wrappers, CI scaffolding | Anything a teammate will maintain |
+| Cron/systemd wrappers, Continuous Integration (CI) scaffolding | Anything a teammate will maintain |
 | "Do I see 4 GPUs right now?" | "Assert exactly 4 GPUs every run, log to DB, fail the test" |
 | Environment setup, deployment glue | pytest fixtures, PySide6 GUIs |
 
@@ -3333,7 +3744,7 @@ threshold=70
 awk -v t="$threshold" '$2 > t {print $1, "OVERHEAT", $2}' temps.txt
 ```
 
-Multi-line awk to walk `lspci -vvv` output and emit a clean BDF/Speed/Width table:
+Multi-line awk to walk `lspci -vvv` output and emit a clean Bus/Device/Function (BDF)/Speed/Width table:
 
 ```bash
 lspci -vvv 2>/dev/null | awk '
@@ -4042,7 +4453,7 @@ done
 
 The compute boards you test are running Linux. The test station running the test is running Linux. The virtual filesystems `/sys`, `/proc`, and `dmesg` are where the kernel exposes its live view of every device, driver, interrupt, and error counter -- all as plain files you read or write with ordinary shell tools. This chapter covers the parts of Linux a Compute Test Engineer lives in daily: hardware enumeration, device-tree debugging, driver management, sysfs-based hardware interrogation, and recovering a wedged board.
 
-Everything in Linux is a file. A PCIe link width is a file. An AER error counter is a file. A thermal zone temperature is a file. That abstraction is exactly why the command-line toolkit is so powerful: querying hardware state is `cat /sys/...`, and scripting it is `read_text()` in Python.
+Everything in Linux is a file. A PCIe link width is a file. An Advanced Error Reporting (AER) error counter is a file. A thermal zone temperature is a file. That abstraction is exactly why the command-line toolkit is so powerful: querying hardware state is `cat /sys/...`, and scripting it is `read_text()` in Python.
 
 ---
 
@@ -4272,7 +4683,7 @@ dmidecode --type processor # CPU socket details
 
 ## dmesg and journald: Kernel Messages
 
-`dmesg` is usually the **first** place to look when a board does something unexpected. Hardware faults, driver bind/unbind, PCIe AER events, NVMe controller resets, thermal throttling, and OOM kills all land here.
+`dmesg` is usually the **first** place to look when a board does something unexpected. Hardware faults, driver bind/unbind, PCIe AER events, Non-Volatile Memory Express (NVMe) controller resets, thermal throttling, and OOM kills all land here.
 
 ### dmesg
 
@@ -4476,7 +4887,7 @@ sudo dkms autoinstall # rebuild all registered modules for the running kernel
 
 ## PCI Config Space and AER
 
-The 256-byte (or 4096-byte extended) PCI configuration space holds device identity, capabilities, command/status, and -- in the extended capabilities -- AER, ASPM, SR-IOV. Understanding it is necessary for low-level debug.
+The 256-byte (or 4096-byte extended) PCI configuration space holds device identity, capabilities, command/status, and -- in the extended capabilities -- AER, Active State Power Management (ASPM), Single Root I/O Virtualization (SR-IOV). Understanding it is necessary for low-level debug.
 
 ```bash
 # Read raw config space:
@@ -4674,7 +5085,7 @@ echo "i2c-dev" | sudo tee /etc/modules-load.d/i2c-dev.conf # persist across rebo
 
 ## MTD / Flash
 
-Many compute boards have NOR or NAND flash for firmware (UEFI/BIOS, BMC, FPGA images). Linux exposes these via the MTD (Memory Technology Device) subsystem.
+Many compute boards have NOR or NAND flash for firmware (UEFI/BIOS, BMC, Field-Programmable Gate Array (FPGA) images). Linux exposes these via the MTD (Memory Technology Device) subsystem.
 
 ```bash
 cat /proc/mtd # MTD partitions present (name, size, erase size)
@@ -4788,7 +5199,7 @@ cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_cur_freq # if << max, likely th
 
 ### RAPL: Running Average Power Limit
 
-RAPL exposes CPU and DRAM power consumption counters. On test stations they help characterize power draw during load.
+RAPL exposes CPU and Dynamic Random-Access Memory (DRAM) power consumption counters. On test stations they help characterize power draw during load.
 
 ```bash
 # RAPL domains are exposed via powercap:
@@ -5468,7 +5879,7 @@ dmesg | grep -i <driver_name> # driver init / bind / error messages
 
 ### The Mental Checklist
 
-When a board fails on the fixture, drive toward the **failure tuple**, not a one-word verdict. "It failed" is useless; "endpoint `0000:03:00.0` trained Gen3 x8 instead of Gen4 x16, correctable AER BadTLP counter climbing at 3/sec under load, package temp 78 C, NVMe SMART clean" is something an EE can act on.
+When a board fails on the fixture, drive toward the **failure tuple**, not a one-word verdict. "It failed" is useless; "endpoint `0000:03:00.0` trained Gen3 x8 instead of Gen4 x16, correctable AER BadTLP counter climbing at 3/sec under load, package temp 78 C, NVMe SMART clean" is something an Electrical Engineering (EE) can act on.
 
 1. **Present?** `lspci -nn` / sysfs -- does it enumerate at all?
 2. **Right link?** `current_link_speed` / `current_link_width` vs `max_*` -- degraded?
@@ -5485,7 +5896,7 @@ When a board fails on the fixture, drive toward the **failure tuple**, not a one
 
 The Zoox JD's bonus qualification reads *"strong expertise in PCIe troubleshooting —
 especially with GPUs and similar electronic assemblies."* On the compute platform PCIe is
-the spine: it carries every GPU, every NVMe drive, every custom sensor-interface card and
+the spine: it carries every GPU, every Non-Volatile Memory Express (NVMe) drive, every custom sensor-interface card and
 switch/fan-out board. Most of what you debug on the line is a SerDes link that trained
 wrong, drifted with temperature, or quietly dropped a lane — and almost all of those wear a
 PCIe costume. So this chapter goes deep and stays practical: the **register offsets and
@@ -5495,19 +5906,19 @@ signature → root-cause-layer** mapping, and how each finding lands in **manufa
 
 The organizing idea, repeated until it is reflex:
 
-> **A PCIe failure is never `errors=5`. It is a *tuple*: which AER bits, on which lane, in
+> **A PCIe failure is never `errors=5`. It is a *tuple*: which Advanced Error Reporting (AER) bits, on which lane, in
 > which direction, with which header log, at which retrain count, with how much eye margin,
 > at what temperature and load. That tuple *is* the root cause.** Everything here exists to
 > collect that tuple efficiently and read it.
 
 Two cross-references so this chapter doesn't re-derive what lives elsewhere:
 
-- The **BER confidence math** (Poisson model, the "3/BER" rule, the chi-squared upper bound)
+- The **Bit Error Rate (BER) confidence math** (Poisson model, the "3/BER" rule, the chi-squared upper bound)
  is derived in the **Math & Statistics chapter, **. Here we *use* it — when you see a
  confidence number, that's where the formula came from.
-- The companion **`toolkit/`** implements this chapter: `aer.py` (decode + W1C clear),
+- The companion **`toolkit/`** implements this chapter: `aer.py` (decode + Write-1-to-Clear (W1C) clear),
  `linkstate.py` (speed/width + retrain/latch monitor), `ber.py` (the confidence math),
- `bert.py` (the arm→stress→read→decide loop), `margining.py` (lane margining + the TX-preset
+ `bert.py` (the arm→stress→read→decide loop), `margining.py` (lane margining + the Transmit (TX)-preset
  sweep), `topology.py`/`diagnostics.py` (the whole-chain walk). Read a section, then read the
  code that does it.
 
@@ -5517,7 +5928,7 @@ Two cross-references so this chapter doesn't re-derive what lives elsewhere:
 
 PCIe is a **point-to-point, serial, packet-based** interconnect. Each *link* connects
 exactly two ports — there is no shared bus. Multiple **lanes** (x1, x2, x4, x8, x16) are
-bonded for bandwidth; each lane is a differential pair in each direction (TX+/TX−, RX+/RX−),
+bonded for bandwidth; each lane is a differential pair in each direction (TX+/TX−, Receive (RX)+/RX−),
 so a link is **full-duplex** — it sends and receives simultaneously, and the two directions
 are independent. *That independence matters for test:* a bit-error problem can exist on one
 direction of one link and not the other, which is why errors are evaluated **per receiver**,
@@ -5543,25 +5954,25 @@ The hierarchy fans out from the CPU:
 |---|---|---|
 | Endpoint | 0x0 | A leaf: GPU, NVMe controller, NIC, custom FPGA card |
 | Root Port | 0x4 | A Root Complex egress port; a **downstream** port |
-| Switch Upstream Port | 0x5 | The single port of a switch that faces the root |
-| Switch Downstream Port | 0x6 | One of N switch ports that face leaves; **downstream** |
+| Switch USP | 0x5 | The single port of a switch that faces the root |
+| Switch DSP | 0x6 | One of N switch ports that face leaves; **downstream** |
 
-The term **downstream port (DSP)** = root port *or* switch downstream port; it **owns the
-link below it** (and the link's bandwidth-change latches). **Upstream port (USP)** = an
+The term **Downstream Port (DSP)** = root port *or* switch downstream port; it **owns the
+link below it** (and the link's bandwidth-change latches). **Upstream Port (USP)** = an
 endpoint, or a switch's upstream port. This distinction is load-bearing for diagnosis: the
-DSP is where speed/width and the LBMS/LABS latches for that link live, and the root port
+DSP is where speed/width and the Link Bandwidth Management Status (LBMS)/Link Autonomous Bandwidth Status (LABS) latches for that link live, and the root port
 is the only place the kernel assembles the OS-level error story.
 
 A **switch** is internally one USP bridged to N DSPs; **every one of those ports has its own
-LTSSM, its own AER capability, and its own link registers.** A fallback or an error cluster
+Link Training and Status State Machine (LTSSM), its own AER capability, and its own link registers.** A fallback or an error cluster
 can be on *any* segment — so when you debug a device behind a switch you walk the whole tree
 (`lspci -tv`) and check each link, not just the endpoint.
 
 ### BDF: how every function is addressed
 
-Every PCIe function is named by **BDF = `domain:bus:device.function`**, e.g.
+Every PCIe function is named by **Bus/Device/Function (BDF) = `domain:bus:device.function`**, e.g.
 `0000:03:00.0`. Domain (a.k.a. segment) is usually `0000`; bus is assigned during
-enumeration; device is 0–31 on a bus; function is 0–7 (multi-function devices, and SR-IOV
+enumeration; device is 0–31 on a bus; function is 0–7 (multi-function devices, and Single Root I/O Virtualization (SR-IOV)
 VFs, use the function digit). Config reads/writes are addressed by BDF; AER's **Error Source
 ID** reports the BDF of the requester that caused an error. Throughout this chapter
 `BDF=0000:03:00.0` is the running example.
@@ -5573,23 +5984,23 @@ failure is *"which layer?"*
 
 | Layer | Packet | Job | What breaks here |
 |---|---|---|---|
-| **Transaction (TL)** | **TLP** | Carries reads/writes/completions/messages | Protocol: wrong address, timeout, malformed packet |
+| **Transaction (TL)** | **TLP** | Carries reads, writes, completions, messages | Protocol: wrong address, timeout, malformed packet |
 | **Data Link (DLL)** | **DLLP** | Reliability: sequence numbers, LCRC, ACK/NAK, replay, flow-control credits | Link-level: corrupted TLPs get NAK'd and replayed |
-| **Physical (PL)** | **PLP / ordered sets** | SerDes, 8b/10b or 128b/130b coding, equalization, lane bonding, the LTSSM | Signal integrity: symbol errors, closed eye, retrains |
+| **Physical (PL)** | **PLP / ordered sets** | SerDes, 8b/10b or 128b/130b coding, equalization, lane bonding, the LTSSM | SI: symbol errors, closed eye, retrains |
 
 - **TLP — Transaction Layer Packet.** The payload-carrying unit. Types: **Memory Read/Write**
- (access a device's BAR space — a write is *posted*, no completion; a read is *non-posted*,
+ (access a device's Base Address Register (BAR) space — a write is *posted*, no completion; a read is *non-posted*,
  needs a Completion), **Config Read/Write** (BDF-addressed access to config space),
  **Completion** (the response to a non-posted request — carries read data or a status code),
- **I/O** (legacy), and **Message** (MSI/MSI-X interrupts, error signaling, power management).
+ **I/O** (legacy), and **Message** (Message Signaled Interrupt (MSI)/Message Signaled Interrupt Extended (MSI-X) interrupts, error signaling, power management).
 - **DLLP — Data Link Layer Packet.** Small, link-local, never routed: ACK/NAK, flow-control
  credit updates, power-management. DLLPs are **not retried** — a corrupted one is just
  dropped (which is why a *Bad DLLP* correctable is a pure signal-integrity tell, ).
 - **PLP / ordered sets** — the physical-layer framing and training sequences (TS1/TS2, SKP,
  EIEOS) that the LTSSM uses to bring a link up and keep it locked.
 
-**Reliability is at the DLL, by replay.** Every TLP gets a **sequence number** and an
-**LCRC**. The receiver checks the LCRC, and ACKs good TLPs / NAKs bad ones; an un-ACKed TLP
+**Reliability is at the Data Link Layer (DLL), by replay.** Every TLP gets a **sequence number** and an
+**Link CRC (LCRC)**. The receiver checks the LCRC, and ACKs good TLPs / NAKs bad ones; an un-ACKed TLP
 is **replayed** from a retry buffer. This is the mechanism behind the correctable-error
 counters you live in (Bad TLP, Replay Timer Timeout, REPLAY_NUM Rollover) — they are the
 DLL telling you the physical layer is corrupting packets and the link is retrying.
@@ -5604,7 +6015,7 @@ uncorrectable.
 
 ## Generations, widths, encoding, and the GT/s → GB/s math
 
-This is a place to be precise — getting the bandwidth math wrong in front of EE is an easy
+This is a place to be precise — getting the bandwidth math wrong in front of Electrical Engineering (EE) is an easy
 own-goal, and the numbers drive your pass/fail expectations.
 
 | Gen | Raw rate | Encoding | Coding overhead | Effective BW/lane | x16 bandwidth (one dir) |
@@ -5614,10 +6025,10 @@ own-goal, and the numbers drive your pass/fail expectations.
 | Gen3 | 8.0 GT/s | 128b/130b | ~1.5% | ~984.6 MB/s | ~15.75 GB/s |
 | Gen4 | 16 GT/s | 128b/130b | ~1.5% | ~1.969 GB/s | ~31.5 GB/s |
 | Gen5 | 32 GT/s | 128b/130b | ~1.5% | ~3.938 GB/s | ~63 GB/s |
-| Gen6 | 64 GT/s | PAM4 + 256B FLIT + FEC/CRC | ~few % (FEC/CRC/FLIT framing) | ~7.56 GB/s | ~121 GB/s |
+| Gen6 | 64 GT/s | PAM4 + 256B FLIT + FEC/CRC | ~few % (FEC, CRC, FLIT framing) | ~7.56 GB/s | ~121 GB/s |
 
 **The math, worked.** "GT/s" is **giga-transfers per second** — one bit per transfer for the
-NRZ gens (Gen1–5), so the raw bit rate per lane equals the GT/s number in Gbit/s. Apply the
+Non-Return-to-Zero (NRZ) gens (Gen1–5), so the raw bit rate per lane equals the GT/s number in Gbit/s. Apply the
 coding efficiency, then divide by 8 for bytes:
 
 ```text
@@ -5637,16 +6048,16 @@ Two facts to internalize:
  That combined step is why "Gen3" is such a watershed and why everything above it needs
  equalization.
 
-**Gen6 changes the signaling and the error model.** Gen6 uses **PAM4** (4 voltage levels →
+**Gen6 changes the signaling and the error model.** Gen6 uses **Pulse Amplitude Modulation 4-level (PAM4)** (4 voltage levels →
 2 bits per symbol, so 64 GT/s at the same ~32 GBaud as Gen5), moves to a fixed **256-byte
-FLIT** with **forward error correction (lightweight LDPC FEC) + a strong CRC + replay** instead
+Fixed-size Link Packet (FLIT)** with **FEC (lightweight LDPC Forward Error Correction (FEC)) + a strong CRC + replay** instead
 of LCRC-retry, and **eliminates standalone DLLPs** (ACK/NAK and flow-control move *inside* the
 FLIT). The 256-byte FLIT budgets roughly **236 B of TLP payload, ~6 B of DLP (the old DLLP
 content), 8 B CRC, and ~6 B FEC** — so the DLLP information is still there, just carried in the
 FLIT rather than as separate, droppable link packets. Because PAM4 has a *raw* symbol-error
 rate orders of magnitude worse than NRZ (three eyes instead of one), the spec leans on FEC to
 pull the post-correction error rate back down — FEC keeps the link-retry probability under
-~1e-5. The practical consequence for your tools: **an AER-correctable BERT under-measures a
+~1e-5. The practical consequence for your tools: **an AER-correctable Bit Error Rate Test (BERT) under-measures a
 Gen6 link**, because most symbol errors are FEC-corrected and never become Bad-TLP/replay
 events. A true Gen6 error rate comes from **FEC corrected/uncorrected symbol counters** (and
 the CRC/retry rate), not AER correctables. The toolkit flags this (`bert.py` emits a note when
@@ -5709,7 +6120,7 @@ The header registers you check first on any device:
 | 0x0E | Header Type | 8-bit | 0x00 = Type 0 (endpoint), 0x01 = Type 1 (bridge/switch port) |
 | 0x10–0x27 | BAR 0–5 | 32-bit ea | Base Address Registers — where the device's MMIO is mapped |
 
-> **MMIO vs the BARs, and why "unassigned" = dead.** A modern PCIe device's registers are
+> **Memory-Mapped I/O (MMIO) vs the BARs, and why "unassigned" = dead.** A modern PCIe device's registers are
 > mapped into the CPU's memory space (MMIO); the BAR tells the OS where. If `lspci -vvv` shows
 > `Region 0: Memory at <unassigned>` or `BAR ... can't assign`, the device is **visible but
 > non-functional** — software cannot reach its registers. On a custom card this usually means
@@ -5727,7 +6138,7 @@ toolkit's `find_ext_cap()` work.
 - **Extended caps** start at `0x100`. Each has a 32-bit header:
  `[cap_id:16][cap_version:4][next_offset:12]`. Follow `next_offset` until 0 (or the header
  reads `0x00000000`/`0xFFFFFFFF`). **AER = ID `0x0001`**, **Secondary PCIe = `0x0019`**,
- **Lane Margining = `0x0027`**, **DPC = `0x001D`**.
+ **Lane Margining = `0x0027`**, **Downstream Port Containment (DPC) = `0x001D`**.
 
 ```python
 # toolkit/backend.py - the extended-cap walk (paraphrased)
@@ -5752,17 +6163,17 @@ PCIe cap physically sits.
 
 ### The LTSSM
 
-The **Link Training and Status State Machine (LTSSM)** brings a link up and maintains it.
+The **LTSSM** brings a link up and maintains it.
 Knowing the states maps a "stuck" symptom directly onto a physical cause:
 
 | State | What happens | "Stuck here" means |
 |---|---|---|
-| **Detect** | Look for a partner (sense far-end RX termination) | No device / no power / **PERST# not released** / missing AC-cap or termination / dead PHY — the classic *"device not detected."* |
-| **Polling** | Establish bit + symbol lock, exchange TS1/TS2, agree polarity (always at 2.5 GT/s) | **REFCLK** absent/wrong, **SSC mismatch**, RX DC offset, gross SI, inverted polarity. |
+| **Detect** | Look for a partner (sense far-end Receive termination) | No device / no power / **PERST# (PERST#)** not released / missing AC-cap or termination / dead PHY — the classic *"device not detected."* |
+| **Polling** | Establish bit + symbol lock, exchange TS1/TS2, agree polarity (always at 2.5 GT/s) | **REFCLK** absent/wrong, **SSC** mismatch, RX DC offset, gross SI, inverted polarity. |
 | **Configuration** | Negotiate **link width** + lane numbers (x16→x8 falls out here) | Dead/noisy high lanes, **lane-reversal** unsupported, **bifurcation mismatch**, scrambler problem. |
 | **L0** | **Normal operation** — data flows. This is where you want to live. | — |
-| **Recovery** | Re-enter training to change speed, run equalization (Gen3+), or recover from errors | **Looping** Recovery = marginal SI / EQ preset mismatch / RX won't lock at the new rate / thermal drift. The #1 *dynamic* failure. |
-| **L0s / L1 / L2** | Low-power link states | A too-slow exit can manufacture a Completion Timeout. |
+| **Recovery** | Re-enter training to change speed, run equalization (Gen3+), or recover from errors | **Looping** Recovery = marginal SI / equalization (EQ) preset mismatch / RX won't lock at the new rate / thermal drift. The #1 *dynamic* failure. |
+| **L0s / L1 / L2** | Low-power link states | A too-slow exit can manufacture a CTO. |
 
 **Speed changes happen in Recovery**, and so does **equalization**. For Gen3+ the link
 first trains to Gen1 in Polling, reaches L0, then renegotiates up through Recovery —
@@ -5780,7 +6191,7 @@ the PCIe-cap base (`CAP_EXP`):
 | Link Capabilities (`LnkCap`) | `+0x0C` | Max speed [3:0], max width [9:4], **DLL Link Active Reporting Capable (bit 20)** |
 | Link Control (`LnkCtl`) | `+0x10` | ASPM control [1:0], **Retrain Link (bit 5)**, Link Disable (bit 4), Common Clock (bit 6) |
 | Link Status (`LnkSta`) | `+0x12` | **Current speed [3:0]**, **current width [9:4]**, **Link Training (bit 11)**, **DLLLA (bit 13)**, **LBMS (bit 14)**, **LABS (bit 15)** |
-| Device Control 2 (`DevCtl2`) | `+0x28` | **Completion Timeout Value [3:0]**, CTO Disable (bit 4) |
+| Device Control 2 (`DevCtl2`) | `+0x28` | **CTO Value [3:0]**, CTO Disable (bit 4) |
 | Device Capabilities 2 (`DevCap2`) | `+0x24` | Supported CTO ranges, CTO-disable-supported |
 | Link Control 2 (`LnkCtl2`) | `+0x30` | **Target Link Speed [3:0]** (force a gen for retrain) |
 | Link Status 2 (`LnkSta2`) | `+0x32` | **Flit Mode Status (bit 10)** — set in Gen6 FLIT mode |
@@ -5807,8 +6218,8 @@ transients:
 |---|---|---|
 | 11 | **Link Training (LT)** | Set *while* retraining (in Recovery). Flicking = the link is bouncing. |
 | 13 | **DLLLA** (DL Link Active) | Drops to 0 on a link-down (DL_Down). A **latched link-down** detector — *but only meaningful if `LnkCap` bit 20 is set.* |
-| 14 | **LBMS** (Link BW Management Status) | **W1C latch**: set when speed/width changed via a *managed* retrain (software/hardware initiated). |
-| 15 | **LABS** (Link Autonomous BW Status) | **W1C latch**: set when the hardware changed speed/width **autonomously** — i.e. it couldn't *hold* the higher rate. |
+| 14 | **LBMS** (LBMS) | **W1C latch**: set when speed/width changed via a *managed* retrain (software/hardware initiated). |
+| 15 | **LABS** (LABS) | **W1C latch**: set when the hardware changed speed/width **autonomously** — i.e. it couldn't *hold* the higher rate. |
 
 > **`LABS` is the gem.** `LABS` latching after a soak means **the hardware autonomously
 > dropped speed/width during your test** — it trained to Gen4 x16 but couldn't hold it. A
@@ -5870,7 +6281,7 @@ exposes them.
 
 ## AER in depth — the bits are the layer
 
-**Advanced Error Reporting (AER)** is the extended capability (ID `0x0001`) where the hardware
+**AER** is the extended capability (ID `0x0001`) where the hardware
 **latches** correctable and uncorrectable errors. Its entire diagnostic value is that **the
 bit names the layer**, which names the root-cause class. Your tool must never just say
 `errors=5` — it must say *which bits*, because that's the first fork in the debug tree.
@@ -5893,7 +6304,7 @@ bit names the layer**, which names the root-cause class. Your tool must never ju
 
 > **Root-port-only caveat (often gotten wrong).** `Root Error Command` (+0x2C), `Root Error
 > Status` (+0x30), and `Error Source ID` (+0x34) exist **only on Root Ports and Root Complex
-> Event Collectors** — *not* on endpoints or switch downstream ports. To learn "which
+> Event Collectors (RCECs)** — *not* on endpoints or switch downstream ports. To learn "which
 > requester caused this," read **Error Source ID on the root port above the device**, not on
 > the device. The root port is where the kernel AER driver assembles the OS-level story.
 
@@ -5924,19 +6335,19 @@ meanings so a decode reads like a sentence.
 | 5 | 0x0000_0020 | **Surprise Down** | Link dropped to DL_Down unexpectedly. **Device/power lost, cable yanked, far-end PHY died, hot-unplug.** |
 | 12 | 0x0000_1000 | **Poisoned TLP Received** | TLP arrived with the **EP (poison) bit** set (sender marked its own data bad). **Upstream data corruption**, not this link's SI. |
 | 13 | 0x0000_2000 | **Flow Control Protocol** | Credit accounting violated the rules. **Firmware/IP bug** (or corrupted FC DLLPs). |
-| 14 | 0x0000_4000 | **Completion Timeout** | A non-posted request (usually a read) never got its completion before the CTO timer fired. **Upstream hung / wrong address / ASPM-L1 exit too slow / switch dropped it / FW.** |
+| 14 | 0x0000_4000 | **CTO** | A non-posted request (usually a read) never got its completion before the CTO timer fired. **Upstream hung / wrong address / ASPM-L1 exit too slow / switch dropped it / FW.** |
 | 15 | 0x0000_8000 | **Completer Abort** | The completer refused the request (returned CA). **Target-side**: bad address, permission, completer-internal error. |
 | 16 | 0x0001_0000 | **Unexpected Completion** | A completion with no matching outstanding request. **Switch mis-routing / duplicate tags / firmware.** |
 | 17 | 0x0002_0000 | **Receiver Overflow** | More TLP data than advertised credits. **Flow-control/IP bug** (transmitter overran). |
 | 18 | 0x0004_0000 | **Malformed TLP** | Structurally invalid TLP (bad length/byte-enables/addr/type). **FW/IP bug** or severe corruption. Usually **Fatal** by default. |
-| 19 | 0x0008_0000 | **ECRC Error** | End-to-end CRC mismatch (only if ECRC gen+check enabled). **End-to-end corruption** an LCRC didn't catch through a switch/retimer. |
+| 19 | 0x0008_0000 | **ECRC Error** | ECRC mismatch (only if ECRC gen+check enabled). **End-to-end corruption** an LCRC didn't catch through a switch/retimer. |
 | 20 | 0x0010_0000 | **Unsupported Request** | Target doesn't support the request (access to an unimplemented BAR/region). **Address-map / enumeration / driver bug.** |
-| 21 | 0x0020_0000 | **ACS Violation** | Access Control Services blocked a peer-to-peer TLP. **IOMMU/ACS policy** (often *expected* under virtualization). |
+| 21 | 0x0020_0000 | **ACS Violation** | ACS blocked a peer-to-peer TLP. **IOMMU/ACS policy** (often *expected* under virtualization). |
 | 22 | 0x0040_0000 | **Uncorrectable Internal** | Device-internal uncorrectable (its own logic/RAM). Device-side. |
-| 23–31 | — | MC-Blocked / AtomicOp-Egress / TLP-Prefix-Blocked / IDE / PCRC | Newer-spec integrity/encryption/translation errors. **Decode them anyway** so an unexpected high bit reads as a name, not "unknown bit 24." |
+| 23–31 | — | MC-Blocked / AtomicOp-Egress / TLP-Prefix-Blocked / IDE / PCRC | Newer-spec integrity, encryption, translation errors. **Decode them anyway** so an unexpected high bit reads as a name, not "unknown bit 24." |
 
 The fork this table encodes: **Receiver Error / Bad TLP / Replay Timer** cluster → physical
-SI (reseat, temperature, margining, equalization). **Completion Timeout / Malformed /
+SI (reseat, temperature, margining, equalization). **Completion Timeout (CTO) / Malformed /
 Unexpected Completion / FCP** → transaction/protocol (upstream device, switch, firmware).
 *Where* the bit sits is the first half of triage.
 
@@ -6040,7 +6451,7 @@ test must never claim a unit good on the strength of a measurement it didn't mak
 ## Power management: ASPM, L1 substates, and their failure modes
 
 PCIe links save power by parking in low-power states. The state machine for *active* power
-management (the link decides, in hardware) is **ASPM**:
+management (the link decides, in hardware) is **Active State Power Management (ASPM)**:
 
 | State | Description | Exit latency | Power saved |
 |---|---|---|---|
@@ -6055,7 +6466,7 @@ ASPM is controlled by `LnkCtl[1:0]`; the **L1 substates (L1SS)** have their own 
 capability (`L1SubCtl1/2`). They are great for idle power and **a recurring source of two
 failure modes in test:**
 
-- **Latency that manufactures a Completion Timeout.** If the link is in L1/L1.1/L1.2 and the
+- **Latency that manufactures a CTO.** If the link is in L1/L1.1/L1.2 and the
  time to wake it and return to L0 exceeds the CTO timer, an in-flight read **times out** —
  surfacing as a `Completion Timeout` uncorrectable that *looks* like a link error but is
  really power-management latency.
@@ -6063,7 +6474,7 @@ failure modes in test:**
  states briefly makes the link unavailable; under a tight poll this can read as a transient
  or a retrain.
 
-> **MT implication: usually disable ASPM during test.** ASPM transitions add noise that can
+> **Manufacturing Test (MT) implication: usually disable ASPM during test.** ASPM transitions add noise that can
 > masquerade as link errors, and lane margining *requires* ASPM off. Disable it during
 > the stress window and re-run to confirm observed errors aren't ASPM-related:
 > ```bash
@@ -6073,8 +6484,7 @@ failure modes in test:**
 > ```
 
 **Reset primitives you'll use alongside power management:** **Hot Reset** (via a downstream
-port's Bridge Control register — resets everything below the port), and **FLR (Function Level
-Reset)** (resets a single function without disturbing the link — the clean way to re-init a
+port's Bridge Control register — resets everything below the port), and **Function Level Reset (FLR)** (resets a single function without disturbing the link — the clean way to re-init a
 device between test phases).
 
 \newpage
@@ -6087,7 +6497,7 @@ branch is about the *physical bring-up* facts.
 
 | Stuck in (LTSSM) | First moves |
 |---|---|
-| **Detect** | Far-end **power** off? **PERST#** released at the right time after rails are up? **AC-coupling cap** / termination missing on a lane? Dead PHY? |
+| **Detect** | Far-end **power** off? **PERST# (PERST#)** released at the right time after rails are up? **AC-coupling cap** / termination missing on a lane? Dead PHY? |
 | **Polling** | **REFCLK** present (100 MHz, SSC if expected)? **SSC mismatch**? RX DC offset? Inverted polarity? Gross SI (impedance/crosstalk)? |
 | **Configuration** | Dead/noisy high lanes (configures smaller width), **lane-reversal** unsupported, **bifurcation mismatch**, scrambler problem. A link that comes up **x8 instead of x16** fell out here. |
 
@@ -6120,12 +6530,12 @@ lspci -vvv -s $BDF | grep -iE 'Region|BAR|ignoring' # "can't assign"/"ignoring B
 you have NVIDIA's tools; for Zoox's own card you have a schematic and a problem):
 
 1. **Does it enumerate?** `lspci -nn` — right Vendor/Device ID at the expected BDF? If not:
- rails, REFCLK, PERST#, LTSSM stuck in Detect/Polling, or a layout error.
+ rails, Reference Clock (REFCLK), PCIe Reset signal (PERST#), LTSSM stuck in Detect/Polling, or a layout error.
 2. **Right class/BARs?** `lspci -vvv -s $BDF` — are BARs assigned? Unassigned = dead to
  software even though visible.
 3. **Right link?** Current vs max speed/width. x16→x8 or Gen4→Gen3 on a new board is your
- first SI finding.
-4. **Does it respond?** Read a known register over MMIO; for a custom FPGA the design team
+ first Signal Integrity (SI) finding.
+4. **Does it respond?** Read a known register over MMIO; for a custom Field-Programmable Gate Array (FPGA) the design team
  gives you a scratch/ID register to prove the datapath.
 5. **Driver / interrupts?** `lspci -k` — does the driver bind? Is `/proc/interrupts` counting
  during activity? (MSI/MSI-X: the device writes a special address to signal an interrupt;
@@ -6142,12 +6552,12 @@ At Gen3 (8 GT/s) and above the channel — PCB traces, vias, connectors, cables 
 high-frequency content of the signal until the raw eye is **closed**. **Equalization** reopens
 it.
 
-- **TX equalization** shapes each bit with three FIR coefficients under a fixed-swing
+- **TX equalization** shapes each bit with three finite impulse response (FIR) coefficients under a fixed-swing
  constraint:
  ```text
  pre-cursor (C-1): boost the bit BEFORE a transition (compensates loss to come)
  cursor (C0): the main bit amplitude ("drive strength")
- post-cursor(C+1): boost the bit AFTER a transition (cancels ISI from the prev bit)
+ post-cursor(C+1): boost the bit AFTER a transition (cancels Inter-Symbol Interference (ISI) from the prev bit)
  constraint: |C-1| + |C0| + |C+1| = const (full-swing budget)
  ```
  More emphasis on the cursors = stronger transitions but a weaker main bit. **Too much →
@@ -6155,8 +6565,8 @@ it.
 - The spec defines **11 TX presets (P0–P10)** bundling coefficient ratios for different channel
  losses (P0 ≈ no emphasis for a short channel; higher presets add post/pre-emphasis for lossy
  channels). During training the hardware negotiates a preset *per lane*.
-- **RX equalization**: **CTLE** (continuous-time linear EQ — frequency-dependent gain that
- boosts high frequencies) + **DFE** (decision-feedback EQ — cancels ISI using past bit
+- **RX equalization**: **Continuous-Time Linear Equalizer (CTLE)** (continuous-time linear EQ — frequency-dependent gain that
+ boosts high frequencies) + **Decision Feedback Equalizer (DFE)** (decision-feedback EQ — cancels Inter-Symbol Interference (ISI) using past bit
  decisions). The receiver *adapts* these during training, which is why a marginal link can
  *still train* — the RX compensates until it can't. **That is exactly why lane margining matters more than pass/fail-on-link-up.**
 
@@ -6165,8 +6575,8 @@ it.
 | Phase | Who tunes what | What happens |
 |---|---|---|
 | 0 | DSP TX -> USP RX | Link is now at the higher rate. The DSP transmits using the **preset values** it sent in its training sets; the USP applies those starting presets (and RxHint) to **its own** transmitter. Coarse setup, no coefficient requests yet. |
-| 1 | both directions | Both partners exchange the **FS (Full Swing) / LF (Low Frequency)** bounds — the upper/lower limits on TX coefficients — and confirm they can hold the higher rate at a coarse BER (the gate to Phase 1 entry is RX BER < 1e-4). |
-| 2 | **USP tunes the DSP's TX** | The **upstream** port evaluates *its own* receiver and requests TX coefficient changes **from the downstream** port; the downstream adjusts its transmitter until the USP's RX is optimized. |
+| 1 | both directions | Both partners exchange the **FS (Full Swing) / LF (Low Frequency)** bounds — the upper/lower limits on TX coefficients — and confirm they can hold the higher rate at a coarse BER. |
+| 2 | **USP tunes the DSP's TX** | The **upstream** port evaluates *its own* receiver and requests TX coefficient changes **from the downstream** port; the downstream adjusts its transmitter until the USP's Receive is optimized. |
 | 3 | **DSP tunes the USP's TX** | The **downstream** port evaluates *its own* receiver and requests TX coefficient changes **from the upstream** port; fine-tuning until the DSP's RX hits its eye target. |
 
 > **The phase ownership is a localization lever.** Phase 2 optimizes the **downstream-pointing**
@@ -6223,7 +6633,7 @@ validate per switch model; the *concept* is what transfers.
 > **Why this still matters at Zoox.** Any time the PCB layout, connector, or cable changes —
 > a new board revision, a different riser, a new cable assembly — you must **re-characterize
 > the equalization**. EQ is sensitive to everything the channel does, and a board that passes
-> at 25 °C can fail in burn-in. This is DV/NPI work that feeds the production setting.
+> at 25 °C can fail in burn-in. This is Design Verification (DV)/New Product Introduction (NPI) work that feeds the production setting.
 
 \newpage
 
@@ -6234,7 +6644,7 @@ when it's actually **power-management latency or a hung completer**. A non-poste
 (usually a memory read) didn't get its completion before the CTO timer fired. The header log names *what* read and *who* issued it; this chapter finds *why it was slow.*
 
 **The CTO timer lives in Device Control 2.** The timeout *range* is programmable in `DevCtl2`
-(`+0x28`), **Completion Timeout Value field [3:0]**; `DevCap2` (`+0x24`) advertises supported
+(`+0x28`), **CTO Value field [3:0]**; `DevCap2` (`+0x24`) advertises supported
 ranges and whether CTO can be disabled.
 
 ```bash
@@ -6311,7 +6721,7 @@ sudo pcilmr -o ./csv --full # margin every ready link, CSV out for limit-setting
 
 Key flags: `-e <errlimit>` (default 4), `-d <dwell-sec>` (default 1), `-l <lanes>`,
 `-r <recv#>` (1 = the port's own RX … 6 = far-end RX, **including retimers 2–5**), `-t/-T`
-(timing), `-v/-V` (voltage), `-g` (grade in %UI or ps), `-c` (capabilities only). **Requires
+(timing), `-v/-V` (voltage), `-g` (grade in %Unit Interval (UI) or ps), `-c` (capabilities only). **Requires
 root**, the link in **D0**, and **ASPM + HW-autonomous features disabled** during the test
 (pcilmr does the latter and warns).
 
@@ -6371,7 +6781,7 @@ sudo pcilmr --margin -TV -r 1,2,3,6 0000:03:00.0
 
 When an uncorrectable error latches, AER captures the **first 4 DWORDs of the offending TLP**
 in the **Header Log** (`+0x1C`), and the **First Error Pointer** (`ERR_CAP[4:0]`, `+0x18`)
-says which uncorrectable bit that log belongs to. Decoding it turns "Completion Timeout" into
+says which uncorrectable bit that log belongs to. Decoding it turns "CTO" into
 "a 4-byte memory read of address `0x05010000` by requester `00:04.0` timed out" — the
 difference between a guess and a root cause.
 
@@ -6406,7 +6816,7 @@ DW3 = 0x00050100 -> next captured DWORD (for a 4DW/64-bit header, DW2/DW3 = Addr
 
 **Read it as a sentence:** *"A 4-byte memory read of `0x05010000` by requester `00:04.0`
 (tag 0x0a) triggered the first uncorrectable error."* Now go look: is `0x05010000` inside a
-BAR that exists? Is `00:04.0` the device you expect? If the bit set was **Completion Timeout**,
+BAR that exists? Is `00:04.0` the device you expect? If the bit set was **CTO**,
 that read never completed — so the **completer of `0x05010000`** is the suspect (hung endpoint,
 slow L1 exit, or a switch that dropped the completion), not the requester's link SI.
 
@@ -6493,7 +6903,7 @@ runtime.)
 > **The DV ↔ MT bridge (why MT must capture the parameter, not just the verdict).** The *same*
 > BERT engine serves both modes. **DV:** run it across voltage/temperature corners and TX
 > presets and *plot the surface*. **MT:** run it once to a confidence target and emit
-> pass/fail. The captured `(errors, bits, BER-bound)` is what later feeds SPC and
+> pass/fail. The captured `(errors, bits, BER-bound)` is what later feeds Statistical Process Control (SPC) and
 > guard-banding — *you cannot set a good limit on data you didn't keep.*
 
 \newpage
@@ -6516,7 +6926,7 @@ done
 
 A switch is itself a unit-under-test: bad switch SerDes (→ correctable cluster on a DSP), a
 switch-firmware flow-control bug (→ FCP / RX_OVER), or a switch that drops completions (→
-**Completion Timeout at the endpoint above it**, even though the endpoint's own link is clean).
+**CTO at the endpoint above it**, even though the endpoint's own link is clean).
 On the **root port** (only), **Error Source ID** (+0x34) gives the requester ID of the COR/
 UNCOR source — on a tree with switches that's how you attribute an error to the *true*
 originating device rather than the port that happened to log it.
@@ -6580,7 +6990,7 @@ a symptom actually arrives at the bench — by what you *observe* first:
 
 | Observed signature | Most likely root cause | The one test that confirms it |
 |---|---|---|
-| Device absent from `lspci -nn` | LTSSM stuck pre-L0 (power/REFCLK/PERST#/bifurcation/dead PHY) | dmesg "training"/"timed out"; scope rails+REFCLK+PERST#; BIOS bifurcation vs schematic |
+| Device absent from `lspci -nn` | LTSSM stuck pre-L0 (power/REFCLK/PERST# (PERST#)/bifurcation/dead PHY) | dmesg "training"/"timed out"; scope rails+REFCLK+PERST#; BIOS bifurcation vs schematic |
 | Present, `Region N: <unassigned>` / "can't assign BAR" | BIOS couldn't fit the MMIO window (often 64-bit/above-4G) | Toggle above-4G decoding / resize BAR; re-enumerate |
 | `Speed ...(downgraded)`, width OK | EQ / SI margin / BIOS gen-cap / thermal | Retest hot AND cold; `pcilmr` margin; check LnkCtl2 Target Link Speed cap |
 | `Width ...(downgraded)`, speed OK | Dead lane / connector / bifurcation / lane-reversal | Per-lane `pcilmr` finds the dead lane; reseat; BIOS bifurcation |
@@ -6588,8 +6998,8 @@ a symptom actually arrives at the bench — by what you *observe* first:
 | `Train+` flickering across reads | Link bouncing through Recovery | Poll LnkSta over the soak; correlate with temperature/load |
 | COR cluster RxErr+BadTLP+ReplayTO | Physical / SI on the wire | Count rises with temp; one-lane `pcilmr` low; reseat/cable swap moves it; better preset helps |
 | `Bad DLLP` heavy, little else | SI on the DLLP path (same SI workup) | Same as above; DLLPs aren't retried so this is a pure-SI tell |
-| UNCOR Completion Timeout, no SI cluster | ASPM/L1-exit latency OR hung/mis-addressed completer | `pcie_aspm=off` A/B: vanishes => L1 latency; persists => header-log the completer |
-| UNCOR Malformed/UnexpCmpl/FCP/RxOverflow | Protocol / firmware / IP bug | Reproducible regardless of temp/reseat; tied to traffic pattern or FW/driver version |
+| UNCOR CTO, no SI cluster | ASPM/L1-exit latency OR hung/mis-addressed completer | `pcie_aspm=off` A/B: vanishes => L1 latency; persists => header-log the completer |
+| UNCOR Malformed, UnexpCmpl, FCP, RxOverflow | Protocol / firmware / IP bug | Reproducible regardless of temp/reseat; tied to traffic pattern or FW/driver version |
 | UNCOR Poisoned TLP / ECRC | Data corruption upstream / through a switch or retimer | Walk the chain; check Error Source ID at the root port; margin each segment |
 | UNCOR Surprise Down | Power lost / browned out / connector opened / hot-unplug | Scope the device rail at the load step; reseat; swap PSU |
 | Device vanishes then re-enumerates | DPC contained a fatal OR a power glitch reset it | dmesg DPC containment + trigger reason vs a clean re-enumerate; rail scope at the event |
@@ -6703,7 +7113,7 @@ it degraded and recovered during the soak = a **fail** a one-shot test passes.
 
 ### DPC — when the device vanishes on purpose
 
-**Downstream Port Containment** (DPC, ext-cap ID `0x001D`) is a root/switch downstream-port
+**DPC** (DPC, ext-cap ID `0x001D`) is a root/switch downstream-port
 mechanism that, on a Fatal/Non-Fatal error, **automatically disables the link** to contain the
 error (stops bad TLPs propagating, stops a hung read from hanging the CPU). When DPC fires,
 **the device disappears**, then the kernel attempts recovery and re-enumerates.
@@ -6798,7 +7208,7 @@ dmesg | tail # confirm the injected BadTLP appears AND decodes correctly
 ```
 
 Inject one COR (`RCVR, BAD_TLP, BAD_DLLP, REP_ROLL, REP_TIMER`) and one UNCOR (`TRAIN, DLP,
-POISON_TLP, FCP, COMP_TIME, COMP_ABORT, UNX_COMP, RX_OVER, MALF_TLP, ECRC, UNSUP`) and assert
+POISON_TLP, FCP, COMP_TIME, COMP_ABORT, UNX_COMP, RX_OVER, MALF_TLP, End-to-End CRC (ECRC), UNSUP`) and assert
 the five-point test: (a) the correct bit is set in status, (b) the header log matches what you
 injected, (c) the First Error Pointer points at the right uncorrectable bit, (d) your W1C clear
 actually clears it, (e) your kernel-counter delta is exactly one. That **is** the AER
@@ -6875,7 +7285,7 @@ toolkit's `ChainSegmentResult` (per BDF + direction) and `ChainLinkResult` (per 
 | Custom card not detected (bifurcation) | **PCBA/Module** | Enumeration + bifurcation-vs-schematic check |
 
 The shift-left rule: a marginal Gen4 lane that only fails at 85 °C **cannot** be caught at
-room-temperature PCBA — it needs the **module-level thermal stress**, which is where your
+room-temperature Printed Circuit Board Assembly (PCBA) — it needs the **module-level thermal stress**, which is where your
 BERT/AER/margining tools live. A solder short, by contrast, should die at PCBA (ICT), never
 surface as a PCIe link failure at system test.
 
@@ -7031,10 +7441,10 @@ the Math & Statistics chapter.
 # NVMe and Storage
 
 
-An NVMe SSD is two things at once, and you test it as both. It is a **PCIe endpoint** —
-so everything in the PCIe chapter applies *first*: an NVMe drive that throws Bad-TLP
+An Non-Volatile Memory Express (NVMe) SSD is two things at once, and you test it as both. It is a **PCIe endpoint** —
+so everything in the PCIe chapter applies *first*: a NVMe drive that throws Bad-Transaction Layer Packet (TLP)
 correctable errors, trains x4→x2, or drops to Gen3 is a PCIe problem wearing a storage
-costume, and you debug it with `lspci`, AER, and lane margining, not `nvme-cli`. And it
+costume, and you debug it with `lspci`, Advanced Error Reporting (AER), and lane margining, not `nvme-cli`. And it
 is a **storage controller** with its own command set, health telemetry, self-test
 engine, and failure modes — which is what this chapter covers. On Zoox's compute, NVMe
 holds the OS, the maps and AI models, and the sensor-logging firehose (perception logging
@@ -7042,7 +7452,7 @@ alone is enormous and sustained), so "does it hit rated bandwidth and *hold* it 
 continuous write soak at temperature" is a real safety-relevant question, not a benchmark.
 
 > **Rule of thumb for the floor.** When a drive misbehaves, ask "PCIe or storage?" before
-> you touch `nvme-cli`. Check the link first: `nvme list`, then the drive's PCIe BDF in
+> you touch `nvme-cli`. Check the link first: `nvme list`, then the drive's PCIe Bus/Device/Function (BDF) in
 > sysfs (`current_link_speed`/`current_link_width`) and its AER counters. A throttling-or-
 > errors story on the *link* is a PCIe-chapter problem; a SMART/media/self-test story is a
 > storage problem. Half the "NVMe failures" you will chase are actually link failures.
@@ -7063,16 +7473,16 @@ but misses IOPS often has a controller or parallelism problem, not a media probl
 The host and controller communicate through **queues that live in host memory**:
 
 - **Submission Queue (SQ):** the host writes a command here, then writes the SQ's
- **doorbell register** (in the controller's BAR-mapped MMIO space) to tell the controller
+ **doorbell register** (in the controller's Base Address Register (BAR)-mapped Memory-Mapped I/O (MMIO) space) to tell the controller
  "go look." The doorbell is the one piece of the model that is a real MMIO register on the
  device; the queues themselves are host RAM.
 - **Completion Queue (CQ):** the controller writes a completion entry here and raises an
- **MSI-X interrupt**. The host processes completions and writes the CQ doorbell to free
+ **Message Signaled Interrupt Extended (MSI-X) interrupt**. The host processes completions and writes the CQ doorbell to free
  slots. A phase-bit in each entry tells the host which entries are new without re-reading
  the doorbell.
 - **Admin queue:** exactly one pair (SQ0/CQ0), created at init. It carries *management*
  commands — Identify, Get Log Page, Get/Set Feature, Format, Firmware Download/Commit,
- Device Self-Test, Create/Delete I/O Queue. This is the queue your test program lives on.
+ Device Self-Test (DST), Create/Delete I/O Queue. This is the queue your test program lives on.
 - **I/O queues:** created via admin commands, typically **one SQ/CQ pair per CPU core** for
  lock-free parallelism. They carry Read/Write/Flush/Compare. This is where `fio` traffic
  goes.
@@ -7092,7 +7502,7 @@ The host and controller communicate through **queues that live in host memory**:
 **Controller vs namespace** (the distinction that bites people in test):
 
 - A **controller** (`/dev/nvme0`) is the NVMe hardware — one chip per SSD, usually. It
- handles command processing, wear leveling, ECC on the NAND, and the PCIe interface.
+ handles command processing, wear leveling, Error-Correcting Code (ECC) on the NAND, and the PCIe interface.
 - A **namespace** (`/dev/nvme0n1`) is a logical collection of LBA blocks under that
  controller — like a partition, but at the controller level, with its own block-address
  range and LBA format (block size + metadata). One controller can host **multiple**
@@ -7117,7 +7527,7 @@ NVMe splits commands into two sets, matching the two queue types:
 
 | Set | Where it runs | Representative commands |
 |---|---|---|
-| **Admin** | Admin queue (SQ0/CQ0) | Identify, Get Log Page, Get/Set Feature, Format NVM, Firmware Download/Commit, Device Self-Test, Create/Delete I/O SQ/CQ, Sanitize |
+| **Admin** | Admin queue (SQ0/CQ0) | Identify, Get Log Page, Get/Set Feature, Format NVM, Firmware Download/Commit, DST, Create/Delete I/O SQ/CQ, Sanitize |
 | **NVM I/O** | I/O queues | Read, Write, Flush, Compare, Write Zeroes, Dataset Management (TRIM), Write Uncorrectable |
 
 Two **Identify** commands anchor every qualification because they are how you confirm you
@@ -7142,7 +7552,7 @@ nvme id-ns /dev/nvme0n1 -o json # Identify Namespace (CNS 0x00)
 
 `id-ctrl` gives you model/serial/FW (traceability — every test record must capture these),
 the **temperature thresholds** the drive throttles against (`wctemp`/`cctemp`, in Kelvin),
-and the **OACS** bitmap that tells you whether Device Self-Test is even supported (bit 4).
+and the **OACS** bitmap that tells you whether DST is even supported (bit 4).
 `id-ns` gives you the namespace size and the **active LBA format** — which is how you verify
 a drive was provisioned to 512 B vs 4 KB blocks (a provisioning mistake that silently
 changes performance and capacity).
@@ -7276,7 +7686,7 @@ or the dedicated subcommands. The Get-Log-Page surface:
 | 0x01 | **Error Information** | Ring of recent command errors: status code, command ID, **LBA**, namespace ID, error count — far more detail than SMART's `num_err_log_entries` summary | `nvme error-log` |
 | 0x02 | **SMART / Health** | The core health page above | `nvme smart-log` |
 | 0x03 | **Firmware Slot Info** | Active slot + next slot + per-slot revision strings | `nvme fw-log` |
-| 0x06 | **Device Self-Test** | Result of the last self-tests (up to 20 entries) + current-operation % | `nvme self-test-log` |
+| 0x06 | **DST** | Result of the last self-tests (up to 20 entries) + current-operation % | `nvme self-test-log` |
 | 0x07 | **Telemetry Host-Initiated** | Vendor binary blob for FA/RMA, triggered by the host | `nvme telemetry-log` |
 | 0x08 | **Telemetry Controller-Initiated** | Vendor blob the controller captured on its own (e.g., at an internal fault) | `nvme telemetry-log` |
 | 0x0D | **Persistent Event Log** | **Non-volatile, cross-power-cycle history**: power cycles, thermal excursions, firmware changes, error bursts — the richest field-return artifact | `nvme persistent-event-log` |
@@ -7315,7 +7725,7 @@ code against the NVMe spec status tables, or let `nvme-cli` print the parentheti
 
 **Telemetry (0x07/0x08)** is a vendor-defined binary dump — you do not parse it on the
 line; you **capture it on a failure** and hand it to the SSD vendor's FA team. Capturing it
-costs you nothing and is the single thing the vendor will ask for on an RMA.
+costs you nothing and is the single thing the vendor will ask for on an Return Merchandise Authorization (RMA).
 
 > **The non-volatile logs are the RMA story.** SMART resets some context across power
 > cycles and a `format`/`sanitize` can clear logs entirely. The **Persistent Event Log
@@ -7446,7 +7856,7 @@ guessing wrong on a real 41 C reading.
 
 ## PCIe-attach implications (point to the PCIe chapter)
 
-An NVMe drive is a PCIe endpoint, full stop. The whole PCIe chapter — LTSSM, link
+An NVMe drive is a PCIe endpoint, full stop. The whole PCIe chapter — Link Training and Status State Machine (LTSSM), link
 train/width, AER correctable/uncorrectable decode, the write-1-to-clear arm/stress/read
 discipline, lane margining, retrain counting — applies to its link **before** any storage
 test is meaningful. Concretely, on the floor:
@@ -7456,9 +7866,9 @@ test is meaningful. Concretely, on the floor:
  Gen4→Gen3 or x4→x2 is a *PCIe* finding (SI, seating, bifurcation), and no amount of SMART
  reading will explain it.
 - **Watch its AER counters across the soak.** Bad-TLP / Replay-Timer correctables climbing
- during a write soak point at physical-layer SI on the M.2/U.2 connector or trace —
+ during a write soak point at physical-layer Signal Integrity (SI) on the M.2/U.2 connector or trace —
  identical to the PCIe-chapter triage, just on a drive.
-- **"Drive disappeared mid-test"** can be **DPC** (Downstream Port Containment) on the root
+- **"Drive disappeared mid-test"** can be **Downstream Port Containment (DPC)** (DPC) on the root
  port firing on a fatal error, a surprise-down, or a power glitch — read it the way the
  PCIe chapter says, not as "the SSD died."
 
@@ -7505,7 +7915,7 @@ aborts on the first miscompare so a corruption can't hide in a sea of good block
 **What to watch *during* the soak**, not just after:
 
 - **Throughput holding steady.** A drive that does rated BW for 10 s then *halves it* hit
- the thermal wall — that is throttling, and only a module-level soak (not a 10-second PCBA
+ the thermal wall — that is throttling, and only a module-level soak (not a 10-second Printed Circuit Board Assembly (PCBA)
  check) catches it.
 - **Composite temperature vs the thresholds.** Poll `nvme smart-log` temperature against
  `wctemp`/`cctemp`. TMT1 triggers light throttle; TMT2 heavier. A throttle event is a
@@ -7603,7 +8013,7 @@ The end-to-end NVMe flow at module test, in order:
 **The limits, summarized:** zero `critical_warning`, zero `media_errors`, zero new error-log
 entries, `percentage_used` ~0, `available_spare` 100%, temperature in range with zero
 thermal-throttle transitions, `power_on_hours`/`power_cycles` low (re-stock gate), DST
-passes, and `fio` BW/IOPS at or above datasheet — every one captured as a number so DV can
+passes, and `fio` BW/IOPS at or above datasheet — every one captured as a number so Design Verification (DV) can
 set and Quality can tighten the limit later.
 
 ## NVMe health check in Python (toolkit cross-reference)
@@ -7647,17 +8057,17 @@ expensive, hottest, highest-power part on the assembly, and **a PCIe endpoint fi
 Hold both ideas. Most of what you will chase on a GPU — a link sitting at Gen3 when it
 should be Gen4, a climbing replay count, a unit that "fell off the bus" under thermal
 load — is a PCIe / power / thermal problem that the GPU happens to report through its own
-rich telemetry. The rest is genuinely GPU-specific: ECC on a huge memory array, row
+rich telemetry. The rest is genuinely GPU-specific: Error-Correcting Code (ECC) on a huge memory array, row
 remapping, XID error codes, and a thermal-under-load behavior that idle tells you nothing
 about.
 
-This chapter assumes the **PCIe chapter** for the link layer (LTSSM, AER, lane margining,
-the arm/stress/read discipline) and the **Memory chapter** for the host-DRAM EDAC story —
+This chapter assumes the **PCIe chapter** for the link layer (Link Training and Status State Machine (LTSSM), Advanced Error Reporting (AER), lane margining,
+the arm/stress/read discipline) and the **Memory chapter** for the host-Dynamic Random-Access Memory (DRAM) Error Detection and Correction (EDAC) story —
 GPU ECC is the on-package analog of both. What you get here: the architecture you actually
 need (not a graphics-programming tour), ECC in real depth, the XID table with an action
 per code, the throttle-reasons bitmask decoded, NVLink, the health-check command set
 (`nvidia-smi -q`, DCGM), failure signatures mapped to root cause, and the manufacturing
-flows — what is a screen versus what is an RMA. The companion code is
+flows — what is a screen versus what is an Return Merchandise Authorization (RMA). The companion code is
 `toolkit/src/computetest/gpu.py`; read a section here, then read the function that does it.
 
 ---
@@ -7671,7 +8081,7 @@ error is a specific SerDes. So: the architecture, filtered to what changes how y
 
 ### The compute hierarchy
 
-NVIDIA's datacenter and automotive parts (A100, H100, L40/L40S, the Orin SoC's integrated
+NVIDIA's datacenter and automotive parts (A100, H100, L40/L40S, the Orin System-on-Chip (SoC)'s integrated
 GPU, plus whatever Zoox's roadmap lands on) all share the same hierarchy:
 
 ```text
@@ -7724,7 +8134,7 @@ on.
 ### How the GPU attaches: PCIe vs NVLink, and the driver stack
 
 A GPU connects to the host over **PCIe Gen4/Gen5 x16** — that is the link your PCIe chapter
-tools margin and BERT. Multi-GPU boards may *additionally* wire GPUs to each other (or to an
+tools margin and Bit Error Rate Test (BERT). Multi-GPU boards may *additionally* wire GPUs to each other (or to an
 NVSwitch) over **NVLink**, a separate, faster, NVIDIA-proprietary GPU-to-GPU SerDes. Keep
 them straight:
 
@@ -8281,7 +8691,7 @@ dcgmi nvlink --link-status # DCGM view; DCGM_FI_DEV_NVLINK_* fields for fleet mo
 nvbandwidth # measured GPU-to-GPU / host bandwidth (separate from PCIe BW)
 ```
 
-What to check: the topology matches the board design (a full mesh or the specific tree EE
+What to check: the topology matches the board design (a full mesh or the specific tree Electrical Engineering (EE)
 specified — a missing `NV#` entry means a link did not come up), every expected link is
 **active**, the NVLink **CRC/replay/recovery** counters are zero or not climbing under load,
 and peer bandwidth hits expected. **XID 74** is the kernel's summary of an NVLink fault;
@@ -8337,7 +8747,7 @@ unit fails on the fixture.
 | Clocks sag, throttle bit `0x80` (power brake) | Power-delivery problem -- PSU/VRM asserted brake | Scope the rails under load; check PSU sizing and the power-brake net |
 | Clocks sag, only `0x04` (SW power cap) at high load | Often **normal** -- hitting the configured power limit | Check the limit is set correctly (`-q -d POWER`); raise if too conservative |
 | **XID 79** -- "fell off the bus" | **PCIe / power / thermal HW** (not GPU-internal) | Correlate AER (root port) + rail voltage + temp; reseat; **hard fail** |
-| **XID 74** / NVLink CRC/replay climbing | NVLink SerDes problem | `nvidia-smi nvlink -e`; check the peer GPU and NVSwitch; can be HW |
+| **XID 74** / NVLCRC/replay climbing | NVLink SerDes problem | `nvidia-smi nvlink -e`; check the peer GPU and NVSwitch; can be HW |
 | `temperature.memory` high but core OK | HBM/GDDR cooling path (separate from die) | Check memory thermal pads/contact; HBM throttles ~95 degC |
 | GPU not enumerated at all (`nvidia-smi -L` short) | Power rail, PCIe link dead, seating, BIOS | Rails first; `dmesg` for LTSSM-stuck/training-fail; reseat; bifurcation (PCIe chapter) |
 | **XID 119/120** -- GSP fault | GPU firmware (GSP) | Reset; reflash/match driver+firmware; repeated -> RMA |
@@ -8357,7 +8767,7 @@ and the organizing principle is to put each test at the earliest phase that can 
 defect -- the earlier a defect is caught, the cheaper the rework and the less value has been
 added to a part that was going to fail anyway.
 
-**At PCBA** (bare board, before the GPU's thermal solution is even mounted, often at the CM):
+**At Printed Circuit Board Assembly (PCBA)** (bare board, before the GPU's thermal solution is even mounted, often at the Contract Manufacturer (CM)):
 - Enumeration and basic link train — does `nvidia-smi -L` see it, does it reach the expected
  gen/width at room temperature. Catches gross assembly defects (dead lane, bad solder under
  the package — pair with X-ray).
@@ -8433,7 +8843,7 @@ you a **used or returned part entered your new-build line** (a supply-chain/gene
 finding), which is why you *log* aggregate and remap counts on every unit even when they
 pass. A fresh part should have a clean lifetime history; one that does not is a flag for
 quality, not necessarily a scrap. That logging discipline — capture the parameter, not just
-the verdict (DV-vs-MT chapter) — is what lets the fleet data later flag a bad lot or a
+the verdict (Design Verification (DV)-vs-Manufacturing Test (MT) chapter) — is what lets the fleet data later flag a bad lot or a
 re-stocked tray before it becomes a field problem.
 
 
@@ -8442,8 +8852,8 @@ re-stocked tray before it becomes a field problem.
 
 Memory test has the same shape as every other interface in this guide: **clear the
 counters → stress it (hot) → read the counters → decode an error to a physical part you
-can RMA.** The counter system for DRAM is **EDAC** (Error Detection And Correction), and it
-is the DRAM analog of PCIe AER and GPU ECC — same mental model, different sysfs. On Zoox's
+can Return Merchandise Authorization (RMA).** The counter system for Dynamic Random-Access Memory (DRAM) is **Error Detection and Correction (EDAC)**, and it
+is the DRAM analog of PCIe Advanced Error Reporting (AER) and GPU Error-Correcting Code (ECC) — same mental model, different sysfs. On Zoox's
 server-grade compute the DRAM is almost certainly **ECC** (RDIMM/LRDIMM), and verifying
 that ECC *actually detects and corrects* — not just that the box boots — is a functional-
 safety requirement, not a nicety: ECC is a fault-tolerance mechanism the manufacturing test
@@ -8453,7 +8863,7 @@ must prove engages.
 > PCIe correctable — a few over a long soak can be benign, a high or concentrated rate is a
 > finding. An uncorrectable error (UE) is the DRAM analog of a PCIe uncorrectable — **any UE
 > on a new unit is a fail**, and it can crash the box. Everything below is how you count
-> them, run the system hot enough to provoke them, and turn one into a DIMM silkscreen label.
+> them, run the system hot enough to provoke them, and turn one into a Dual Inline Memory Module (DIMM) silkscreen label.
 
 ## DDR4/DDR5 fundamentals relevant to test
 
@@ -8626,14 +9036,14 @@ a board whose label DB you have not built yet.
 > do not auto-clear, so a raw read includes errors from POST, boot, and prior tests. For a
 > clean per-unit measurement you must **baseline before the stress window** (read the counts,
 > or reset them where the driver allows) and compare the *delta* after the soak. Reading the
-> absolute count and gating on it is the EDAC version of forgetting to W1C-clear AER before a
-> BERT — you end up failing units on errors that predate your test.
+> absolute count and gating on it is the EDAC version of forgetting to Write-1-to-Clear (W1C)-clear AER before a
+> Bit Error Rate Test (BERT) — you end up failing units on errors that predate your test.
 
 ## rasdaemon and decoding an error to a physical DIMM silkscreen label
 
 This is the highest-value capability in the whole chapter, because it turns a vague "the
 board has memory errors" into an **actionable RMA**: *"DIMM_A1 is throwing 40 CE/hour, swap
-that stick."* `rasdaemon` is the userspace daemon that consumes the kernel's RAS tracepoints,
+that stick."* `rasdaemon` is the userspace daemon that consumes the kernel's Reliability, Availability, Serviceability (RAS) tracepoints,
 decodes each CE/UE, and logs it — with the DIMM label and a timestamp — to a SQLite DB.
 
 ```bash
@@ -8707,7 +9117,7 @@ The error classes and what each means for a verdict:
  failure beyond the code's strength). The data is *wrong*; the consequence is a machine-check
  — typically a kernel panic or an application crash. **Any UE on a new unit fails it.**
 
-The RAS (Reliability, Availability, Serviceability) features built to manage these:
+The Reliability, Availability, Serviceability (RAS) features built to manage these:
 
 - **Predictive Failure Analysis (PFA):** rather than wait for a UE, the platform watches the
  **CE rate per DIMM/row** and flags a DIMM as *predicted-to-fail* when its CE rate crosses a
@@ -8717,7 +9127,7 @@ The RAS (Reliability, Availability, Serviceability) features built to manage the
 - **Post-Package Repair (PPR):** DDR4/DDR5 DRAM ships with **spare rows** inside each device.
  When a row goes bad, the controller/BIOS can **remap a failing row to a spare** — **soft PPR**
  (volatile, until next boot) or **hard PPR** (a permanent, one-time fuse blow). This is the
- DRAM analog of NVMe spare blocks or GPU row-remapping. Test relevance: a board that has
+ DRAM analog of Non-Volatile Memory Express (NVMe) spare blocks or GPU row-remapping. Test relevance: a board that has
  **already consumed PPR resources** on a "new" DIMM, or that *needs* PPR to pass, is a marginal
  part — log the PPR/repair state, don't just let BIOS quietly repair around a defect and ship it.
 - **Row-hammer awareness:** repeatedly activating one DRAM row at high rate can disturb charge
@@ -8860,7 +9270,7 @@ def _limits(total_ce, total_ue, per_dimm, max_ce_total, max_ce_per_dimm):
 ```
 
 > **Set the limit from fleet data, not a guess.** The 100-total / 20-per-DIMM defaults are
-> starting points. The right values come from **DV characterization** (soak good units across
+> starting points. The right values come from **Design Verification (DV) characterization** (soak good units across
 > temperature, see what the healthy CE distribution actually is) and then from **production
 > fleet data** (the CE distribution of known-good shipped units). Capture the per-DIMM CE
 > counts on **every** unit — pass or fail — so the limit can be tightened to the real
@@ -8940,9 +9350,9 @@ compare to a limit, and hand a failure to whoever fixes it with the part already
 # Automotive and Serial Buses: GMSL, CAN, Ethernet, I2C/SPI/UART
 
 
-Four families of bus carry everything on a Zoox compute board that *isn't* PCIe. **GMSL**
+Four families of bus carry everything on a Zoox compute board that *isn't* PCIe. **Gigabit Multimedia Serial Link (GMSL)**
 brings camera pixels in from the harness. **Automotive Ethernet** brings radar, lidar, and
-inter-module traffic. **CAN/CAN-FD** is the vehicle's control nervous system — brakes,
+inter-module traffic. **Controller Area Network (CAN)/Controller Area Network Flexible Data-Rate (CAN-FD)** is the vehicle's control nervous system — brakes,
 steering, power distribution. And **I2C/SPI/UART** are the housekeeping buses that
 configure, identify, and monitor every die on the board. The first three are high-speed
 serial links and share a single mental model with PCIe (the Networking and PCIe chapters);
@@ -8958,8 +9368,8 @@ Test Engineer earns the title.
 > **The one mental model.** PCIe, GMSL, automotive Ethernet, NVLink, USB, SATA — all the
 > same kind of thing: a serial differential SerDes link that recovers a clock from the data
 > (CDR), encodes/scrambles for DC balance, equalizes to fight channel loss (TX emphasis + RX
-> CTLE/DFE), *trains* both ends up together, and *counts errors*. The failure physics are
-> identical — channel loss, jitter, ISI, reflections, temperature, connector/cable quality.
+> Continuous-Time Linear Equalizer (CTLE)/Decision Feedback Equalizer (DFE)), *trains* both ends up together, and *counts errors*. The failure physics are
+> identical — channel loss, jitter, Inter-Symbol Interference (ISI), reflections, temperature, connector/cable quality.
 > Learn the model once; what changes per link is the **vocabulary and the tooling**. So your
 > debugging instinct is always the same: *is it trained at the right rate, stress it, watch
 > the error counters, suspect the channel and temperature first.*
@@ -8970,8 +9380,8 @@ Test Engineer earns the title.
 
 ### What GMSL is and why a robotaxi lives on it
 
-GMSL (Gigabit Multimedia Serial Link, Analog Devices / Maxim) is a SerDes designed to move
-**uncompressed** sensor video from a remote camera to a host SoC over a single inexpensive
+GMSL is a SerDes designed to move
+**uncompressed** sensor video from a remote camera to a host System-on-Chip (SoC) over a single inexpensive
 cable, while *simultaneously* carrying bidirectional control, power, and synchronization on
 that same cable. That "everything on one coax" property is the whole point: a robotaxi has
 dozens of cameras scattered around the body, each up to ~15 m of harness away from the
@@ -9015,7 +9425,7 @@ frame capture is the gold end-to-end check and not just a "lock" bit.
 
 (Rates: ADI GMSL1/GMSL2 channel-spec user guides and the GMSL Wikipedia summary — GMSL1
 downlink up to 3.125 Gbps; GMSL2 forward 3 or 6 Gbps, reverse 187.5 Mbps with a 1.5 Gbps
-reverse option on some parts; GMSL3 forward 12 Gbps using PAM4 above 6 Gbps.)
+reverse option on some parts; GMSL3 forward 12 Gbps using Pulse Amplitude Modulation 4-level (PAM4) above 6 Gbps.)
 
 The forward rate is **fixed/selectable**, not auto-negotiated — set by CFG-strap resistors at
 power-on or by register writes. This is a key difference from Ethernet: there is no
@@ -9039,8 +9449,8 @@ Zoox-relevant silicon, the parts you will actually probe over I2C:
 | MAX96792A | Dual deserializer | GMSL3/2 -> CSI-2 |
 
 The "F"/"R" suffixes matter on a safety vehicle: the **F** variants add functional-safety
-features (CRC/ECC on internal memories, register-readback verification, lock-step
-diagnostics, a dedicated error pin) so the SerDes can participate in the ASIL chain. If EE
+features (CRC/Error-Correcting Code (ECC) on internal memories, register-readback verification, lock-step
+diagnostics, a dedicated error pin) so the SerDes can participate in the Automotive Safety Integrity Level (ASIL) chain. If Electrical Engineering (EE)
 specs a `96717F`/`96724F`, your test must read the safety status registers too, not just
 lock.
 
@@ -9072,9 +9482,9 @@ do with GMSL2:
 > monitor sits near its alarm threshold is a marginal unit that will drop at temperature in
 > the vehicle. Reading the eye-monitor margin (not just the lock bit) turns "it locked" into
 > "it locked with X margin" — a captured *parameter* you can set a data-driven limit on,
-> exactly the DV-sets-the-limit / MT-checks-it pattern from the test-strategy chapter.
+> exactly the Design Verification (DV)-sets-the-limit / Manufacturing Test (MT)-checks-it pattern from the test-strategy chapter.
 
-A *compliant GMSL2 channel* is specified to deliver a **BER of 1e-15 or better** under
+A *compliant GMSL2 channel* is specified to deliver a **Bit Error Rate (BER) of 1e-15 or better** under
 worst-case conditions (longest cable, aged cable, temperature extremes, PCB impedance
 variation, min/max PoC load). That number is your acceptance bar: GMSL is essentially an
 error-free pipe when healthy, so any nonzero decode/CRC error count on a soak is a finding,
@@ -9146,7 +9556,7 @@ the **I2C tunnel** is alive (you can read a known sensor ID register through it)
 
 ### Video transport: tunnel mode vs pixel mode, data types, virtual channels
 
-The deserializer reconstructs a MIPI **CSI-2** stream for the SoC, and how the video crosses
+The deserializer reconstructs a MIPI Alliance (MIPI) **CSI-2** stream for the SoC, and how the video crosses
 the GMSL link is configured in one of two modes — a real EE/firmware decision you must
 understand to debug a "frames are corrupt / wrong format" failure:
 
@@ -9209,7 +9619,7 @@ frame sync, and GMSL provides it through GPIO tunneling:
 ```
 
 The FSYNC master can be the **deserializer's own internal frame-sync generator** (free-
-running at a programmed rate) or an **external** source (an SoC GPIO timer, or a vehicle-wide
+running at a programmed rate) or an **external** source (a SoC GPIO timer, or a vehicle-wide
 clock for cross-cluster alignment). The key point for test: a single pulse is fanned out over
 the *control channel* to every camera — there is no separate sync wire per camera. So
 frame-sync depends on (a) every link being locked and (b) the GPIO/frame-sync tunnel being
@@ -9298,7 +9708,7 @@ classic mixed-fleet bug on a deserializer that supports both.
 > when you've pulled the exact address+bit for the exact silicon from its datasheet.
 
 (Lock is fundamentally the detection of valid **sync words** on the serial stream; the
-PLL-lock + sync-word condition is what sets the bit and drives the LOCK pin.)
+Phase-Locked Loop (PLL)-lock + sync-word condition is what sets the bit and drives the LOCK pin.)
 
 The **LOCK pin gotcha** worth knowing from the field: if the LOCK output reads asserted while
 the deserializer is *not even connected* to a serializer, the device is mispowered or damaged
@@ -9401,9 +9811,9 @@ sync are doing) and it points at the layer.
 | **Camera won't configure** (lock OK, I2C NACKs) | Reverse-channel / I2C-tunnel / address-translation problem | `i2cdetect` the deserializer locally; check tunnel enabled; verify translated sensor/ser addresses; `dmesg` for `-ENXIO` |
 | **One sensor of an identical set unreachable** | Address-translation collision/misconfig | Check each remote's *translated* address is distinct; two cameras translated to the same address collide |
 
-> **The PCBA→vehicle escape this is all built around.** On the bench you test GMSL through a
+> **The Printed Circuit Board Assembly (PCBA)→vehicle escape this is all built around.** On the bench you test GMSL through a
 > *short* cable; a marginal eye passes. In the vehicle the same link runs **15 m of coax
-> through a real harness with real connectors and EMI, at temperature** — and that's where a
+> through a real harness with real connectors and Electromagnetic Interference (EMI), at temperature** — and that's where a
 > marginal link drops or its error count climbs. This is the GMSL twin of the PCIe "passes at
 > 25 °C, fails at 85 °C" escape, and it's exactly why GMSL earns *real* coverage at the
 > **vehicle/EOL** phase, not just a lock-bit check at module test. Reading the eye-monitor
@@ -9499,11 +9909,11 @@ verdict so the operator gets one PASS/FAIL with the per-camera detail attached.
 
 ## CAN and CAN-FD — The Vehicle Control Bus
 
-CAN (Controller Area Network) is the vehicle's low-bandwidth, ultra-reliable control bus:
+CAN is the vehicle's low-bandwidth, ultra-reliable control bus:
 brake controllers, steering modules, power distribution, body electronics. Your compute
 board has **CAN transceivers** you must prove work — send actuator commands, read vehicle
 state, run diagnostics over UDS/DoIP. The compute platform's *high-bandwidth* sensor data
-rides Ethernet/PCIe/GMSL; CAN is the control-plane link to the rest of the car.
+rides Ethernet/PCIe/GMSL; CAN-FD is the control-plane link to the rest of the car.
 
 ### The bus, physically
 
@@ -9558,7 +9968,7 @@ no time is wasted (nondestructive arbitration).
 | ACK | 2 bit | receivers acknowledge |
 | EOF | 7 bit | end of frame (recessive) |
 
-**CAN-FD (Flexible Data-rate)** extends Classic CAN where you need more data but Ethernet is
+**CAN-FD** extends Classic CAN where you need more data but Ethernet is
 overkill (e.g., faster ECU firmware flashing):
 
 | Feature | Classic CAN | CAN-FD |
@@ -9762,8 +10172,8 @@ gotchas that bite specifically on the line.
 
 **Why single pair?** Weight and connector size. A standard 4-pair RJ45 link is unthinkable
 across a vehicle harness with hundreds of connections; a single unshielded/shielded twisted
-pair, full-duplex (TX and RX share the pair via echo cancellation), with **PAM3** line coding
-(three voltage levels, more bits per symbol than NRZ) gets 100 Mbit/s–multi-Gbit over one
+pair, full-duplex (Transmit (TX) and Receive (RX) share the pair via echo cancellation), with **PAM3** line coding
+(three voltage levels, more bits per symbol than Non-Return-to-Zero (NRZ)) gets 100 Mbit/s–multi-Gbit over one
 lightweight pair. Contrast with consumer Ethernet (the Networking chapter): 4 pairs, RJ45,
 auto-MDI-X, and clock auto-negotiation — none of which apply here.
 
@@ -9833,7 +10243,7 @@ Settings for eth1:
 ```
 
 `master-slave status: master` on *both* ends is the no-link bug from above; one must read
-`slave`. The error counters live in `ethtool -S` and are the marginal-SI tell when they
+`slave`. The error counters live in `ethtool -S` and are the marginal-Signal Integrity (SI) tell when they
 creep on an otherwise-up link:
 
 ```text
@@ -9861,7 +10271,7 @@ Pair A, fault length: 4.50m
 (A clean run reports `Pair A code OK`. On an unsupported PHY the command errors out instead —
 which is exactly why `check_ethernet` treats "unsupported" as *skipped*, never a fail.) The
 diagnostic triad: a link that's *up* with *low iperf throughput* and *rising CRC counts*
-(`ethtool -S`) is marginal SI — confirm it with the TDR, which localizes the fault on the
+(`ethtool -S`) is marginal SI — confirm it with the Time-Domain Reflectometry (TDR), which localizes the fault on the
 cable.
 
 **Raw PHY registers when `ethtool` isn't enough.** The master/slave bit and link state live
@@ -9884,7 +10294,7 @@ portable read; raw MDIO is the fallback.)
 ### Toolkit cross-reference: `check_ethernet`
 
 `ethernet.py`'s `check_ethernet(iface)` → `EthHealth` parses `ethtool` for **link, speed
-(handling "2.5G" → 2500 Mbps), and master/slave role**, reads **rx/tx errors** from
+(handling "2.5G" → 2500 Mbps), and master/slave role**, reads **Receive (RX)/Transmit (TX) errors** from
 `ethtool -S`, optionally runs an `iperf3` throughput leg, and — on supported PHYs — runs a
 **TDR cable test** (`--cable-test-tdr`), parsing fault `pair`/`code`/`distance_m`. The checks:
 `link_up`, `speed_ok` (>= expected — catches a 1000BASE-T1 link that came up at 100), 
@@ -9983,7 +10393,7 @@ Error: Read failed # -> dmesg shows i2c -ENXIO on bus 1, addr 0x60
 
 **A dead I2C reverse channel = no sensor config = no video, even over a perfect coax** — and
 lock can be asserted while decode-error counters climb on a marginal coax, the PCIe "links up
-but fails BERT" pattern read over I2C instead of AER. (The sensor's ID-register address and
+but fails Bit Error Rate Test (BERT)" pattern read over I2C instead of Advanced Error Reporting (AER). (The sensor's ID-register address and
 expected value are part-specific; pull them from the image-sensor datasheet, not memory.)
 
 ### SPI — fast, point-to-point-ish
@@ -10019,7 +10429,7 @@ command is never recognized).
 
 ### UART — the debug console
 
-Two lines **TX** and **RX** (cross-connected: each device's TX → the other's RX) + common
+Two lines **Transmit (TX)** and **Receive (RX)** (cross-connected: each device's TX → the other's RX) + common
 ground. **Asynchronous** — no clock, both ends preconfigured to the same **baud**. Frame:
 idle-high, **start bit** (high→low), data bits (LSB-first), optional parity, 1–2 **stop
 bits**. **"115200 8N1"** = 115200 baud, 8 data, No parity, 1 stop — the de-facto console
@@ -10060,7 +10470,7 @@ a camera module's MCU when it speaks UART (possibly tunneled over GMSL).
 ## Putting It Together at Zoox
 
 Every bus in this chapter maps to a manufacturing-test phase and a captured parameter, the
-same way PCIe and NVMe do:
+same way PCIe and Non-Volatile Memory Express (NVMe) do:
 
 | Bus | What you prove | Earliest phase that catches it | Captured parameter |
 |---|---|---|---|
@@ -10083,7 +10493,7 @@ real teeth at the vehicle phase.
 # Manufacturing Test Principles
 
 This is the discipline that the rest of the guide serves. The interface chapters teach
-you *how* to make a measurement (read AER, margin a lane, count ECC errors); this
+you *how* to make a measurement (read Advanced Error Reporting (AER), margin a lane, count Error-Correcting Code (ECC) errors); this
 chapter is *why* you make it, *where* you make it, *what limit* you judge it against,
 and *how* you turn the captured numbers into yield, root cause, and a test program you
 can release to a contract manufacturer and trust.
@@ -10094,8 +10504,8 @@ duration, parallelization, correlation — is a balance of three forces: **cover
 (catch the defect), **time** (hit takt / throughput), and **cost** (equipment, labor,
 floor space, and the cost of being wrong). The expert skill is holding all three at once.
 
-> The math behind everything quantitative here — capability ($C_{pk}/P_{pk}$), SPC and
-> the Western Electric rules, Gage R&R, yield (FPY/RTY), cost-of-test, and the BERT
+> The math behind everything quantitative here — capability ($C_{pk}/P_{pk}$), Statistical Process Control (SPC) and
+> the Western Electric rules, Gage R&R, yield (First Pass Yield (FPY)/Rolled Throughput Yield (RTY)), cost-of-test, and the Bit Error Rate Test (BERT)
 > confidence formulas — is *derived* in the **Math & Statistics chapter**. This chapter
 > uses those results to make decisions; it points there for the derivations rather than
 > repeating them.
@@ -10104,27 +10514,27 @@ floor space, and the cost of being wrong). The expert skill is holding all three
 
 ## The Four Phases, In Depth
 
-The phases are **PCBA → module → system → vehicle**, and the organizing rule is **place
+The phases are **Printed Circuit Board Assembly (PCBA) → module → system → vehicle**, and the organizing rule is **place
 each test at the earliest phase that can catch its defect.** Each phase tests a
 different *thing*, owned by a different group, proving a different property.
 
 ### PCBA — "was it built correctly?"
 
-The unit is a bare board just off the SMT line: right components, good solder, no
-shorts/opens, powers on, reaches a basic boot. Mostly run **at the CM**, mostly not your
+The unit is a bare board just off the Surface-Mount Technology (SMT) line: right components, good solder, no
+shorts/opens, powers on, reaches a basic boot. Mostly run **at the Contract Manufacturer (CM)**, mostly not your
 code — but you must understand it, because a defect that escapes here costs 10× more at
 the next phase, and because the *coverage gaps* here are what your module test must
 cover.
 
-- **AOI** (Automated Optical Inspection) — cameras check for missing / misplaced / wrong
+- **Automated Optical Inspection (AOI)** — cameras check for missing / misplaced / wrong
  / tombstoned parts and gross solder defects. Fast, before anything is powered.
-- **ICT** (In-Circuit Test) — a bed-of-nails fixture probes nets to measure R/C, find
+- **In-Circuit Test (ICT)** — a bed-of-nails fixture probes nets to measure R/C, find
  shorts and opens, and verify component values. The workhorse PCBA test for
  high-volume, *fixtured* boards.
 - **Boundary scan / JTAG** (IEEE 1149.1) — shifts test patterns through device scan
  chains to test interconnects you cannot physically probe (BGA balls under the package)
  and to program flash/CPLD. Often the *first* test on a new board, before you try to
- boot it. (See DFT, .)
+ boot it. (See Design for Testability (DFT), .)
 - **Flying probe** — ICT without a custom fixture, for low volume and prototypes (slower,
  no fixture cost).
 - **X-ray (AXI)** — sees solder voids and bridges *under* BGAs that AOI cannot. The only
@@ -10138,9 +10548,9 @@ The unit is now a sealed, functional module *with its thermal solution*. **This 
 heart of your job.** Almost every interface test in the guide runs here:
 
 - **Enumerate everything** — `lspci`, `nvme list`, `nvidia-smi`, NIC/CAN/GMSL presence.
-- **Prove each link trains at the *expected* speed and width** — PCIe Gen4 x16, NVMe
- Gen4 x4, etc. Trained-below-max is your first signal-integrity finding (PCIe chapter).
-- **Stress + error counting** — drive traffic and watch AER / SMART / ECC / EDAC counters
+- **Prove each link trains at the *expected* speed and width** — PCIe Gen4 x16, Non-Volatile Memory Express (NVMe)
+ Gen4 x4, etc. Trained-below-max is your first Signal Integrity (SI) finding (PCIe chapter).
+- **Stress + error counting** — drive traffic and watch AER / SMART / ECC / Error Detection and Correction (EDAC) counters
  (the BERT and diagnostic tools live here; PCIe/NVMe/GPU/Memory chapters).
 - **Thermal / burn-in** — soak at temperature and/or under load, re-check links and
  errors. **This is the phase that catches marginal-at-temperature defects PCBA
@@ -10148,7 +10558,7 @@ heart of your job.** Almost every interface test in the guide runs here:
 - **Power characterization** — measure rail voltages/currents under load with a DMM/scope
  (Instruments chapter); out-of-window-under-load is a power-delivery defect and a common
  root cause of link errors.
-- **Firmware / version verification** — flash and confirm firmware/BSP versions; record
+- **Firmware / version verification** — flash and confirm firmware/Board Support Package (BSP) versions; record
  them for traceability.
 - **Calibration** where applicable.
 
@@ -10162,10 +10572,10 @@ should have already proven each module *in isolation*. If you are debugging "whi
 six modules is marginal" at system test, the right fix is usually upstream: tighten the
 module-phase coverage so it never gets here.
 
-### Vehicle (EOL — End Of Line) — "does it work in the car, end to end?"
+### Vehicle (End-of-Line (EOL) — End Of Line) — "does it work in the car, end to end?"
 
 Compute is installed in the vehicle with real sensors. Cameras must lock over *real* GMSL
-harnesses (15 m of coax, real connectors, real EMI), all sensors stream, CAN talks to
+harnesses (15 m of coax, real connectors, real Electromagnetic Interference (EMI)), all sensors stream, CAN talks to
 the vehicle bus, and the vehicle-level functional checks pass before it ships. **This is
 where channel-marginal SerDes defects surface** — a GMSL link that locks on a short bench
 cable can drop over a full harness at temperature, the GMSL version of the PCIe "passes
@@ -10221,7 +10631,7 @@ The economic version of the same curve (the classic semiconductor framing): wafe
 ~\$1, package test ~\$10, board test ~\$100, system test ~\$1,000, field ~\$10,000+. The
 numbers are illustrative; the *order of magnitude per phase* is the durable point.
 
-**The allocation skill.** When EE hands you a new board, the expert question for *each
+**The allocation skill.** When Electrical Engineering (EE) hands you a new board, the expert question for *each
 way it can fail* is: what is the cheapest phase that can catch this, and what test
 detects it there? You build a small matrix:
 
@@ -10231,7 +10641,7 @@ detects it there? You build a small matrix:
 | BGA solder void under the GPU | PCBA (X-ray) + Module (thermal cycling surfaces it) | AXI; thermal soak + link-error monitor |
 | PCIe lane marginal at temperature | Module (not PCBA) | Stress + AER + lane margining, hot and cold |
 | NVMe throttles under sustained write | Module | `fio` soak + SMART temperature/throttle log |
-| GMSL won't lock over full harness | Vehicle (real harness) | Link-lock + frame capture at EOL |
+| GMSL won't lock over full harness | Vehicle (real harness) | Link-lock + frame capture at End-of-Line (EOL) |
 | Inter-module link marginal | System | System link enumeration + stress |
 
 The expensive mistakes are defects that are only *detectable* late but were
@@ -10243,11 +10653,11 @@ point: **test coverage is a placement problem.**
 
 ## Design Verification vs Manufacturing Test, In Depth
 
-DV and MT share instruments, code, and physics but differ in goal, statistics, and
+Design Verification (DV) and Manufacturing Test (MT) share instruments, code, and physics but differ in goal, statistics, and
 consumer. (The framing is introduced in the Platform chapter, on DV vs MT; this is the
 working depth.)
 
-| Dimension | **Design Verification (DV)** | **Manufacturing Test (MT)** |
+| Dimension | **DV** | **MT** |
 |---|---|---|
 | Question | How good is the *design*? Where are its margins/edges? | Is *this unit* good enough — and fast? |
 | Output | Characterization data, margin maps, **the limits themselves** | A go/no-go verdict (+ a few captured parameters) |
@@ -10259,7 +10669,7 @@ working depth.)
 | Statistic | Distribution shape, design margin, $C_{pk}$ of the *design* | FPY, escape/false-fail rates, $C_{pk}/P_{pk}$ vs limits |
 
 **The build-phase vocabulary maps onto this.** **EVT** (Engineering Validation, ~20-50
-units, "does it meet functional requirements") and **DVT** (Design Verification, ~50-500
+units, "does it meet functional requirements") and **DVT** (DV, ~50-500
 units, "can it be *manufactured* to spec" — heavy characterization/margining) are DV
 work. **PVT** (Production Validation, ~300-2,000 units, "can the *line* hit its metrics")
 is where MT is proven out before mass production runs it.
@@ -10272,7 +10682,7 @@ is where MT is proven out before mass production runs it.
  manufactured with virtually zero yield loss." You produce shmoos in **DV**; you do
  **not** shmoo every unit on the line.
 - **Margining** is the continuous-parameter cousin: step an operating point (sampling
- time/voltage, a TX preset) until errors appear and record *how much margin* there was.
+ time/voltage, a Transmit (TX) preset) until errors appear and record *how much margin* there was.
  In DV you margin across corners to characterize; in MT you margin once at nominal and
  compare to a limit. PCIe **lane margining** (PCIe chapter) is exactly this.
 - **Go/no-go** is the MT default: run, compare each measured value to its limit, emit
@@ -10290,8 +10700,8 @@ This is the single most important design principle for your test code:
 
 Concretely:
 
-- A **BERT** measures `(errors, bits)` → a BER upper bound. **DV:** run it across
- voltage/temperature corners and TX presets and *plot the surface*. **MT:** run it once
+- A **BERT** measures `(errors, bits)` → a Bit Error Rate (BER) upper bound. **DV:** run it across
+ voltage/temperature corners and Transmit (TX) presets and *plot the surface*. **MT:** run it once
  to a confidence target (prove BER < 1e-12 at 95% and stop) and emit pass/fail. Same
  engine. (Confidence math: Math chapter, the BER/BERT confidence section.)
 - **Lane margining** yields a per-lane **timing margin in UI**. **DV:** sweep it across
@@ -10362,7 +10772,7 @@ capability section).
 ## Per-Unit Data, Traceability, and SPC
 
 Every unit a station tests must leave a record richer than PASS/FAIL. That record is the
-raw material for limit-setting, yield analysis, SPC, RMA root-cause, and the safety case.
+raw material for limit-setting, yield analysis, SPC, Return Merchandise Authorization (RMA) root-cause, and the safety case.
 
 ### Traceability and genealogy
 
@@ -10372,7 +10782,7 @@ row with **which unit, which station, which test-program version, when**. **Gene
 records which component lots and sub-assembly serials went into each finished unit, so
 when a bad lot or a failing test mode appears you can trace *every affected unit* quickly
 (top-down: "which units got lot X"; bottom-up: "what went into this failing unit"). For
-Zoox compute this is also a *quality* lever — it is how logging an NVMe drive's
+Zoox compute this is also a *quality* lever — it is how logging a NVMe drive's
 `power_on_hours` / `data_units_written` catches re-labeled or returned stock entering the
 line even when the unit otherwise passes (NVMe chapter). And it is a **safety-case
 requirement**: serial → genealogy → program version → measured results → disposition must
@@ -10422,7 +10832,7 @@ The **Western Electric rules** flag special-cause variation *before* it becomes 
 (Math chapter, Western Electric rules): 1 point beyond 3σ; 2 of 3 beyond 2σ (same side); 4 of 5 beyond 1σ
 (same side); 8 in a row on one side; 6 in a row trending. **Reading the yield chart:** a
 *sudden* drop says process change, equipment failure, or bad incoming material; a
-*gradual* decline says drift — tool calibration, fixture wear. The chart points; RCA
+*gradual* decline says drift — tool calibration, fixture wear. The chart points; Root Cause Analysis (RCA)
 finds the cause.
 
 ### Cross-site correlation with golden units
@@ -10448,9 +10858,9 @@ Math chapter, yield and cost-of-test.)
 
 ### Yield
 
-- **FPY (First Pass Yield)** — fraction passing the *first* time, no retest/rework. The
+- **FPY** — fraction passing the *first* time, no retest/rework. The
  primary KPI.
-- **RTY (Rolled Throughput Yield)** — product of FPY across all steps. Five steps each at
+- **RTY** — product of FPY across all steps. Five steps each at
  98% → `0.98^5 ~= 90%`. **This is why every added test step costs yield**, and why you
  do not add coverage casually.
 - **Pareto analysis** — bar chart of failure modes by frequency with a cumulative line.
@@ -10572,11 +10982,10 @@ failure
 The meta-skill is not memorizing flags; it is the *reflex* and the discipline of **arming
 counters before you measure** (clear → stress → read) so you count errors from *your*
 stress window, not from boot. The interface chapters supply the decode tables (which AER
-bit means which layer; which XID code means which GPU subsystem; which DIMM label a CE
-maps to). Many "digital" failures are really **power / signal-integrity** failures wearing
+bit means which layer; which XID code means which GPU subsystem; which Dual Inline Memory Module (DIMM) label a CE
+maps to). Many "digital" failures are really **power / SI** failures wearing
 a digital costume — the engineer who reaches for the scope *and* the AER decode together
 is the one who closes the hard intermittent bugs (Instruments / Power chapters).
-
 ### Structured RCA (yield drop / repeated failure)
 
 When the problem is a *population*, not one unit, use a structured method so you find the
@@ -10663,7 +11072,7 @@ it *and proved every interface still trains clean hot*." A thermal test that nev
 actually gets the part hot, or a soak with no functional monitor running during it, is a
 test that cannot catch the defect it exists for.
 
-**ESD discipline** belongs here too: a fixture without proper ESD grounding makes *you*
+**Electrostatic Discharge (ESD) discipline** belongs here too: a fixture without proper ESD grounding makes *you*
 the failure mechanism — a board can pass test with latent ESD damage and die in the field.
 Wrist-strap monitors, dissipative mats, controlled humidity, ESD-safe fixture contacts;
 verify the strap monitors work on every station (Power/Safety chapter).
@@ -10672,9 +11081,9 @@ verify the strap monitors work on every station (Power/Safety chapter).
 
 ## The CM Relationship: NPI to Mass-Production Ramp
 
-Contract manufacturers (EMS partners — Flex/Jabil-type) build at volume on units you may
+Contract Manufacturers (CM) (EMS partners — Flex/Jabil-type) build at volume on units you may
 never physically touch. Releasing a test program *to* a CM and supporting it remotely is a
-large part of the job, and it spans the whole product life cycle: **NPI → sustaining.**
+large part of the job, and it spans the whole product life cycle: **New Product Introduction (NPI) → sustaining.**
 
 ### NPI (New Product Introduction)
 
@@ -10689,7 +11098,7 @@ up correctly.
 
 Ongoing test maintenance, yield improvement, test-time reduction, handling field returns,
 and updating tests for board revisions. The recurring ritual is the **yield meeting**:
-review the CM's yield data, Pareto the failures, trend-analyze, and assign corrective
+review the CM's (CM) yield data, Pareto the failures, trend-analyze, and assign corrective
 actions. This is where the captured per-unit data and the Pareto/RCA discipline earn
 their keep against a partner you cannot stand next to.
 
@@ -10713,7 +11122,7 @@ board in another country from the result row.
 
 ### MES / OEE — the system the line runs on
 
-The CM's floor runs on a **MES (Manufacturing Execution System)** that owns work-order
+The CM's (CM) floor runs on a **MES (Manufacturing Execution System)** that owns work-order
 release, electronic work instructions, serialization, genealogy/traceability,
 quality/NCR handling, and **OEE** (Overall Equipment Effectiveness = Availability ×
 Performance × Quality). Your station typically **checks in/out** with MES (is this serial
@@ -10839,7 +11248,7 @@ The deep how-to for each (probing, bandwidth, eye reading, thermal-forcer setup)
 the **Instruments / Power** chapter; the point here is the *mapping* — a measurement
 implies an instrument, and a station's bill of materials is just that mapping made
 physical. A recurring failure-analysis move is reaching for the **scope + the
-protocol decode together**: many "digital" failures are a power or signal-integrity
+protocol decode together**: many "digital" failures are a power or SI
 problem wearing a digital costume, and you only see it when the rail trace and the error
 counter are on the same screen.
 
@@ -10850,7 +11259,7 @@ counter are on the same screen.
 A working test engineer does not write everything from scratch; you assemble a *stack* of
 tools, and a large part of the job is knowing which layer each tool belongs to and where
 the boundaries are. The mistakes here are category errors — running deep stats in the
-wrong tool, or letting a CI server think it is a production sequencer. The layers, top to
+wrong tool, or letting a Continuous Integration (CI) server think it is a production sequencer. The layers, top to
 bottom:
 
 ```text
@@ -10886,7 +11295,7 @@ UI. You either buy it or build it.
  station), operator interfaces, and report/result generation (HTML/XML/ATML/ASCII, or a
  database) for free. It calls test code written in Python, C/C++, .NET, or LabVIEW — so
  "TestStand vs Python" is a false binary; the common pattern is **TestStand sequencing
- with Python step modules**. It is heavily used on automotive EOL lines (e.g. ECU EOL
+ with Python step modules**. It is heavily used on automotive End-of-Line (EOL) lines (e.g. ECU End-of-Line
  testers commonly pair LabVIEW/TestStand for sequencing and reporting). The cost is
  licensing and a degree of lock-in.
 - **A custom Python sequencer** trades that out-of-the-box machinery for full control and
@@ -10949,12 +11358,69 @@ read the warehouse; they are **not** in the per-unit test path.
  Python/`pandas`+`statsmodels` notebook) answers "*why*, with statistical rigor." They are
  complementary: monitoring is continuous and shallow, JMP is occasional and deep.
 
+### Version control for test programs
+
+A test program is not a script you run once — it is a **released, versioned artifact** that deploys to multiple identical stations, at Zoox and at contract manufacturers you may never physically visit, and decides whether a safety-critical unit ships. Three forces make version control stricter here than in ordinary application development:
+
+1. **Traceability (a safety-case requirement).** Every result row a station writes must record *which program version* produced it. When a field issue or a bad lot surfaces, you trace serial → genealogy → test-program version → measured results → disposition. If "the test version" is "whatever was on the laptop that day," that chain is broken and the safety argument collapses.
+2. **Reproducibility across sites.** Many identical stations run the same version and report to the same dashboard. A yield difference between Zoox and a CM must be a *fixture/calibration* difference, not a *code* difference — which you can only assert if you can prove both ran the same tagged commit.
+3. **Deployment and rollback are first-class.** "Push v2.4.1 to all stations, then revert to v2.4.0 if FPY drops" must be a one-command operation. A clean tag-and-release process is what makes that safe.
+
+**Daily workflow.** Review before you stage — `git add -p` forces a hunk-by-hunk pass that stops a stray debug print or a hardcoded station IP from shipping.
+
+```
+git status # working-tree state: staged / unstaged / untracked
+git diff / git diff --staged
+git add -p # interactively stage hunks, REVIEWING each change
+git commit -m "Raise NVMe fw-activate reset wait to 10s; Micron 7450 needs ~8s to re-enumerate"
+git push origin feature/gmsl-timeout
+```
+
+Write commit messages a CM engineer can use at 2 a.m. during a line-down: *what changed and why the value is what it is.* "Fix bug" is useless; the message above is a debugging document.
+
+**Branching and review discipline** for a manufacturing-test repo:
+
+| Element | Practice | Why |
+|---|---|---|
+| **main** | always deployable to production | a station can be re-provisioned from `main` to a known-good state at any time |
+| **feature branches** | one per driver, board revision, or test change | isolates in-progress work from the deployable tip |
+| **pull requests** | review before merge | a second set of eyes on a change that can scrap good units or pass bad ones |
+| **CI** | `pytest` + lint on every PR | a red gate blocks merge (see the next section) |
+| **golden-unit gate** | re-run known-good + known-bad references before release | catches a too-tight (false-fail) or too-loose (escape) change *before* the line, not on it |
+| **tags** | mark each version deployed to the line | the traceability anchor |
+
+**Config over code.** Limits, bus/topology maps, station IDs, and CM-specific fixture settings live in versioned *config*, not in the Python. A retarget to a new CM or board revision is then a config change, not a code release that re-qualifies the whole program.
+
+**Tags turn a commit into a release.** Prefer annotated tags (they carry tagger, date, and message, and are what you sign):
+
+```
+git tag -a v2.4.0 -m "Release 2.4.0: add MAX96712 quad-cam config, hot-margin path"
+git push origin v2.4.0
+git describe --tags # "v2.4.0-3-gA1B2C3D" -- embed in every result row so even an
+ # unreleased dev build is uniquely identifiable
+```
+
+Semantic versioning maps cleanly onto test programs: **MAJOR** = incompatible change (new limit schema, dropped test, new result format the dashboard must understand), **MINOR** = added coverage or board config (backward compatible), **PATCH** = bug fix or limit re-tune within the same schema. The shipped artifact is more than code: versioned code + config + runbook + fixture spec + acceptance criteria + golden-unit correlation data + triage guide, with the git tag as the spine that proves what was shipped.
+
+**Recovery and forensics:**
+
+```
+git log --oneline --graph # branch/merge history at a glance
+git blame limits.yaml # who set this limit, when, in which commit
+git revert <hash> # NEW commit that undoes <hash> -- SAFE on shared branches
+ # (does not rewrite history); how you roll back a bad release
+git bisect start # binary-search the commit that introduced a regression
+```
+
+**Rule of thumb:** never `reset --hard` or force-push a branch a station or CM might be pulling from — use `revert` for shared history. Rewriting history is fine only on a private feature branch you have not shared.
+
+---
+
 ### CI for the test *software* — a separate lifecycle
 
-This is the category error to avoid, so it gets its own callout. **CI (Continuous
-Integration — GitLab CI, GitHub Actions, Jenkins)** belongs to the *software development
+This is the category error to avoid, so it gets its own callout. **Continuous Integration (CI — GitLab CI, GitHub Actions, Jenkins)** belongs to the *software development
 lifecycle of the test code*, **not** to per-unit production execution. The test program is
-a released artifact; CI is what builds, unit-tests, lints, packages, and versions
+a released artifact; Continuous Integration is what builds, unit-tests, lints, packages, and versions
 that artifact when you push a change — and ideally runs it against a **golden unit** on a
 hardware-in-the-loop runner as a release gate before it is allowed to ship to a
 station. What CI does **not** do is run on every DUT on the line: the **test executive** does that, takt-bound, on the factory floor. Jenkins building your test program
@@ -11025,7 +11491,7 @@ station ops, one Grafana** stitching them into role-specific dashboards.
 A useful MFG-test Grafana deployment is usually a few focused dashboards, not one giant
 wall. The panels that earn their place:
 
-- **Live fleet & per-station yield (FPY).** Today's first-pass yield overall and broken
+- **Live fleet & per-station FPY.** Today's first-pass yield overall and broken
  out by station and by product, as stat tiles + a trend line. This is the number the line
  is run on. Example (TimescaleDB SQL, last 24 h FPY by station):
 
@@ -11118,10 +11584,10 @@ as **unverified**; what is public is the shape, not the stack:
  facility in Hayward, California (publicly reported 2025), described as a serial-production
  line designed to scale toward ~10,000 vehicles/year. Public descriptions say the site
  houses robotaxi engineering, hardware/software integration, component storage, and
- **end-of-line testing** before deployment — i.e. the vehicle/EOL phase is done by
+ **end-of-line testing** before deployment — i.e. the vehicle/End-of-Line (EOL) phase is done by
  Zoox, on-site, which is consistent with the JD's "test solutions for manufacturing the
  compute platform."
-- **Vehicle-level EOL is physical and sensor-centric.** Reporting confirms a sensor
+- **Vehicle-level End-of-Line is physical and sensor-centric.** Reporting confirms a sensor
  **calibration bay** (aligning all sensors to one world model) and an **outdoor test
  track** (drive-quality / build verification). Beyond those two confirmed steps, *typical*
  automotive vehicle-EOL also includes optical/lighting checks and a water-ingress (rain)
@@ -11178,7 +11644,7 @@ Strip the chapter to its load-bearing sentences:
  correlated, at Zoox and at the CM across the NPI→sustaining life cycle** (, ).
 - **Know the stack and its boundaries:** a sequencer runs the test, the MES routes and
  traces the unit, the warehouse keeps every parameter, Grafana shows humans the trend,
- and CI versions the test *software* — never the units (-). Most failures of a test
+ and Continuous Integration (CI) versions the test *software* — never the units (-). Most failures of a test
  *organization* are category errors between these layers.
 
 That is the JD said back in one paragraph — and every later chapter is the depth behind
@@ -11190,11 +11656,11 @@ one of these sentences.
 This is the working math of the test floor. Not interview trivia — the formulas you
 reach for when you set a limit, size a sample, pick a confidence target, or defend a
 yield/escape number in a quality review. Every section ties a method to a decision:
-*where do I put the spec line, how many units do I pull, how long do I run the BER
+*where do I put the spec line, how many units do I pull, how long do I run the Bit Error Rate (BER)
 soak, when do I stop the line.*
 
 The companion **PCIe chapter** carries the link-test detail; this chapter carries the
-statistics that turn a BERT run, a Cpk study, or an SPC chart into a pass/fail call you
+statistics that turn a Bit Error Rate Test (BERT) run, a Cpk study, or an Statistical Process Control (SPC) chart into a pass/fail call you
 can sign your name to. The opening sections — probability, distributions, and the sigma
 bridge — fix the probability and distribution vocabulary once; read them first. The
 middle sections (geometry/sensor FOV, logs and dB, the GT/s → GB/s bandwidth math,
@@ -11221,7 +11687,7 @@ statement dressed in engineering units. Get the four rules right and the rest fo
 
 **Addition (OR).** General: $P(A \cup B) = P(A) + P(B) - P(A \cap B)$. Drop the overlap
 term **only** when $A$ and $B$ are mutually exclusive.
-*P(GPU fails OR NVMe fails)* subtracts P(both) so you do not double-count the boards
+*P(GPU fails OR Non-Volatile Memory Express (NVMe) fails)* subtracts P(both) so you do not double-count the boards
 that fail both.
 
 **Multiplication (AND).** General: $P(A \cap B) = P(A)\,P(B \mid A)$. Drop the
@@ -11282,7 +11748,7 @@ containment.
 - **Permutations (order matters):** $P(n,k) = \dfrac{n!}{(n-k)!}$. *Assign 3 priority tests across 8 stations:* $8 \cdot 7 \cdot 6 = 336$.
 - **Combinations (order does not):** $\binom{n}{k} = \dfrac{n!}{k!\,(n-k)!}$. *Pull 3 boards from 10 for teardown:* $\binom{10}{3} = 120$.
 - **Identity:** $\binom{n}{k} = \binom{n}{n-k}$. **Handy:** $\binom{n}{2} = \tfrac{n(n-1)}{2}$; $\binom{5}{2} = 10$, $\binom{6}{3} = 20$.
-- **Multiplication principle:** 4 GPU types $\times$ 3 NVMe $\times$ 2 NIC $=24$ configs.
+- **Multiplication principle:** 4 GPU types $\times$ 3 NVMe $\times$ 2 Network Interface Card (NIC) $=24$ configs.
 
 The binomial coefficient is the $\binom{n}{k}$ that shows up in the binomial
 distribution and in every "how many of these $n$ boards fail" calculation below.
@@ -11344,7 +11810,7 @@ $$P(X = k) = \frac{\lambda^{k} e^{-\lambda}}{k!}, \qquad
 \mathbb{E}[X] = \operatorname{Var}(X) = \lambda.$$
 
 Poisson is the most important distribution for a compute-test engineer because **bit
-errors are Poisson** (*BER and Confidence*) and **defect counts per board are Poisson** ($c$-charts, *Statistical Process Control*).
+errors are Poisson** (*BER and Confidence*) and **defect counts per board are Poisson** ($c$-charts, *SPC*).
 Use it whenever events are rare, independent, and arrive at a roughly constant rate.
 
 *Station averages $\lambda = 2$ failures/shift. $P(0)$ ?* $e^{-2} = 0.135$. *$P(X \ge 5)$ ?*
@@ -11615,7 +12081,7 @@ $$\text{GB/s per lane}=\frac{\text{GT/s}\times\text{coding efficiency}}{8\ \text
 | 6 | 64.0 | PAM4 + FEC | 7.563 | 121 |
 
 *Worked: PCIe Gen4 x4 NVMe usable rate.* $16\times(128/130)/8=1.969$ GB/s per lane
-$\times4=7.88$ GB/s. (Gen6 switches to PAM4 — 2 bits/symbol — plus FLIT-mode FEC, so a
+$\times4=7.88$ GB/s. (Gen6 switches to Pulse Amplitude Modulation 4-level (PAM4) — 2 bits/symbol — plus Fixed-size Link Packet (FLIT)-mode Forward Error Correction (FEC), so a
 "transfer" no longer equals one bit; the table value already accounts for the encoding.
 This is also why Gen6 BER acceptance in *BER and Confidence* tests the *post-FEC* error count.)
 
@@ -11634,7 +12100,7 @@ fixing a noisy gauge (the *Gauge R&R* section) rather than averaging around it.
 $$f=a\pm b:\quad \sigma_f=\sqrt{\sigma_a^2+\sigma_b^2}\ \ (\text{add in quadrature}),$$
 $$f=a\cdot b\ \text{or}\ a/b:\quad \frac{\sigma_f}{f}=\sqrt{\left(\tfrac{\sigma_a}{a}\right)^2+\left(\tfrac{\sigma_b}{b}\right)^2}\ \ (\text{relative, in quadrature}).$$
 *$P=VI$, $V=48.0\pm0.2$, $I=10.0\pm0.1$, $P=480$ W:*
-$\tfrac{\sigma_P}{P}=\sqrt{(0.2/48)^2+(0.1/10)^2}=\sqrt{1.74\times10^{-5}+1.0\times10^{-4}}=0.0108$,
+$\tfrac{\sigma_P}{P}=\sqrt{(0.2/48)^2+(0.1/10)^2}=0.0108$,
 so $\sigma_P=480\times0.0108=\pm5.2$ W. This is the same root-sum-square that governs
 tolerance stack-ups and the variance addition in *Expected value and variance*.
 
@@ -11911,7 +12377,7 @@ moved the escape rate ~184×. The leverage is brutal because the defect rate liv
 *tail* of the normal: out there the curve is dropping near-exponentially, so a shift
 measured in fractions of a sigma multiplies the escape count by orders of magnitude. This
 is why thermal limits get guardbanded and why a slow $\bar X$ drift (caught by the SPC
-charts in *Statistical Process Control*) is worth chasing long before any single board
+charts in *SPC*) is worth chasing long before any single board
 fails.
 
 **Two-sided, off-center.** Spec $45$–$55$, $\mu = 50$, $\sigma = 2$:
@@ -11934,7 +12400,7 @@ uncertainty* so you do not pass parts that are actually out, or scrap parts that
 actually in.
 
 - **Spec limits** come from the customer / design (the LSL/USL).
-- **Control limits** come from the *process* and go on the SPC chart — never put spec limits on a control chart (*Statistical Process Control*).
+- **Control limits** come from the *process* and go on the SPC chart — never put spec limits on a control chart (*SPC*).
 - **Test (guardband) limits** are the lines your tester actually uses, pulled *inside* the spec by a **guardband** $g$ to protect against gauge error:
 $$\text{upper test limit} = \text{USL} - g, \qquad \text{lower test limit} = \text{LSL} + g.$$
 
@@ -12106,10 +12572,10 @@ $\%\text{GR\&R} = 25\%$ (marginal). $\sigma_\text{part} = \sqrt{1.00^2 - 0.25^2}
 $\text{ndc} = 1.41(0.968/0.25) = 5.46 \to 5$ — just acceptable. The lesson connects
 straight to *Setting limits and guardbands*: that 0.25 of gauge sigma is the uncertainty your guardband must cover.
 
-### Bland-Altman and tester-to-tester / CM correlation
+### Bland-Altman and tester-to-tester / Contract Manufacturer correlation
 
 GR&R answers "is this one station's measurement system capable?" The next question is
-"do two stations — or my station and the contract manufacturer's (CM) — *agree*?" When
+"do two stations — or my station and the Contract Manufacturer (CM)'s (CM) — *agree*?" When
 the same boards run on tester A and tester B (or in-house vs CM), you must prove the two
 read the same value before you trust a number that crosses sites. A naive correlation
 coefficient $r$ is the wrong tool: two testers can have $r=0.99$ yet a constant 0.3 A
@@ -12214,8 +12680,8 @@ sampling (*Sampling and AQL*) because the same defect fractions drive all three.
 *Worked.* Two independent steps fail 3% and 5%: $\text{RTY}=0.97\times0.95=0.9215$
 (92.15%). Five steps each at 99%: $\text{RTY}=0.99^{5}=0.951$ — a line that is "99% at
 every step" still loses ~5% end-to-end. Ten steps at 99%: $0.99^{10}=0.904$. Step count is
-a yield tax. *On a Zoox compute board* the in-line gates (PCIe link, GPU ECC scrub,
-NVMe/DDR soak, GMSL camera-lock) each carry an FPY; their product is what you start-quantity
+a yield tax. *On a Zoox compute board* the in-line gates (PCIe link, GPU Error-Correcting Code (ECC) scrub,
+NVMe/Double Data Rate (DDR) soak, Gigabit Multimedia Serial Link (GMSL) camera-lock) each carry an FPY; their product is what you start-quantity
 against to hit a ship target.
 
 ### DPMO and DPPM — defects per million
@@ -12315,7 +12781,7 @@ hazard, $\text{AFR} = 1 - e^{-\lambda \cdot 8760} \approx \lambda \cdot 8760$ (8
 and the expected returns from a fleet of $N$ continuously-running boards over a year is
 just $N \cdot \lambda \cdot 8760$. *A board summing to $50$ FIT* ($\lambda = 5\times10^{-8}$):
 $\text{AFR} \approx 5\times10^{-8} \times 8760 = 4.4\times10^{-4}$, i.e. ~0.044%/yr, or
-~4.4 returns per 10,000 boards per year — the number you size the RMA pipeline against. The
+~4.4 returns per 10,000 boards per year — the number you size the Return Merchandise Authorization (RMA) pipeline against. The
 inverse direction sets a *requirement*: "no more than 100 returns/yr across a 50,000-board
 fleet" is $\lambda \le 100/(50{,}000 \times 8760) = 2.3\times10^{-7}/$h, i.e. a **board FIT
 budget of ~228** that you then allocate down to components.
@@ -12365,7 +12831,7 @@ is the one you will quote most.)
 > *mechanism's* published $E_a$ (electromigration ~0.7 eV, oxide/dielectric breakdown
 > ~0.3–0.7 eV, some ionic-contamination mechanisms ~1.0 eV), and when a failure mode is
 > unknown, use a **conservative low** $E_a$ — guessing high inflates your demonstrated life
-> and is exactly how an under-screened part reaches a robotaxi. An NVMe or DDR soak gated
+> and is exactly how an under-screened part reaches a robotaxi. A NVMe or DDR soak gated
 > on Arrhenius is only as trustworthy as the $E_a$ behind it.
 
 ---
@@ -12521,9 +12987,9 @@ different direction:
  power-supply client, `equipment_rpc` JSON-over-TCP, the heartbeat HTTP POST, and the
  FastAPI results dashboard are all ordinary network programs. When one "hangs" or
  reports "Disconnected," you debug it as a network problem.
-2. **You test NICs on compute boards as a manufacturing step.** Enumerate the card,
+2. **You test Network Interface Cards (NICs) on compute boards as a manufacturing step.** Enumerate the card,
  confirm link/speed/duplex, run a self-test, push traffic to a partner with `iperf3`,
- and gate on error counters. A NIC that links but quietly drops 0.1% of frames is a
+ and gate on error counters. A Network Interface Card (NIC) that links but quietly drops 0.1% of frames is a
  reject — catch it on the line, not in the field.
 3. **The Zoox compute platform uses automotive Ethernet between modules** —
  single-pair 100/1000BASE-T1 — which behaves differently enough from office RJ45 that
@@ -12543,7 +13009,7 @@ broken?" and starting from the bottom.
 
 ### Two Models, One Reality
 
-The OSI 7-layer model is the teaching model and the shared vocabulary ("that's a Layer 2
+The Open Systems Interconnection (OSI) 7-layer model is the teaching model and the shared vocabulary ("that's a Layer 2
 problem"). The TCP/IP 4-layer model is what actually runs on every machine you touch.
 Know both; **think in TCP/IP, speak in OSI layer numbers**.
 
@@ -12554,7 +13020,7 @@ Know both; **think in TCP/IP, speak in OSI layer numbers**.
 | Internet | 3 (Network) | IP, ICMP, ARP* | Logical addressing and routing between networks | IP address |
 | Link | 1-2 (Data Link, Physical) | Ethernet, Wi-Fi, PPP, 1000BASE-T1 | Framing + physical transmission on the local link | MAC address |
 
-\* ARP straddles the boundary — it maps L3 IP to L2 MAC and is often called "L2.5."
+\* Address Resolution Protocol (ARP) straddles the boundary — it maps L3 IP to L2 MAC and is often called "L2.5."
 
 A quick mnemonic for OSI bottom-to-top: **P**lease **D**o **N**ot **T**hrow **S**ausage
 **P**izza **A**way (Physical, Data Link, Network, Transport, Session, Presentation,
@@ -12564,7 +13030,7 @@ Application).
 
 - **L1 Physical** — voltages, light, modulation, connectors, cable. "Is there a signal
  on the wire?" Bits only. (PAM3 on 1000BASE-T1 lives here.)
-- **L2 Data Link** — frames with MAC addresses; error detection via CRC/FCS; media
+- **L2 Data Link** — frames with MAC addresses; error detection via CRC/Frame Check Sequence (FCS); media
  access (who talks when). Switches operate here. A CRC error or a duplex mismatch is L2.
 - **L3 Network** — IP addressing, subnets, routing between networks. Routers live here.
  ICMP (ping) is L3. "Wrong subnet / no route to host" is L3.
@@ -12605,7 +13071,7 @@ Precise terminology that comes up in packet captures:
 
 A standard Ethernet frame: 6-byte dst MAC, 6-byte src MAC, 2-byte EtherType (0x0800 =
 IPv4, 0x0806 = ARP, 0x86DD = IPv6), 46–1500-byte payload, 4-byte FCS (CRC-32). The
-**MTU** (Maximum Transmission Unit) is the largest L3 payload — **1500 bytes** by
+**Maximum Transmission Unit (MTU)** is the largest L3 payload — **1500 bytes** by
 default on Ethernet. **Jumbo frames** raise this to ~9000 bytes; they reduce per-packet
 overhead and CPU load and are common on storage/10GbE test links — but **every device in
 the path (NIC, switch, partner) must agree**, or you get silent black-holing of large
@@ -12640,8 +13106,7 @@ interface, while the dst IP is still the original target.
 
 ### ARP — Mapping IP to MAC
 
-To send an IP packet on the local link, the OS needs the destination's MAC. ARP (Address
-Resolution Protocol, RFC 826) resolves it:
+To send an IP packet on the local link, the OS needs the destination's MAC. ARP resolves it:
 
 ```text
 Host A wants to send to 192.168.1.50 (same subnet) but only knows its IP.
@@ -12660,7 +13125,7 @@ ip neigh flush dev eth0 # clear stale entries (useful after re-cabling or IP cha
 ```
 
 ARP entry states: **REACHABLE** (recently confirmed), **STALE** (cached, unverified),
-**FAILED** (no answer — host down, wrong subnet, or wrong VLAN), **INCOMPLETE**
+**FAILED** (no answer — host down, wrong subnet, or wrong Virtual Local Area Network (VLAN)), **INCOMPLETE**
 (resolution in progress). A neighbor stuck `INCOMPLETE` or `FAILED` for an IP you expect
 to reach is an L2/L3 problem: wrong VLAN, wrong subnet, dead link, or the device is off.
 
@@ -12670,7 +13135,7 @@ floor when a station is re-imaged and the old MAC lingers in a switch's forwardi
 
 ### VLANs and Factory Network Segmentation
 
-A **VLAN** (Virtual LAN, IEEE 802.1Q) logically partitions one physical switch into
+A **VLAN** (IEEE 802.1Q) logically partitions one physical switch into
 multiple isolated broadcast domains. Frames carry a 4-byte 802.1Q **tag** containing a
 12-bit **VLAN ID** (1–4094) and a 3-bit PCP priority field. Devices in different VLANs
 cannot communicate at L2 — they must pass through a **router or L3 switch**
@@ -12728,7 +13193,7 @@ similar), or a REST API. The operations you'll actually perform:
  `show mac address-table` (useful when a DUT is unresponsive and you want to confirm it
  is even communicating at L2).
 - Enable/disable spanning-tree PortFast on test ports that connect directly to end
- devices (avoids the 30-second STP listening/learning delay that makes newly connected
+ devices (avoids the 30-second Spanning Tree Protocol (STP) listening/learning delay that makes newly connected
  DUTs appear dead on boot).
 
 ---
@@ -12778,7 +13243,7 @@ reserved — both addresses are usable. A `/32` is a single-host route.
 - `192.168.0.0/16` — 192.168.0.0 through 192.168.255.255
 
 Also: `127.0.0.0/8` loopback (`127.0.0.1` = localhost); `169.254.0.0/16` link-local /
-APIPA — an interface that requested DHCP and got no answer self-assigns here. Seeing a
+APIPA — an interface that requested Dynamic Host Configuration Protocol (DHCP) and got no answer self-assigns here. Seeing a
 `169.254.x.x` address is a dead giveaway that **DHCP failed**.
 
 ### The Fast Method (Block Size / "Magic Number")
@@ -12898,7 +13363,7 @@ written as eight groups of four hex digits, e.g.,
 collapse one run of all-zero groups to `::` → `2001:db8::ff00:42:8329`. `::1` is
 loopback (= IPv4 `127.0.0.1`); `fe80::/10` is link-local (every interface has one, used
 by neighbor discovery). There is **no ARP** in IPv6 — it uses **NDP** (Neighbor
-Discovery Protocol, ICMPv6) instead. IPv6 link-local addresses are assigned
+Discovery Protocol, Internet Control Message Protocol (ICMP) v6) instead. IPv6 link-local addresses are assigned
 automatically, so you may see `fe80::` addresses even on networks with no IPv6
 infrastructure — they are normal.
 
@@ -13048,7 +13513,7 @@ switch port, duplex mismatch) rather than the NIC itself.
  instrument, submitting a test result, an HTTP API, file transfer. Almost all
  station-to-service traffic is TCP.
 - **UDP** when timeliness beats completeness or you need to *see* loss rather than have
- TCP hide it: telemetry, time sync (gPTP/PTP), streaming sensor data, CAN-over-IP, and
+ TCP hide it: telemetry, time sync (gPTP/PTP), streaming sensor data, Controller Area Network (CAN)-over-IP, and
  `iperf3 -u` to measure loss/jitter on a link.
 
 ---
@@ -13198,7 +13663,7 @@ When `sendall()` is called, the kernel TCP stack:
  segments rather than the CPU), **GSO** (Generic Segmentation Offload, SW equivalent),
  **GRO** (Generic Receive Offload, coalesces incoming segments).
 4. Passes through the Netfilter/iptables/nftables hooks for firewall rules.
-5. Hands the packet to the NIC driver ring buffer; the NIC DMA-fetches and transmits.
+5. Hands the packet to the NIC driver ring buffer; the NIC Direct Memory Access (DMA)-fetches and transmits.
 
 On receive, the path reverses: NIC DMA into ring buffer → driver interrupt/NAPI poll →
 IP reassembly → TCP reorder buffer → application `recv()`. Tunable receive buffers
@@ -13222,7 +13687,9 @@ ip neigh show # ARP / neighbor table (IP <-> MAC)
 ip -s link show eth0 # interface counters: RX/TX packets, errors, dropped
 ip -br addr # brief one-line-per-interface summary
 ip -d link show eth0.100 # detailed: shows VLAN ID and protocol
+```
 
+```bash
 # Temporary configuration (lost on reboot):
 ip link set eth0 up
 ip addr add 192.168.10.20/24 dev eth0
@@ -13694,8 +14161,8 @@ nanoseconds.
 #### linuxptp — Running PTP on Linux
 
 **`ptp4l`** runs the PTP state machine (Best Master Clock Algorithm selects the
-grandmaster, then ordinary/boundary clock slaves synchronize to it). **`phc2sys`**
-synchronizes the system clock (CLOCK_REALTIME) to the NIC's hardware clock (PHC,
+grandmaster, then ordinary or boundary clock slaves synchronize to it). **`phc2sys`**
+synchronizes the system clock (`CLOCK_REALTIME`) to the NIC's hardware clock (PHC,
 PTP Hardware Clock).
 
 ```bash
@@ -13880,7 +14347,7 @@ Design points that prevent false results:
 - **Master/slave role**: captured from `ethtool` `master-slave cfg/status:` line and
  surfaced in the test summary, because role misconfiguration is the top "no link" cause
  on automotive PHYs.
-- **Cable test is best-effort**: PHY/driver TDR support varies. An unsupported result is
+- **Cable test is best-effort**: PHY/driver Time-Domain Reflectometry (TDR) support varies. An unsupported result is
  reported as `skipped`, not `fault` — do not false-fail a good board.
 - **Delta counters**: snapshot `ethtool -S` before and after `iperf3`, diff the values.
  A NIC that links and passes self-test but accumulates CRC errors *under load* is the
@@ -13957,7 +14424,7 @@ Key differences from consumer BASE-T Ethernet:
  share the wire; the PHY cancels its own echo. Fewer wires means lighter, cheaper
  vehicle harness.
 - **Line coding.** 1000BASE-T1 uses **PAM3** (three voltage levels: -1, 0, +1);
- 802.3ch multi-Gig uses **PAM4** (four levels). Eye diagram and signal integrity analysis
+ 802.3ch multi-Gig uses **Pulse Amplitude Modulation 4-level (PAM4)** (four levels). Eye diagram and Signal Integrity (SI) analysis
  concepts from SerDes carry over.
 - The trailing `1` in `*BASE-T1` is the tell: single pair, automotive.
 
@@ -14005,7 +14472,7 @@ ethtool --cable-test eth0 # pass/fail per pair
 ethtool --cable-test-tdr eth0 # TDR: fault type + distance to fault (meters)
 ```
 
-TDR (Time-Domain Reflectometry) sends a pulse and times the reflection. Result codes:
+TDR sends a pulse and times the reflection. Result codes:
 
 | Code | Meaning |
 |---|---|
@@ -14280,9 +14747,9 @@ that same technology.
 
 
 The most common pattern in compute-board debugging is this: what looks like a PCIe
-enumeration failure, a SerDes lock problem, or an ECC storm turns out to be a power
-problem in disguise. A 0.8V core rail that sequenced 2 ms late, a 1.1V DDR rail
-drooping 6% under load, a switching regulator coupling 40 mVpp into an analog PLL
+enumeration failure, a SerDes lock problem, or an Error-Correcting Code (ECC) storm turns out to be a power
+problem in disguise. A 0.8V core rail that sequenced 2 ms late, a 1.1V Double Data Rate (DDR) rail
+drooping 6% under load, a switching regulator coupling 40 mVpp into an analog Phase-Locked Loop (PLL)
 supply — all of these manifest first as link errors and GPU faults. They do not look
 like power problems because the digital subsystem is the part that screams. This
 chapter builds the instincts to reach for the right tool — scope, DMM, IPMI, `dmesg`,
@@ -14354,19 +14821,19 @@ outputs, the sequencing logic, and fault monitoring. Common in lower-power SoCs
 (automotive-grade Maxim/Analog Devices, TI, Renesas PMICs). The PMIC receives an
 enable from a supervisor or CPLD and raises its outputs in a programmed order per
 internal sequencing registers. In manufacturing test, the PMIC's fault status registers
-are readable over I2C or PMBus — they tell you *which* rail tripped and *why* (OV/UV/OC
+are readable over I2C or Power Management Bus (PMBus) — they tell you *which* rail tripped and *why* (OV/UV/OC
 event) rather than just that PWRGOOD went low.
 
-**VRM / multi-phase buck (Voltage Regulator Module):** For high-current rails (GPU/SoC
+**VRM / multi-phase buck (Voltage Regulator Module):** For high-current rails (GPU/System-on-Chip (SoC)
 core can demand 50-200A), the board uses a multi-phase synchronous buck VRM. Each
 phase delivers a fraction of the total current and interleaves switching at an offset
 phase angle, which multiplies the effective ripple frequency and reduces per-phase
-inductor size. The output LC filter plus the PDN (power delivery network: planes,
+inductor size. The output LC filter plus the Power Delivery Network (PDN) (power delivery network: planes,
 vias, package inductance, die capacitance) determines load-transient response and
 ripple at the load.
 
 **Point-of-load regulators (POLs):** Small LDOs or single-phase bucks close to a
-sensitive load (SerDes PLL, DRAM VTT, FPGA analog supply). They often have tighter
+sensitive load (SerDes PLL, Dynamic Random-Access Memory (DRAM) VTT, Field-Programmable Gate Array (FPGA) analog supply). They often have tighter
 ripple specs than the main rails and are the ones where a bad probe tip with a long
 ground clip will fool you into thinking there is more noise than there actually is.
 
@@ -14383,7 +14850,7 @@ Multi-rail devices require rails to power on and off in a **specified order with
 specified inter-rail delays**. The sequencing diagram in the SoC/GPU/DDR datasheet is
 not a suggestion. Violating it causes:
 
-- **Latch-up:** I/O rail present before core → the I/O ESD protection diodes forward-bias
+- **Latch-up:** I/O rail present before core → the I/O Electrostatic Discharge (ESD) protection diodes forward-bias
  into the unpowered core supply, injecting current into the substrate and N-wells and
  triggering the parasitic PNPN thyristor structure inherent in CMOS processes. Once
  the thyristor fires, it latches into a low-impedance short between VDD and GND that
@@ -14635,7 +15102,7 @@ def verify_power_rails(expected_rails: dict) -> dict:
 
 Capture the measured value, not just the pass/fail verdict. A rail that sits at 0.780V
 today and 0.776V next week is on a trajectory, and you only see it if you kept the
-numbers. The measured values feed the SPC charts and the data-driven-limit review that
+numbers. The measured values feed the Statistical Process Control (SPC) charts and the data-driven-limit review that
 is part of the ongoing safety argument.
 
 ---
@@ -14759,10 +15226,10 @@ or by changing the feedback-resistor DAC on a supported regulator. A shmoo sweep
 voltage and (where possible) temperature simultaneously:
 
 - **Pass/fail shmoo:** for each (V, T) point, run the critical test (PCIe link train,
- DDR ECC test, GMSL lock). Mark pass or fail. The boundary of the passing region is
+ DDR ECC test, Gigabit Multimedia Serial Link (GMSL) lock). Mark pass or fail. The boundary of the passing region is
  the functional operating region — compare it to the spec window.
 - **Margin shmoo:** instead of pass/fail, capture a margin metric (PCIe eye height,
- BERT error count, AER correctable-error count) as a function of V and T. The margin
+ Bit Error Rate Test (BERT) error count, Advanced Error Reporting (AER) correctable-error count) as a function of V and T. The margin
  degrades continuously with voltage and temperature; the test limit is set where the
  margin has headroom to the spec boundary.
 
@@ -14791,14 +15258,14 @@ conditions:
  cycles.
 - **Ripple injection:** a stimulus injection network adds a known-amplitude AC component
  to the rail feedback path to characterize loop bandwidth. This is advanced bench
- characterization, not production test, but the DV results set the bounds on what
+ characterization, not production test, but the Design Verification (DV) results set the bounds on what
  the production ripple test must catch.
 
 ---
 
 ## Board Bring-up — Structured and Gated
 
-The goal of bring-up is to take a bare PCBA from powered-off on the bench to
+The goal of bring-up is to take a bare Printed Circuit Board Assembly (PCBA) from powered-off on the bench to
 fully-enumerated and characterized, while never letting a defect destroy the board.
 The method is cheapest-safest-first, gated: you do not move to the next phase until
 the current phase passes cleanly.
@@ -14807,7 +15274,7 @@ the current phase passes cleanly.
 
 Have the **schematic, board layout, BOM, power-sequencing diagram, and all connector
 pinouts** open before touching the board. Know the expected device list: which PCIe
-endpoints at which root ports, bifurcation settings, retimers, NIC/NVMe/GPU devices,
+endpoints at which root ports, bifurcation settings, retimers, Network Interface Card (NIC)/Non-Volatile Memory Express (NVMe)/GPU devices,
 which I2C addresses and buses, which rails and their tolerances. Set up at an ESD-safe
 station: wrist strap on and verified, dissipative mat grounded to the station common
 point. Stage: current-limited bench supply, 4-wire DMM, scope with current probe,
@@ -14880,7 +15347,7 @@ health — save it. When the boot stops:
 | Immediately, blank screen | No clock, no reset release, or a severe sequencing problem |
 | During POST/BIOS self-test | Firmware crash; CPU or chip-level fault |
 | "Initializing memory controller" hang | DDR rail marginal, DDR training failure; check 1.1V rail |
-| "PCI probe" hang | PCIe root port or endpoint power problem; check that device's rail and PERST# |
+| "PCI probe" hang | PCIe root port or endpoint power problem; check that device's rail and PERST# (PERST#) |
 | Kernel panic on "loading initramfs" | Storage (NVMe/eMMC) issue; check NVMe rail and reset |
 | After full kernel boot, hang on device driver | Driver probe failure; read dmesg carefully |
 
@@ -14994,7 +15461,7 @@ verification, validation, and — critically for manufacturing engineers —
 **production and field operation**. Safety does not stop at the end of design
 verification; it continues through every board that ships.
 
-The central concept is **ASIL — Automotive Safety Integrity Level**, ranging from A
+The central concept is **Automotive Safety Integrity Level (ASIL)**, ranging from A
 (least stringent) through D (most stringent):
 
 | ASIL | Hazard Class | Requirements Rigor | Illustrative Example |
@@ -15029,7 +15496,7 @@ The safety lifecycle phases relevant to a test engineer:
  include things like "the ECC memory shall detect and correct single-bit errors" and
  "the compute module shall detect loss of a GMSL camera within 50ms."
 
-3. **FMEA / FMEDA (Failure Mode and Effects Analysis / Failure Modes, Effects, and
+3. **Failure Mode and Effects Analysis (FMEA) / FMEDA (FMEA / Failure Modes, Effects, and
  Diagnostic Analysis):** a systematic enumeration of all hardware failure modes, their
  effects at the system level, and the safety mechanisms that detect or control them.
  FMEDA also computes:
@@ -15050,9 +15517,9 @@ The safety lifecycle phases relevant to a test engineer:
 
 4. **Safety Mechanisms:** the hardware and software features that detect or tolerate
  faults. Examples on a compute board:
- - **ECC / EDAC:** detects and corrects single-bit DRAM errors; detects (but does not
+ - **ECC / Error Detection and Correction (EDAC):** detects and corrects single-bit DRAM errors; detects (but does not
  correct) double-bit errors.
- - **PCIe AER (Advanced Error Reporting):** detects correctable and uncorrectable PCIe
+ - **PCIe AER:** detects correctable and uncorrectable PCIe
  errors.
  - **Watchdog timers:** detect software hangs by requiring a periodic heartbeat.
  - **Redundant GMSL links:** tolerate a single coax failure.
@@ -15075,7 +15542,7 @@ shipped unit. That evidence is produced by manufacturing test. The connection is
 
 - **FMEDA says:** "ECC provides high DC (>90%) for single-bit DRAM failures; ECC must
  function to achieve SPFM >= 99%."
-- **MT must prove:** ECC is enabled, ECC detects a correctable error (inject one or
+- **Manufacturing Test (MT) must prove:** ECC is enabled, ECC detects a correctable error (inject one or
  observe during memtest), and the EDAC driver reports it. Reading the corrected-error
  counter is not sufficient — you must verify it increments in response to an actual
  error event during test.
@@ -15196,7 +15663,7 @@ the change-control argument.
 
 ### RAS Requirements and Their Interaction with Manufacturing Test
 
-**RAS — Reliability, Availability, Serviceability** — captures the operational
+**Reliability, Availability, Serviceability (RAS)** — captures the operational
 requirements that sit alongside and overlap with functional safety:
 
 - **Reliability** requirements (e.g., MTTF targets, infant-mortality budgets) are
@@ -15206,7 +15673,7 @@ requirements that sit alongside and overlap with functional safety:
  drive the redundancy architecture that MT must verify both paths of, as discussed
  above.
 - **Serviceability** requirements (failures must be diagnosable without returning
- the vehicle to a depot) drive the need for the DFT (Design for Testability) hooks —
+ the vehicle to a depot) drive the need for the Design for Testability (DFT) hooks —
  JTAG, UART console, IPMI, in-system test points — that manufacturing test also uses.
  These hooks must work in every unit.
 
@@ -15271,7 +15738,7 @@ operational. The pattern occurs regularly enough that it should be reflexive:
 **Symptom: PCIe link retrains or falls back in width/speed under load.**
 Look first at the core rail of the endpoint device under load. AC-couple the scope and
 measure ripple; DC-couple and measure droop during the load step. A rail that sags 60mV
-at the moment of link retrain is the root cause. Also check the SerDes PLL supply: a
+at the moment of link retrain is the Root Cause Analysis (RCA). Also check the SerDes PLL supply: a
 switching regulator near the SerDes that couples into the PLL reference creates
 deterministic jitter at the switcher frequency, visible as a periodic component in the
 PCIe eye.
@@ -15625,7 +16092,7 @@ correctness at the boundaries.
 
 ### Thermal Control and Fan PWM
 
-The board's BMC or SoC implements a closed-loop thermal controller that adjusts fan
+The board's BMC or System-on-Chip (SoC) implements a closed-loop thermal controller that adjusts fan
 PWM to maintain die temperature within operating limits. The control loop is:
 
 ```text
@@ -15653,7 +16120,7 @@ cat /sys/class/hwmon/hwmon3/temp1_input # read temperature (millidegrees C)
 
 Every switching regulator is a closed-loop controller: the output voltage is the
 measured variable; the PWM duty cycle is the control output. The loop compensator
-(Type II or Type III op-amp compensator, or a digital controller in a PMBus VRM) is
+(Type II or Type III op-amp compensator, or a digital controller in a Power Management Bus (PMBus) VRM) is
 designed for a specific phase margin and transient response. From a test perspective:
 
 - **Steady-state rail accuracy** is the DC gain of the loop — verify with DMM.
@@ -15750,7 +16217,7 @@ in the data you are collecting:
 - A thermal forcer that overshoots by 15 deg on every heat-up cycle is an anti-windup
  problem in the fixture PID, not a board defect — but if you do not distinguish the
  two, you will spend time chasing phantom thermal failures.
-- A GMSL camera that intermittently loses lock during high GPU load is a PoC voltage
+- A Gigabit Multimedia Serial Link (GMSL) camera that intermittently loses lock during high GPU load is a PoC voltage
  control problem: the PoC regulator's load-transient response is insufficient, which
  is a loop-bandwidth problem in the power supply.
 - A fan controller that hunts between 3000 and 6000 RPM under steady load is a
@@ -15765,3 +16232,255 @@ supply has a 7 kHz sustained oscillation that is not at the 500 kHz switching fr
 onset correlates with adding 47 uF of bulk capacitance on the revised layout, and the
 regulator datasheet shows a minimum capacitance of 22 uF for stability at the current
 compensation setting."
+
+
+# Embedded Systems for the Compute Test Engineer
+
+
+Embedded systems are not the center of this role, but they surround it. An autonomous-vehicle compute platform is itself a large embedded system, and scattered around the big SoCs and GPUs are dozens of microcontrollers you will test through or alongside: the BMC that owns power sequencing and telemetry, the safety MCU that watches the compute, power-sequencer and PMIC controllers, fan controllers, and the MCUs inside cameras, GMSL deserializers, and sensors. Every one of them runs firmware, talks a low-speed bus, and has a bring-up and update story. A test engineer who is fluent in embedded — registers, real-time behavior, firmware flashing, ESD — reads board behavior faster, writes better fixtures, and debugs the seams between "the chip" and "the software" where manufacturing defects love to hide.
+
+This chapter is the embedded layer beneath the rest of the guide. It cross-references rather than repeats: the low-speed buses are covered in depth in the Automotive and Serial Buses chapter, rails and bring-up phases in the Power, Bring-up, and Functional Safety chapter, fixture control loops in the Control Systems chapter, and register/bit-field mechanics in the PCIe and Python chapters.
+
+---
+
+## What "Embedded" Means on a Compute Platform
+
+A useful split:
+
+- **MCU (microcontroller)** — CPU + flash + SRAM + peripherals on one die, runs bare-metal or an RTOS from on-chip flash, boots in milliseconds, deterministic. Think BMC, power sequencer, safety supervisor. Tens of KB to a few MB of memory, no MMU (or a simple MPU for protection regions).
+- **MPU / application processor** — external DRAM, an MMU, runs Linux. The big compute SoC is here. Covered by the Linux chapter.
+- **SoC** — a system-on-chip blends both: application cores plus on-die microcontrollers (a safety island, a sensor hub, power-management cores) running their own firmware.
+
+The distinctions that matter at test: an MCU's behavior is **deterministic and owned by its firmware**, it comes up before Linux does (so it is often what you talk to *first* during bring-up), and its failures are register- and timing-level, not log-file-level. When a board "won't power on," the answer usually lives in an MCU's firmware and a power-sequencing register, not in `dmesg`.
+
+Where MCUs show up on an AV compute board, and why you care:
+
+| MCU role | What it owns | Test-engineer touchpoint |
+|---|---|---|
+| **BMC** (board management controller) | power sequencing, fan/thermal, rail telemetry, recovery | read rails/temps unattended over IPMI/sysfs; firmware version is part of genealogy |
+| **Safety MCU / supervisor** | watchdog of the compute, fault reaction | fault-injection response, watchdog behavior, ASIL evidence |
+| **PMIC / sequencer** | rail enable order and timing | the power-on sequence is "the datasheet is law" (Power chapter) |
+| **Sensor / camera / GMSL MCUs** | sensor config, link bring-up | I2C config sequences, firmware revs, link training |
+
+---
+
+## Microcontrollers and the Memory Map
+
+You already think in registers from PCIe config space; embedded is the same skill one level lower. An MCU exposes its peripherals as **memory-mapped registers**: fixed addresses where a load reads hardware state and a store changes hardware behavior. There is no driver stack in the way — you read and write the silicon directly.
+
+```c
+/* A memory-mapped 32-bit peripheral register. 'volatile' is mandatory: it tells the
+ * compiler the value can change outside program flow (hardware sets it) and must not
+ * be cached in a register or optimized away. Omitting volatile is the classic
+ * embedded bug -- a poll loop that never sees the bit change. */
+#define GPIOA_BASE 0x40020000u
+#define GPIO_ODR (*(volatile uint32_t *)(GPIOA_BASE + 0x14)) /* output data reg */
+#define GPIO_IDR (*(volatile uint32_t *)(GPIOA_BASE + 0x10)) /* input data reg */
+
+GPIO_ODR |= (1u << 5); /* set pin 5 high (read-modify-write) */
+GPIO_ODR &= ~(1u << 5); /* clear pin 5 */
+while (!(GPIO_IDR & (1u << 3))) /* spin until input pin 3 reads high */
+ ;
+```
+
+The bit-field extract/insert idioms are identical to the PCIe register work — `(reg >> lsb) & mask` to read a field, `reg = (reg & ~(mask << lsb)) | (val << lsb)` to write one. Two embedded-specific hazards:
+
+- **Read-modify-write races.** `REG |= bit` is three operations (load, OR, store). If an interrupt also writes `REG` between the load and the store, one update is lost. Guard shared registers with a critical section, or use hardware atomic set/clear registers where the silicon provides them (many MCUs expose separate "set" and "clear" register aliases exactly to avoid RMW).
+- **Write-1-to-clear status bits** — the same semantics as PCIe AER status: you clear a latched flag by writing a 1 to it, not a 0. Writing the whole register back can clear bits you did not mean to. (The PCIe chapter and the toolkit's BERT engine lean on this.)
+
+Memory layout is fixed by a **linker script** that places code/constants in flash and variables/stack in SRAM, and defines the regions the startup code initializes (copy `.data` from flash to RAM, zero `.bss`) before `main()` runs. Knowing the map is how you read a fault address: a hard fault at an address outside any valid region is a wild pointer; one inside the peripheral block is a bad register access.
+
+---
+
+## Bare-Metal, RTOS, and Real-Time
+
+There are three execution models, in increasing order of structure:
+
+- **Bare-metal super-loop** — `init(); for(;;) { do_work(); }` with interrupts handling time-critical events. Simple, fully deterministic, no scheduler overhead. Fine for a power sequencer or a fan controller.
+- **RTOS** (FreeRTOS, Zephyr, ThreadX) — preemptive **tasks** with priorities, a scheduler, queues/semaphores/mutexes for inter-task communication. You reach for it when you have several activities at different rates and priorities (telemetry, comms, control) that a super-loop can no longer juggle cleanly.
+- **Embedded Linux** — full MMU, processes, drivers; the application SoC. The Linux chapter covers it.
+
+**Real-time means deterministic, not fast.** A hard-real-time task must meet its deadline *every* time; missing it is a system failure (a motor controller, a safety reaction). Soft real-time tolerates occasional misses (a UI, a log flush). What you reason about:
+
+- **Latency and jitter** — the delay from event to response, and its variation. Jitter is often worse than latency: a control loop can design around a fixed 100 µs delay but not around one that randomly spikes to 5 ms.
+- **WCET (worst-case execution time)** — hard-real-time analysis is about the worst case, not the average. Caches, branch prediction, and DMA contention make the worst case much larger than the typical case.
+- **Priority inversion** — a high-priority task blocked on a mutex held by a low-priority task that itself is preempted by a medium-priority task. The classic fix is **priority inheritance** (the holder temporarily inherits the waiter's priority). This is famous because it stalled the Mars Pathfinder.
+
+Two safety mechanisms you will meet on every compute board:
+
+- **Watchdog timer** — a counter the firmware must "kick" periodically; if the firmware hangs and stops kicking, the watchdog resets the system. The safety MCU's watchdog over the compute is part of the fault-reaction path (Functional Safety section of the Power chapter). At test, you verify the watchdog actually fires when starved — a watchdog that never bites is worse than none, because it gives false confidence.
+- **Brown-out detection** — holds the MCU in reset until the supply is in spec, so it never executes on a marginal rail. A board that resets under load, not at power-on, often points here.
+
+---
+
+## Interrupts and Concurrency on an MCU
+
+Interrupts are the embedded concurrency model, and they bite the same way threads do (the Python chapter's race conditions, one layer down and with no GIL to soften them).
+
+```c
+/* ISR + main-loop hand-off via a ring buffer. The shared indices are volatile; the
+ * ISR is the sole producer, main() the sole consumer (single-producer/single-consumer
+ * is lock-free if head/tail are written by only one side each). */
+#define RB_SZ 256
+static volatile uint8_t rb[RB_SZ];
+static volatile uint16_t head, tail; /* head: ISR writes; tail: main writes */
+
+void UART_RX_IRQHandler(void) { /* keep ISRs SHORT: no printf, no malloc, no blocking */
+ uint16_t next = (head + 1) % RB_SZ;
+ if (next != tail) { rb[head] = UART_DR; head = next; } /* drop on full, never block */
+}
+
+int main(void) {
+ for (;;) {
+ if (tail != head) { /* data available */
+ uint8_t byte = rb[tail];
+ tail = (tail + 1) % RB_SZ;
+ process(byte);
+ }
+ }
+}
+```
+
+The rules that keep this correct:
+
+- **ISRs must be short and non-blocking** — no `printf`, no dynamic allocation, no waiting on a lock. Do the minimum (grab the byte, set a flag) and let the main loop do the work.
+- **`volatile` on anything shared with an ISR**, or the compiler will cache the stale value in a register.
+- **Critical sections** — to touch a multi-byte shared structure from both ISR and main safely, briefly disable interrupts (`__disable_irq()/__enable_irq()`), or use a hardware atomic. Keep them as short as possible; disabling interrupts adds latency to everything else.
+- **`volatile` is not a memory barrier.** It prevents caching of *that* variable but does not order writes to *different* variables across cores or DMA. Multi-core/DMA hand-offs need real barriers (`__DMB()`), not just `volatile`.
+
+---
+
+## Firmware Lifecycle: Build, Flash, Boot
+
+Firmware is C (sometimes C++/Rust) cross-compiled on your workstation for the target's architecture:
+
+```bash
+arm-none-eabi-gcc -mcpu=cortex-m4 -mthumb -O2 -ffunction-sections \
+ -T stm32f4.ld -nostartupfiles startup.s app.c -o app.elf # -T = linker script (the memory map)
+arm-none-eabi-objcopy -O binary app.elf app.bin # strip ELF to a raw flashable image
+arm-none-eabi-size app.elf # flash/SRAM usage vs the part's budget
+```
+
+The boot flow: on reset the CPU loads the initial stack pointer and the **reset vector** from the start of flash, runs startup code (init `.data`/`.bss`, set the clock tree), then `main()`. Many products boot a small **bootloader** first, which can accept a new image over a bus before jumping to the application — the basis of field/manufacturing update.
+
+Getting an image onto the part, two routes:
+
+- **Debug-port programming (JTAG/SWD)** — an external probe writes flash directly. This is the bring-up and factory path: deterministic, recoverable, and how you flash a virgin part that has no bootloader yet.
+- **In-system / DFU** — the running firmware (or a resident bootloader) accepts an image over USB-DFU, UART, CAN, or the network. This is the field/line update path; it requires the device to already be bootable.
+
+**Security and integrity** matter increasingly: **secure boot** has the bootloader verify a cryptographic signature on the image before running it (so only signed firmware executes), and **anti-rollback** prevents flashing an older, vulnerable version. At test you confirm signed images are accepted, unsigned/tampered ones are rejected, and the version meets the anti-rollback floor.
+
+**Version control for firmware images.** Treat every firmware image as a released artifact: each shipped binary maps to a tagged commit, built reproducibly, with the version string baked into the image *and* readable at runtime. Tag releases (`fw-2.3.1`), never ship a binary you cannot rebuild from a tag, and record the firmware version in the per-unit results so you can trace which firmware touched each serial number. Version control of the *test programs* that flash and verify these images — branching, releasing, and rollback across stations — is covered in the Manufacturing Test chapter.
+
+---
+
+## Firmware Update in Manufacturing
+
+Manufacturing frequently includes **flashing production firmware** as a test step: the board arrives with factory-default (or older) firmware, the station flashes the production image, then **verifies** it. Done wrong, you brick units at volume; done right, it is a clean staged operation with a rollback path. The canonical safe pattern has four phases — **stage → activate → verify → (rollback on failure)** — and **records the resulting version for traceability** every time.
+
+### The staged (A/B) update model
+
+Robust update mechanisms support **A/B (dual-bank) slots**: write the new image to the *inactive* slot (stage), switch the boot pointer and reset (activate), confirm it runs (verify), and if activation/verification fails, **roll back** by pointing at the still-intact previous slot. This is exactly how NVMe firmware slots and modern UEFI capsule / BMC redundant-image schemes work, and it is why a botched flash does not have to brick the unit.
+
+```
+ stage activate (reset) verify rollback
+ +-----------+ +-----------------+ +-------------+ +-------------+
+ | write new | | switch boot ptr | | read version| | revert ptr |
+ | -> slot B | --------> | to slot B; reset| ---> | == expected?| -No->| to slot A |
+ | (slot A | | (slot A intact) | | functional? | | (good image)|
+ | stays | +-----------------+ +------+------+ +-------------+
+ | bootable)| | Yes
+ +-----------+ v
+ record version
+ in test results
+```
+
+### Commands by component
+
+```
+# --- GPU VBIOS ---
+nvidia-smi --query-gpu=vbios_version --format=csv # current VBIOS
+# update via nvidia-smi / nvflash (NVIDIA proprietary) -- vendor-specific
+
+# --- NVMe firmware (slot model: download -> activate -> verify) ---
+nvme fw-log /dev/nvme0n1 # slots + active firmware revision
+nvme fw-download /dev/nvme0n1 --fw=prod_fw.bin # STAGE into a slot
+nvme fw-activate /dev/nvme0n1 --slot=2 --action=1 # ACTIVATE slot 2 (may need reset)
+nvme fw-log /dev/nvme0n1 # VERIFY active rev == expected
+nvme smart-log /dev/nvme0n1 # confirm healthy after activation
+
+# --- BMC firmware (via IPMI) ---
+ipmitool mc info # current BMC firmware version
+# update is vendor-specific (HPM.1 or vendor tool); BMCs often keep a redundant image
+
+# --- BIOS/UEFI ---
+dmidecode -t bios | grep Version # current BIOS version
+# flashing via vendor flasher or a signed UEFI capsule update; verify version after
+```
+
+### The manufacturing firmware test pattern
+
+1. **Read** the incoming version (record the *before* too).
+2. **Stage** the production image (download to the inactive slot where supported).
+3. **Activate** (reset if required).
+4. **Verify the version matches expected** *and* **run a functional test** — a version string is necessary but not sufficient. Prove the device still enumerates, links, and passes its functional check on the new firmware.
+5. **Roll back** to the known-good image if verify fails, and fail the unit cleanly with a decoded reason in the log.
+6. **Record the final firmware version in the results** for traceability.
+
+Robustness notes for an unattended CM line: **timeout every flash/activate/reset call** (a hung flasher must not wedge the station), never flash without a verified-good rollback path, and make the **failure state unambiguous** so a remote operator knows the unit failed and why.
+
+---
+
+## Debug and Bring-Up Tooling
+
+The embedded debug kit, and what each is for:
+
+- **JTAG / SWD** — the hardware debug port. SWD (Serial Wire Debug) is the 2-pin ARM variant; JTAG the older multi-pin standard that can also chain multiple devices. Through it you halt the core, read/write memory and registers, set breakpoints, and flash. This is ground truth when there is no console.
+- **`gdb` + OpenOCD** — OpenOCD drives the JTAG/SWD probe and exposes a gdb server; you debug the MCU from `gdb` exactly as you would a Linux program (`target remote :3333`, `load`, `break`, `mon reset halt`). Same muscle memory as the Linux chapter's gdb.
+- **UART console / semihosting** — a serial `printf` is the cheapest telemetry. Semihosting routes stdio through the debug probe when no UART is free, at the cost of halting the core per call (never leave it on in timed code).
+- **Logic analyzer** — decodes I2C/SPI/UART traffic so you can see whether the bus transaction actually happened and matched the datasheet timing. Indispensable for "the device isn't responding" on a control bus.
+- **Oscilloscope** — for anything analog or timing-level (rail ramp, signal integrity, the inrush and sequencing covered in the Power chapter).
+
+The embedded bring-up reflex mirrors the board bring-up phases (Power chapter): confirm power and clocks before blaming firmware; confirm the bus transaction on a logic analyzer before blaming the device; read the fault status registers before guessing. Most "dead firmware" is a clock, a power rail, or a bus that never acked.
+
+---
+
+## ESD Awareness and Handling
+
+Electrostatic discharge silently destroys — or, worse, *damages without killing* — semiconductor devices. A static event from a person can be thousands of volts: far below what you feel, far above what a sub-1 V gate oxide tolerates. For a test engineer the danger is twofold: a board you mishandle now, and — more insidiously — a **test fixture that makes you the failure mechanism**.
+
+### The two failure modes (latent is the dangerous one)
+
+- **Catastrophic** — the part dies immediately; the unit fails test. Bad, but you *catch* it.
+- **Latent** — ESD weakens a junction or oxide without an immediate functional failure. The unit **passes test and ships**, then fails *in the field* weeks later. For a robotaxi this is the unacceptable case: a latent-damaged unit is a field/safety event waiting to happen, and your test never flagged it. This is precisely why ESD control is a *process* requirement, not a "be careful" suggestion.
+
+### Standard controls (the ESD Protected Area)
+
+- **Grounded wrist straps** on every operator (1 MΩ series resistor for safety), bonded to a common ground point.
+- **Dissipative work surfaces** — conductive/dissipative mats, grounded.
+- **ESD-safe packaging** in transit — shielding (Faraday) bags, dissipative trays; never bare boards in ordinary plastic (plastic generates charge).
+- **Humidity control** — dry air builds far more static; EPAs control relative humidity.
+- **ESD footwear/flooring and smocks**; ionizers where charge cannot be bled off directly (insulators).
+- **Common-ground discipline** — DUT, fixture, instruments, mat, and person all bonded to the *same* ground, so there is no potential difference to discharge through the part.
+
+### Why it matters specifically for test engineering
+
+If your **fixture** lacks proper ESD grounding, the act of inserting or contacting the DUT can zap it. So ensure fixture contacts and probes are ESD-safe and grounded, that the DUT shares the station ground *before* signal pins mate, and that **wrist-strap monitors are verified working on every station, every shift** — a strap with a broken cord gives false confidence, so a continuous monitor beats a once-a-day check. An ESD escape is invisible at test and catastrophic in the field; the process controls are the safety net, and verifying them is part of keeping the line honest.
+
+---
+
+## Low-Speed Control Buses (Cross-Reference)
+
+The embedded world runs on three low-speed buses — **I2C** (multi-drop, 2-wire, for configuration and telemetry), **SPI** (fast, point-to-point, for flash and ADCs), and **UART** (the debug console and simple links). On a compute board they configure cameras and deserializers, read PMIC telemetry, and carry the console. From the embedded side they are just register read/write sequences over a bus: an I2C device exposes registers you address and read/write, often with a documented power-on init sequence the firmware must replay.
+
+Their protocol depth — addressing, arbitration, clock stretching, modes, and the test-floor patterns for each — is in the **Automotive and Serial Buses chapter**; their use inside fixture and instrument control is in the **Python chapter** (pyserial, the `equipment_rpc` socket pattern). This chapter's point is only that, on an MCU, a bus transaction is a register operation you can see on a logic analyzer and must match to the datasheet.
+
+---
+
+## Throughlines
+
+- The AV compute platform is an embedded system; the MCUs around the SoCs (BMC, safety supervisor, sequencers, sensor hubs) come up first and own the behavior that `dmesg` never sees.
+- Embedded is the register skill you already have from PCIe, one level lower and without a driver in the way — with `volatile`, read-modify-write races, and write-1-to-clear as the recurring hazards.
+- Real-time means *deterministic*, not fast: reason about jitter, WCET, priority inversion, and the watchdog/brown-out mechanisms that make a board fail safe.
+- Firmware is a lifecycle — build reproducibly, flash recoverably (JTAG/SWD for virgin parts, A/B staged update for the line), verify functionally not just by version string, and record the version for traceability.
+- ESD control is a process, not a caution: latent damage ships and fails in the field, so verifying the EPA and the fixture grounding is part of the test engineer's job.

@@ -232,7 +232,7 @@ dmidecode --type processor         # CPU socket details
 
 ## dmesg and journald: Kernel Messages
 
-`dmesg` is usually the **first** place to look when a board does something unexpected. Hardware faults, driver bind/unbind, PCIe Advanced Error Reporting (AER) events, Non-Volatile Memory Express (NVMe) controller resets, thermal throttling, and OOM kills all land here.
+`dmesg` is usually the **first** place to look when a board does something unexpected. Hardware faults, driver bind/unbind, PCIe AER events, Non-Volatile Memory Express (NVMe) controller resets, thermal throttling, and OOM kills all land here.
 
 ### dmesg
 
@@ -436,7 +436,7 @@ sudo dkms autoinstall           # rebuild all registered modules for the running
 
 ## PCI Config Space and AER
 
-The 256-byte (or 4096-byte extended) PCI configuration space holds device identity, capabilities, command/status, and -- in the extended capabilities -- Advanced Error Reporting (AER), Active State Power Management (ASPM), Single Root I/O Virtualization (SR-IOV). Understanding it is necessary for low-level debug.
+The 256-byte (or 4096-byte extended) PCI configuration space holds device identity, capabilities, command/status, and -- in the extended capabilities -- AER, Active State Power Management (ASPM), Single Root I/O Virtualization (SR-IOV). Understanding it is necessary for low-level debug.
 
 ```bash
 # Read raw config space:
@@ -461,12 +461,12 @@ setpci -s 03:00.0 04.W            # same by hex offset
 cat /sys/bus/pci/devices/0000:03:00.0/aer_dev_correctable
 ```
 
-Advanced Error Reporting correctable error register bits (from the PCIe spec):
+AER correctable error register bits (from the PCIe spec):
 
 | Bit | Name | What it means at the bench |
 |---|---|---|
 | 0 | RxErr | Receiver error; physical layer noise on the lane |
-| 6 | BadTLP | Bad Transaction Layer Packet (TLP) received; framing or data corruption |
+| 6 | BadTLP | Bad TLP received; framing or data corruption |
 | 7 | BadDLLP | Bad DLLP; data-link layer issue |
 | 8 | Rollover | Error counter rolled over (not a real error event) |
 | 12 | ReplayTimeout | Replay timer expired; link retrain under traffic |
@@ -1428,12 +1428,12 @@ dmesg | grep -i <driver_name>                    # driver init / bind / error me
 
 ### The Mental Checklist
 
-When a board fails on the fixture, drive toward the **failure tuple**, not a one-word verdict. "It failed" is useless; "endpoint `0000:03:00.0` trained Gen3 x8 instead of Gen4 x16, correctable Advanced Error Reporting (AER) BadTLP counter climbing at 3/sec under load, package temp 78 C, Non-Volatile Memory Express (NVMe) SMART clean" is something an Electrical Engineering (EE) can act on.
+When a board fails on the fixture, drive toward the **failure tuple**, not a one-word verdict. "It failed" is useless; "endpoint `0000:03:00.0` trained Gen3 x8 instead of Gen4 x16, correctable AER BadTLP counter climbing at 3/sec under load, package temp 78 C, NVMe SMART clean" is something an Electrical Engineering (EE) can act on.
 
 1. **Present?** `lspci -nn` / sysfs -- does it enumerate at all?
 2. **Right link?** `current_link_speed` / `current_link_width` vs `max_*` -- degraded?
-3. **Erroring?** Advanced Error Reporting counters + `dmesg -T` -- which specific bits, how fast accumulating?
+3. **Erroring?** AER counters + `dmesg -T` -- which specific bits, how fast accumulating?
 4. **Healthy peripherals?** `nvme smart-log`, `ethtool -S` -- clean counters?
 5. **Environment?** `sensors` / thermal zones, `vmstat` / `iostat` -- hot or resource-starved?
 6. **Driver/firmware?** `lspci -k`, `ethtool -i`, `modinfo` -- right versions bound?
-7. **Capture the evidence:** `tee` every output into a timestamped log file; hand the decoded failure tuple to the Electrical Engineering, not a one-word verdict.
+7. **Capture the evidence:** `tee` every output into a timestamped log file; hand the decoded failure tuple to the EE, not a one-word verdict.

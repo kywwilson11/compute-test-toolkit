@@ -36,6 +36,7 @@ CHAPTERS = [
     ("study-guide/ch11-networking.md",  "Networking: Fundamentals to the Manufacturing Floor",       True),
     ("study-guide/ch12-power-safety.md","Power, Bring-up, and Functional Safety",                    True),
     ("study-guide/ch13-control.md",     "Control Systems",                                           True),
+    ("study-guide/ch14-embedded.md",    "Embedded Systems for the Compute Test Engineer",            True),
 ]
 
 # Non-ASCII glyphs that render in prose (header.tex maps them to math) but come out blank

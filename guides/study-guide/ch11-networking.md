@@ -9,7 +9,7 @@ different direction:
    reports "Disconnected," you debug it as a network problem.
 2. **You test Network Interface Cards (NICs) on compute boards as a manufacturing step.** Enumerate the card,
    confirm link/speed/duplex, run a self-test, push traffic to a partner with `iperf3`,
-   and gate on error counters. A Network Interface Card that links but quietly drops 0.1% of frames is a
+   and gate on error counters. A Network Interface Card (NIC) that links but quietly drops 0.1% of frames is a
    reject — catch it on the line, not in the field.
 3. **The Zoox compute platform uses automotive Ethernet between modules** —
    single-pair 100/1000BASE-T1 — which behaves differently enough from office RJ45 that
@@ -31,16 +31,16 @@ broken?" and starting from the bottom.
 
 The Open Systems Interconnection (OSI) 7-layer model is the teaching model and the shared vocabulary ("that's a Layer 2
 problem"). The TCP/IP 4-layer model is what actually runs on every machine you touch.
-Know both; **think in TCP/IP, speak in Open Systems Interconnection layer numbers**.
+Know both; **think in TCP/IP, speak in OSI layer numbers**.
 
 | TCP/IP layer | OSI layer(s) | Example protocols | What it does | Address |
 |---|---|---|---|---|
 | Application | 5-7 (Session, Presentation, Application) | HTTP, DNS, DHCP, SSH, MQTT, Modbus/TCP, your RPC | Meaning of the bytes; your code lives here | URL / hostname |
 | Transport | 4 (Transport) | TCP, UDP | End-to-end delivery; reliability (TCP) or speed (UDP); multiplexing by port | Port number |
-| Internet | 3 (Network) | IP, Internet Control Message Protocol (ICMP), Address Resolution Protocol (ARP)* | Logical addressing and routing between networks | IP address |
+| Internet | 3 (Network) | IP, ICMP, ARP* | Logical addressing and routing between networks | IP address |
 | Link | 1-2 (Data Link, Physical) | Ethernet, Wi-Fi, PPP, 1000BASE-T1 | Framing + physical transmission on the local link | MAC address |
 
-\* Address Resolution Protocol straddles the boundary — it maps L3 IP to L2 MAC and is often called "L2.5."
+\* Address Resolution Protocol (ARP) straddles the boundary — it maps L3 IP to L2 MAC and is often called "L2.5."
 
 A quick mnemonic for OSI bottom-to-top: **P**lease **D**o **N**ot **T**hrow **S**ausage
 **P**izza **A**way (Physical, Data Link, Network, Transport, Session, Presentation,
@@ -53,7 +53,7 @@ Application).
 - **L2 Data Link** — frames with MAC addresses; error detection via CRC/Frame Check Sequence (FCS); media
   access (who talks when). Switches operate here. A CRC error or a duplex mismatch is L2.
 - **L3 Network** — IP addressing, subnets, routing between networks. Routers live here.
-  Internet Control Message Protocol (ping) is L3. "Wrong subnet / no route to host" is L3.
+  ICMP (ping) is L3. "Wrong subnet / no route to host" is L3.
 - **L4 Transport** — segments the byte stream, multiplexes apps via ports, and for TCP
   adds reliability, ordering, flow and congestion control. "Connection refused" is L4.
 - **L5 Session / L6 Presentation** — establishing/resuming sessions (TLS session
@@ -90,7 +90,7 @@ Precise terminology that comes up in packet captures:
 ### Frame, MTU, and Jumbo Frames
 
 A standard Ethernet frame: 6-byte dst MAC, 6-byte src MAC, 2-byte EtherType (0x0800 =
-IPv4, 0x0806 = Address Resolution Protocol, 0x86DD = IPv6), 46–1500-byte payload, 4-byte Frame Check Sequence (CRC-32). The
+IPv4, 0x0806 = ARP, 0x86DD = IPv6), 46–1500-byte payload, 4-byte FCS (CRC-32). The
 **Maximum Transmission Unit (MTU)** is the largest L3 payload — **1500 bytes** by
 default on Ethernet. **Jumbo frames** raise this to ~9000 bytes; they reduce per-packet
 overhead and CPU load and are common on storage/10GbE test links — but **every device in
@@ -126,7 +126,7 @@ interface, while the dst IP is still the original target.
 
 ### ARP — Mapping IP to MAC
 
-To send an IP packet on the local link, the OS needs the destination's MAC. Address Resolution Protocol (ARP, RFC 826) resolves it:
+To send an IP packet on the local link, the OS needs the destination's MAC. ARP resolves it:
 
 ```text
 Host A wants to send to 192.168.1.50 (same subnet) but only knows its IP.
@@ -144,25 +144,25 @@ arp -n                          # legacy equivalent
 ip neigh flush dev eth0         # clear stale entries (useful after re-cabling or IP change)
 ```
 
-Address Resolution Protocol entry states: **REACHABLE** (recently confirmed), **STALE** (cached, unverified),
+ARP entry states: **REACHABLE** (recently confirmed), **STALE** (cached, unverified),
 **FAILED** (no answer — host down, wrong subnet, or wrong Virtual Local Area Network (VLAN)), **INCOMPLETE**
 (resolution in progress). A neighbor stuck `INCOMPLETE` or `FAILED` for an IP you expect
 to reach is an L2/L3 problem: wrong VLAN, wrong subnet, dead link, or the device is off.
 
-**Gratuitous Address Resolution Protocol**: a host announces its own IP→MAC mapping unsolicited, typically on
+**Gratuitous ARP**: a host announces its own IP→MAC mapping unsolicited, typically on
 boot or after an IP change, so switches and peers update their caches. Relevant on the
 floor when a station is re-imaged and the old MAC lingers in a switch's forwarding table.
 
 ### VLANs and Factory Network Segmentation
 
-A **Virtual Local Area Network** (IEEE 802.1Q) logically partitions one physical switch into
+A **VLAN** (IEEE 802.1Q) logically partitions one physical switch into
 multiple isolated broadcast domains. Frames carry a 4-byte 802.1Q **tag** containing a
 12-bit **VLAN ID** (1–4094) and a 3-bit PCP priority field. Devices in different VLANs
 cannot communicate at L2 — they must pass through a **router or L3 switch**
 ("inter-VLAN routing"), which is exactly where you enforce policy between test stations
 and the corporate network.
 
-- **Access port** — belongs to one Virtual Local Area Network; the connected device is unaware of tags (the
+- **Access port** — belongs to one VLAN; the connected device is unaware of tags (the
   switch adds/removes the tag transparently).
 - **Trunk port** — carries multiple VLANs tagged between switches or between a switch
   and a server. A test server hosting several VLAN sub-interfaces sits on a trunk.
@@ -264,7 +264,7 @@ reserved — both addresses are usable. A `/32` is a single-host route.
 
 Also: `127.0.0.0/8` loopback (`127.0.0.1` = localhost); `169.254.0.0/16` link-local /
 APIPA — an interface that requested Dynamic Host Configuration Protocol (DHCP) and got no answer self-assigns here. Seeing a
-`169.254.x.x` address is a dead giveaway that **Dynamic Host Configuration Protocol failed**.
+`169.254.x.x` address is a dead giveaway that **DHCP failed**.
 
 ### The Fast Method (Block Size / "Magic Number")
 
@@ -308,7 +308,7 @@ The four /26 subnets of `192.168.1.0/24`:
 - **Usable = 10.10.50.33 – 10.10.50.46.**
 
 A /28 is a natural fit for a small test cell: 14 usable addresses cover a controller, a
-few instruments, a Network Interface Card-under-test, and the partner box.
+few instruments, a NIC-under-test, and the partner box.
 
 ### Worked Example C — Interesting Octet in the Third Octet (/22)
 
@@ -382,8 +382,8 @@ written as eight groups of four hex digits, e.g.,
 `2001:0db8:0000:0000:0000:ff00:0042:8329`. Rules: drop leading zeros in a group and
 collapse one run of all-zero groups to `::` → `2001:db8::ff00:42:8329`. `::1` is
 loopback (= IPv4 `127.0.0.1`); `fe80::/10` is link-local (every interface has one, used
-by neighbor discovery). There is **no Address Resolution Protocol** in IPv6 — it uses **NDP** (Neighbor
-Discovery Protocol, Internet Control Message Protocol v6) instead. IPv6 link-local addresses are assigned
+by neighbor discovery). There is **no ARP** in IPv6 — it uses **NDP** (Neighbor
+Discovery Protocol, Internet Control Message Protocol (ICMP) v6) instead. IPv6 link-local addresses are assigned
 automatically, so you may see `fe80::` addresses even on networks with no IPv6
 infrastructure — they are normal.
 
@@ -393,7 +393,7 @@ infrastructure — they are normal.
 
 ### DHCP — Dynamic Address Assignment
 
-Dynamic Host Configuration Protocol (DHCP) hands out IP, mask, gateway, DNS server, and lease time. The exchange is **DORA**:
+DHCP hands out IP, mask, gateway, DNS server, and lease time. The exchange is **DORA**:
 
 ```text
 Client (no IP)  --- DHCPDISCOVER (broadcast, UDP src=68 dst=67) ---> server(s)
@@ -402,7 +402,7 @@ Client          --- DHCPREQUEST (I'll take that IP) ----------------> server
 Client          <-- DHCPACK     (it's yours, lease=T) --------------- server
 ```
 
-Dynamic Host Configuration Protocol rides on **UDP**, ports 67 (server) and 68 (client). If a host self-assigns
+DHCP rides on **UDP**, ports 67 (server) and 68 (client). If a host self-assigns
 `169.254.x.x`, no DHCPOFFER ever arrived — DHCP server down, wrong VLAN, or a
 cable/link problem.
 
@@ -678,14 +678,14 @@ When `sendall()` is called, the kernel TCP stack:
 
 1. Appends data to the send buffer (size controlled by `SO_SNDBUF` / `net.core.wmem_max`).
 2. Packetizes into segments no larger than the MSS (maximum segment size, negotiated
-   at handshake, typically Maximum Transmission Unit - 40 bytes for TCP/IP headers = 1460 bytes).
+   at handshake, typically MTU - 40 bytes for TCP/IP headers = 1460 bytes).
 3. Applies any offloads configured on the NIC: **TSO** (TCP Segmentation Offload, the NIC
    segments rather than the CPU), **GSO** (Generic Segmentation Offload, SW equivalent),
    **GRO** (Generic Receive Offload, coalesces incoming segments).
 4. Passes through the Netfilter/iptables/nftables hooks for firewall rules.
 5. Hands the packet to the NIC driver ring buffer; the NIC Direct Memory Access (DMA)-fetches and transmits.
 
-On receive, the path reverses: NIC Direct Memory Access into ring buffer → driver interrupt/NAPI poll →
+On receive, the path reverses: NIC DMA into ring buffer → driver interrupt/NAPI poll →
 IP reassembly → TCP reorder buffer → application `recv()`. Tunable receive buffers
 (`net.core.rmem_max`, `net.ipv4.tcp_rmem`) matter for high-throughput links. The
 `ethtool -k` command shows which offloads are active; disabling them can be useful when
@@ -794,7 +794,7 @@ ss -tan '( dport = :8080 or sport = :8080 )'  # filter by port
 
 `ss -tuln | grep 8080` answers "is my dashboard actually listening?" If it is not in the
 output, either the service is not running or it is bound to `127.0.0.1` only (loopback),
-so remote stations on the Virtual Local Area Network cannot reach it. Fix: bind to `0.0.0.0`.
+so remote stations on the VLAN cannot reach it. Fix: bind to `0.0.0.0`.
 
 ```bash
 # Representative ss -tuln output:
@@ -847,10 +847,10 @@ Interpreting results:
 
 - **0% loss, steady RTT** → healthy L3 path.
 - **Some loss** → marginal link or congestion.
-- **100% loss, "Destination Host Unreachable"** → Address Resolution Protocol or routing failure (L2/L3).
-- **100% loss, silent timeout** → firewall dropping Internet Control Message Protocol, or host is down.
+- **100% loss, "Destination Host Unreachable"** → ARP or routing failure (L2/L3).
+- **100% loss, silent timeout** → firewall dropping ICMP, or host is down.
 - **MTU probe** (`-M do -s 1472`): if 1472B succeeds but 1473B fails with "frag needed,"
-  path Maximum Transmission Unit is exactly 1500 (1472 payload + 28 IP/ICMP headers). If 8972B fails, jumbo is
+  path MTU is exactly 1500 (1472 payload + 28 IP/ICMP headers). If 8972B fails, jumbo is
   not working somewhere in the path.
 
 ### `mtr` — Path Analysis, Hop by Hop (L3)
@@ -965,10 +965,10 @@ netboot is a connectivity problem, not a firmware problem, until proven otherwis
 
 ### The PXE Boot Chain
 
-**PXE** (Preboot eXecution Environment) allows a machine with a network-bootable Network Interface Card to
+**PXE** (Preboot eXecution Environment) allows a machine with a network-bootable NIC to
 get an OS or bootloader image from the network. The chain:
 
-1. **Dynamic Host Configuration Protocol** — the booting machine sends a Dynamic Host Configuration Protocol request; the DHCP server responds with the
+1. **DHCP** — the booting machine sends a DHCP request; the DHCP server responds with the
    standard IP/gateway/DNS assignment plus **option 66** (TFTP server address) and
    **option 67** (bootfile name, e.g., `pxelinux.0` or `grubx64.efi`).
 2. **TFTP** (Trivial File Transfer Protocol, UDP port 69) — the client fetches the
@@ -1170,7 +1170,7 @@ nanoseconds.
 - **Camera / LiDAR / radar fusion** requires knowing precisely when each sensor frame was
   captured. A 200 µs timing error at 100 km/h corresponds to ~5.6 mm of vehicle motion —
   meaningful for sensor alignment.
-- **Event correlation** across compute modules (e.g., matching a Controller Area Network event to a camera
+- **Event correlation** across compute modules (e.g., matching a CAN event to a camera
   frame) requires all nodes to share the same time domain.
 - **TSN traffic shaping** (IEEE 802.1Qbv, time-aware gating) relies on every switch
   knowing the same time to open and close transmission windows at the right instant.
@@ -1181,8 +1181,8 @@ nanoseconds.
 #### linuxptp — Running PTP on Linux
 
 **`ptp4l`** runs the PTP state machine (Best Master Clock Algorithm selects the
-grandmaster, then ordinary/boundary clock slaves synchronize to it). **`phc2sys`**
-synchronizes the system clock (CLOCK_REALTIME) to the Network Interface Card's hardware clock (PHC,
+grandmaster, then ordinary or boundary clock slaves synchronize to it). **`phc2sys`**
+synchronizes the system clock (`CLOCK_REALTIME`) to the NIC's hardware clock (PHC,
 PTP Hardware Clock).
 
 ```bash
@@ -1305,7 +1305,7 @@ journalctl -u ptp4l -f
 
 ## NIC Manufacturing Test
 
-This is the heart of the role: take a board off the line, prove its Network Interface Card(s) are good, and
+This is the heart of the role: take a board off the line, prove its NIC(s) are good, and
 **reject the marginal ones**. Gate on measurable thresholds, not on "it seems to work."
 A link that comes up but drops frames, negotiates the wrong speed, or accumulates CRC
 errors under load is a field failure waiting to happen.
@@ -1367,7 +1367,7 @@ Design points that prevent false results:
 - **Master/slave role**: captured from `ethtool` `master-slave cfg/status:` line and
   surfaced in the test summary, because role misconfiguration is the top "no link" cause
   on automotive PHYs.
-- **Cable test is best-effort**: PHY/driver Time-Domain Reflectometry support varies. An unsupported result is
+- **Cable test is best-effort**: PHY/driver Time-Domain Reflectometry (TDR) support varies. An unsupported result is
   reported as `skipped`, not `fault` — do not false-fail a good board.
 - **Delta counters**: snapshot `ethtool -S` before and after `iperf3`, diff the values.
   A NIC that links and passes self-test but accumulates CRC errors *under load* is the
@@ -1444,7 +1444,7 @@ Key differences from consumer BASE-T Ethernet:
   share the wire; the PHY cancels its own echo. Fewer wires means lighter, cheaper
   vehicle harness.
 - **Line coding.** 1000BASE-T1 uses **PAM3** (three voltage levels: -1, 0, +1);
-  802.3ch multi-Gig uses **PAM4** (four levels). Eye diagram and Signal Integrity (SI) analysis
+  802.3ch multi-Gig uses **Pulse Amplitude Modulation 4-level (PAM4)** (four levels). Eye diagram and Signal Integrity (SI) analysis
   concepts from SerDes carry over.
 - The trailing `1` in `*BASE-T1` is the tell: single pair, automotive.
 
@@ -1484,7 +1484,7 @@ of cable quality.
 - **MDIO** (Management Data I/O, clause 22/45) is the sideband management bus for reading
   and writing PHY registers: link status, master/slave role, error counters. Linux exposes
   PHYs through the netdev + **phylib** layer; most register access is via ethtool.
-- **Cable test (Time-Domain Reflectometry)** is the highest-value automotive manufacturing test, because it
+- **Cable test (TDR)** is the highest-value automotive manufacturing test, because it
   pinpoints the bad segment of a harness:
 
 ```bash
@@ -1492,7 +1492,7 @@ ethtool --cable-test eth0           # pass/fail per pair
 ethtool --cable-test-tdr eth0       # TDR: fault type + distance to fault (meters)
 ```
 
-Time-Domain Reflectometry sends a pulse and times the reflection. Result codes:
+TDR sends a pulse and times the reflection. Result codes:
 
 | Code | Meaning |
 |---|---|
@@ -1759,5 +1759,5 @@ resolution, the network, or the server-side handler.
 100/1000BASE-T1 physical layer design, vehicle Ethernet topology, the switch fabric
 architecture, domain controller interconnects, and the full in-vehicle networking stack
 are covered in the Automotive chapter. This chapter's NIC test sequence, master/slave
-diagnostics, Time-Domain Reflectometry cable test, and PTP/TSN sections are the manufacturing-floor view of
+diagnostics, TDR cable test, and PTP/TSN sections are the manufacturing-floor view of
 that same technology.

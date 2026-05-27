@@ -437,6 +437,152 @@ class LRUCache:
 
 ---
 
+### Control Flow
+
+#### if / elif / else
+
+```python
+if speed == "16GT/s" and width == "x16":
+    status = "PASS"
+elif speed == "16GT/s":
+    status = "WARN - degraded width"
+else:
+    status = "FAIL"
+```
+
+Python uses `and`, `or`, `not` (not `&&`, `||`, `!`). These are **short-circuit** operators: `and` stops at the first falsy operand, `or` stops at the first truthy operand, and they return the operand value (not necessarily a bool).
+
+```python
+x = a or "default"      # x is a if a is truthy, else "default"
+y = a and a.strip()     # avoids calling .strip() on None
+```
+
+**Truthiness:** empty containers (`[]`, `{}`, `()`, `set()`, `""`), `0`, `0.0`, `None`, and `False` are falsy. Everything else is truthy. Test for emptiness Pythonically:
+
+```python
+if not devices:         # GOOD: empty list/dict/str is falsy
+    ...
+if len(devices) == 0:   # works but verbose
+    ...
+```
+
+#### Ternary expression
+
+```python
+status = "PASS" if measured <= limit else "FAIL"
+# Chaining is legal but hurts readability; prefer a lookup or a function:
+# grade = "A" if s >= 90 else "B" if s >= 80 else "C"
+```
+
+#### for loops and the iteration helpers
+
+```python
+for device in devices:                          # iterate elements directly
+    test(device)
+
+for i, device in enumerate(devices):            # index + element
+    print(f"{i}: {device}")
+
+for i, device in enumerate(devices, start=1):   # 1-based index
+    print(f"Test {i}: {device}")
+
+for name, result in zip(names, results):        # parallel iteration (stops at shortest)
+    print(f"{name}: {result}")
+
+# range variants
+for i in range(10): ...           # 0..9
+for i in range(2, 10): ...        # 2..9
+for i in range(0, 100, 5): ...    # 0, 5, 10, ..., 95
+for i in range(10, 0, -1): ...    # 10, 9, ..., 1 (descending)
+```
+
+Prefer `enumerate` over manual index counters, and `zip` over indexing two lists in lockstep. Avoid `for i in range(len(xs))` unless you genuinely need the index.
+
+#### for/else and while/else
+
+The `else` block runs **only if the loop completed without hitting `break`**. This replaces the "found" flag pattern.
+
+```python
+for dev in devices:
+    if dev.degraded:
+        print(f"FAIL: {dev}")
+        break
+else:
+    # Reached only if we NEVER broke out -> all devices passed
+    print("All devices passed link check")
+```
+
+```python
+retries = 0
+while retries < max_retries:
+    if connect():
+        break
+    retries += 1
+    time.sleep(0.5 * (2 ** retries))   # exponential backoff
+else:
+    raise ConnectionError("Max retries exceeded")   # ran out of retries
+```
+
+#### break, continue, pass
+
+- `break` exits the innermost loop immediately.
+- `continue` skips to the next iteration.
+- `pass` is a no-op placeholder (an empty body that is syntactically required).
+
+#### Walrus operator := (Python 3.8+)
+
+Assigns and returns a value in a single expression. Useful in `while` conditions and comprehensions to avoid computing something twice.
+
+```python
+# Read lines until EOF without a separate pre-read
+while (line := f.readline()):
+    process(line)
+
+# Filter + transform without calling strip() twice
+cleaned = [c for raw in data if (c := raw.strip())]
+# Keeps only non-empty stripped lines, computing the strip exactly once.
+
+# Reuse an expensive result inside the condition
+if (n := len(devices)) > 8:
+    print(f"Too many devices: {n}")
+```
+
+#### match / case (Python 3.10+): structural pattern matching
+
+More than a `switch`: it destructures and binds.
+
+```python
+match command:
+    case "start":
+        start_test()
+    case "pause":
+        pause_test()
+    case str(x) if x.startswith("set_"):   # guard clause with binding
+        set_parameter(x[4:])
+    case _:                                 # wildcard (default)
+        print(f"Unknown command: {command}")
+
+# Destructuring dicts and matching on values
+match event:
+    case {"type": "error", "code": code, "message": msg}:
+        log_error(code, msg)
+    case {"type": "result", "value": float(v)} if v > threshold:
+        handle_high_value(v)
+    case {"type": "result", "value": float(v)}:
+        handle_normal(v)
+
+# Destructuring sequences
+match point:
+    case (0, 0):
+        print("origin")
+    case (x, 0):
+        print(f"on x-axis at {x}")
+    case (x, y):
+        print(f"at {x}, {y}")
+```
+
+---
+
 ### Comprehensions
 
 List, dict, set comprehensions and generator expressions share the same syntax template: `[expr for item in iterable if condition]`. The `if` clause is a filter — it controls which items enter the loop. The conditional expression `val if cond else other` is different: it transforms the value for every item.
@@ -928,7 +1074,7 @@ class SpecViolation(TestInfraError):
         self.param, self.value, self.limit = param, value, limit
 ```
 
-Easier to Ask Forgiveness than Permission (EAFP) is idiomatic Python: try the operation, handle the exception. Look Before You Leap (LBYL) uses guard checks before attempting the operation. Easier to Ask Forgiveness than Permission is preferred when the operation is likely to succeed; LBYL is fine for configuration validation at startup.
+Easier to Ask Forgiveness than Permission (EAFP) is idiomatic Python: try the operation, handle the exception. Look Before You Leap (LBYL) uses guard checks before attempting the operation. EAFP is preferred when the operation is likely to succeed; LBYL is fine for configuration validation at startup.
 
 ---
 
@@ -1754,7 +1900,7 @@ log.exception("unexpected exception")   # includes traceback
 
 #### The GIL
 
-CPython's Global Interpreter Lock (GIL) serializes bytecode execution to one thread at a time. Threads are appropriate for I/O-bound work (disk, network, serial port, SCPI) — one thread blocks in the kernel and releases the Global Interpreter Lock while others run. They don't parallelize CPU-bound computation. Use `multiprocessing` for CPU-bound work (waveform FFT, large numpy reductions), or `concurrent.futures.ProcessPoolExecutor`.
+CPython's Global Interpreter Lock (GIL) serializes bytecode execution to one thread at a time. Threads are appropriate for I/O-bound work (disk, network, serial port, SCPI) — one thread blocks in the kernel and releases the GIL while others run. They don't parallelize CPU-bound computation. Use `multiprocessing` for CPU-bound work (waveform FFT, large numpy reductions), or `concurrent.futures.ProcessPoolExecutor`.
 
 #### Threads for Instrument I/O
 
@@ -2052,6 +2198,62 @@ with SCPIInstrument("TCPIP::10.0.1.50::INSTR") as psu:
 
 ---
 
+### Socket Programming — the equipment_rpc Pattern
+
+A common manufacturing-test design is a small TCP RPC server that fronts an instrument: the GUI or test runner sends a JSON command, the server executes it against the hardware and returns JSON. This decouples the UI process from the hardware process and lets multiple clients share one instrument.
+
+#### TCP server
+
+```python
+import socket
+import json
+
+def start_server(host="0.0.0.0", port=5000):
+    server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    # AF_INET = IPv4; SOCK_STREAM = TCP (reliable, ordered byte stream). UDP would use SOCK_DGRAM.
+    server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    # SO_REUSEADDR lets you re-bind a port still in TIME_WAIT after a restart,
+    # avoiding "Address already in use" for ~60 s.
+    server.bind((host, port))
+    server.listen(5)                  # backlog: max queued pending connections
+    print(f"Listening on {host}:{port}")
+    while True:
+        conn, addr = server.accept()  # blocks until a client connects
+        with conn:
+            data = conn.recv(4096).decode()
+            request = json.loads(data)
+            response = handle_request(request)
+            conn.sendall(json.dumps(response).encode())
+
+def handle_request(req):
+    cmd = req.get("command")
+    if cmd == "read_voltage":
+        return {"status": "ok", "value": 48.01}
+    return {"status": "error", "message": f"unknown command: {cmd}"}
+```
+
+#### TCP client
+
+```python
+def send_command(host, port, command):
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.settimeout(5.0)          # ALWAYS set a timeout; a hung instrument must not block forever
+        sock.connect((host, port))
+        sock.sendall(json.dumps(command).encode())
+        # TCP is a stream, not messages: read until the peer closes (or use a length prefix).
+        chunks = []
+        while True:
+            chunk = sock.recv(4096)
+            if not chunk:             # empty bytes -> peer closed the connection
+                break
+            chunks.append(chunk)
+        return json.loads(b"".join(chunks).decode())
+```
+
+Two essentials: always `settimeout`, and remember that `recv` returns whatever bytes are available, so you must loop and reassemble. For request/response framing, prefer a newline-delimited protocol or a fixed-length header that states the body length.
+
+---
+
 ### NumPy for Measurement Data
 
 ```python
@@ -2342,6 +2544,215 @@ class PowerSupply(LogMixin, RetryMixin, Instrument):
 
 ---
 
+### SQLite for Test Results
+
+SQLite is a serverless, file-based database: zero setup, the whole database is one file, and it survives restarts. Ideal for a single-server dashboard with one writer and fast reads. Reach for PostgreSQL/MySQL only when many clients must write concurrently.
+
+```python
+import sqlite3
+import json, time
+
+conn = sqlite3.connect("dashboard.db")    # opens or creates the file (no server process)
+
+conn.execute("""
+    CREATE TABLE IF NOT EXISTS stations (
+        hostname TEXT PRIMARY KEY,
+        data     TEXT,
+        updated  REAL
+    )
+""")
+
+# Upsert: insert, or overwrite the row if the primary key already exists
+conn.execute(
+    "INSERT OR REPLACE INTO stations (hostname, data, updated) VALUES (?, ?, ?)",
+    (hostname, json.dumps(data), time.time()),
+)
+conn.commit()      # writes to disk; without it the change is lost
+```
+
+The `?` placeholders are **parameterized queries**: they prevent SQL injection and handle quoting. Never build SQL by string interpolation/f-strings.
+
+```python
+# Query one row
+cur = conn.execute("SELECT data FROM stations WHERE hostname = ?", (hostname,))
+row = cur.fetchone()           # a tuple, or None if not found
+if row:
+    station = json.loads(row[0])
+
+# Query many rows + aggregate
+cur = conn.execute("""
+    SELECT keyword, AVG(duration_s) AS avg_s
+    FROM keyword_timings
+    WHERE model = ?
+    GROUP BY keyword
+""", (model,))
+averages = {kw: avg for kw, avg in cur.fetchall()}   # fetchall returns a list of tuples
+
+conn.close()
+```
+
+Set `conn.row_factory = sqlite3.Row` to access columns by name (`row["hostname"]`) instead of by index. Use a `with conn:` block to wrap a transaction that auto-commits on success and rolls back on exception.
+
+---
+
+### FastAPI — the Station Dashboard Pattern
+
+FastAPI is a modern Python web framework. A typical use is a monitoring dashboard: each test station POSTs a heartbeat with its status, and the server stores it and serves a live view.
+
+```python
+from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel
+from typing import Any, Optional
+
+app = FastAPI(title="Station Dashboard")
+# FastAPI() is the app object; routes are registered on it. On each request, FastAPI
+# finds the handler whose path/method match and calls it.
+
+@app.get("/api/stations")
+def list_stations():
+    # GET = read, no side effects. Returning a dict/list -> FastAPI serializes it to JSON.
+    return [{"hostname": "STATION-1", "state": "RUN"}]
+```
+
+#### Pydantic models: automatic request validation
+
+You declare the expected shape as a class; FastAPI validates the incoming JSON against it and rejects bad input with a 422 automatically.
+
+```python
+class HeartbeatPayload(BaseModel):
+    model_config = {"extra": "allow"}     # accept unknown fields (forward-compatible payloads)
+    hostname: str                          # required; must be a string
+    state: str = "IDLE"                    # optional, defaults to "IDLE"
+    keyword_index: int = 0                 # optional int (bad type -> 422)
+    failures: list[Any] = []               # optional list
+    actuator_connected: Optional[bool] = None
+
+@app.post("/heartbeat")
+def receive_heartbeat(payload: HeartbeatPayload):
+    # If validation fails, the function is never called; FastAPI returns 422.
+    data = payload.model_dump()            # convert the model back to a plain dict
+    db.upsert(payload.hostname, data)
+    return {"status": "ok"}
+```
+
+#### Path and query parameters
+
+```python
+@app.get("/api/stations/{hostname}")
+def get_station(hostname: str):            # {hostname} in the path -> path parameter
+    station = db.get(hostname)
+    if station is None:
+        raise HTTPException(status_code=404, detail="Station not found")
+    return station
+
+@app.get("/api/summary")
+def summary(period: str = "24h"):          # not in the path -> query parameter (?period=week)
+    if period not in {"24h", "week", "month"}:
+        raise HTTPException(status_code=400, detail="Invalid period")
+    return db.summary(period)
+```
+
+#### Serving static files and the dashboard page
+
+```python
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
+
+app.mount("/static", StaticFiles(directory="static"), name="static")  # /static/app.js etc.
+
+@app.get("/")
+def dashboard():
+    return FileResponse("static/index.html")   # the browser UI; correct Content-Type set for you
+```
+
+#### Lifespan (startup/shutdown)
+
+```python
+import asyncio
+from contextlib import asynccontextmanager
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    task = asyncio.create_task(background_purge())   # before yield = startup
+    yield
+    task.cancel()                                     # after yield = shutdown
+    try:
+        await task
+    except asyncio.CancelledError:
+        pass
+
+app = FastAPI(lifespan=lifespan)
+```
+
+#### Running it and key concepts
+
+```bash
+uvicorn server:app --reload --host 0.0.0.0 --port 8080    # dev: auto-reload
+uvicorn server:app --host 0.0.0.0 --port 8080 --workers 1 # prod (single worker if state is in-memory)
+```
+
+Talking points if asked: sync route handlers (`def`, not `async def`) run in a thread pool, which is fine for fast handlers doing dict ops and a SQLite write. Pydantic removes all the manual `if "hostname" not in data` validation. FastAPI auto-generates interactive OpenAPI docs at `/docs`. Use a single worker when the server keeps in-memory caches, since multiple workers would each hold a separate copy.
+
+---
+
+### PySide6 — Desktop Instrument GUIs
+
+PySide6 is the official Qt binding for Python (LGPL, free for commercial use). It is the standard choice for responsive desktop instrument-control GUIs with live graphing, where a web app would add unacceptable HTTP latency between operator and hardware.
+
+#### Signals and slots: Qt's event system
+
+A **signal** is an event an object can emit; a **slot** is a function that receives it. Objects connect signals to slots, decoupling emitter from receiver.
+
+```python
+from PySide6.QtCore import QObject, Signal
+
+class ServoController(QObject):
+    state_changed = Signal(str, str)     # declares a signal carrying (state, detail)
+    error_occurred = Signal(str)
+    stopped = Signal()                   # carries nothing
+
+    def go(self):
+        self.state_changed.emit("RAMP", "Ramping to 65 ft-lb")   # notify every connected slot
+
+servo = ServoController()
+servo.state_changed.connect(lambda s, d: print(f"{s}: {d}"))     # connect a slot
+servo.error_occurred.connect(show_error_dialog)                  # many slots may connect
+servo.go()                                                       # fires all connected slots in order
+```
+
+Emitting a signal with no connections is harmless (does nothing). Multiple slots can connect to one signal, and one slot can serve many signals.
+
+#### QTimer: periodic work without blocking the UI
+
+```python
+from PySide6.QtCore import QTimer
+
+self.tick_timer = QTimer()
+self.tick_timer.timeout.connect(self.handle_tick)   # timeout fires every interval
+self.tick_timer.setInterval(500)                    # milliseconds
+self.tick_timer.start()
+# ... later:
+self.tick_timer.stop()
+```
+
+Use `QTimer` instead of `time.sleep()` in a loop: the timer fires on the main event loop, so the GUI stays responsive (buttons, repaints, dialogs work between ticks). `time.sleep()` freezes the entire UI. And use `QTimer` rather than a background thread when the callback touches widgets, because Qt widgets may only be modified from the main thread.
+
+#### The loop-variable capture pattern in connections
+
+```python
+from PySide6.QtWidgets import QCheckBox
+for iface in ["RS232", "RS485", "ETH", "CAN", "ANALOG"]:
+    cb = QCheckBox(iface)
+    cb.toggled.connect(lambda checked, i=iface: self.on_toggle(i, checked))
+    # i=iface captures the CURRENT iface; without it every callback would see "ANALOG".
+```
+
+#### Threading rule of thumb
+
+Do slow I/O on a worker thread, then deliver results to the GUI by emitting a signal (Qt marshals it to the main thread). Never update widgets directly from a worker thread.
+
+---
+
 ### Modules, venv, and Packaging
 
 #### Virtual Environments
@@ -2467,7 +2878,7 @@ def merge_sorted_runs(a: list[float], b: list[float]) -> list[float]:
 
 #### Stack: Balanced Protocol Framing
 
-Validate that protocol open/close tags are balanced — e.g., PCIe TLP framing in log analysis.
+Validate that protocol open/close tags are balanced — e.g., PCIe Transaction Layer Packet (TLP) framing in log analysis.
 
 ```python
 def is_balanced(s: str) -> bool:
@@ -2501,7 +2912,7 @@ def two_sum_indices(readings: list[float], target: float) -> list[tuple[int, int
 
 #### Bit-Field Decoder: Register Status Report
 
-Decode a 32-bit hardware status register into a structured dict — the everyday pattern for PCIe or NVMe register parsing.
+Decode a 32-bit hardware status register into a structured dict — the everyday pattern for PCIe or Non-Volatile Memory Express (NVMe) register parsing.
 
 ```python
 from dataclasses import dataclass

@@ -10,8 +10,8 @@ can sign your name to. The opening sections — probability, distributions, and 
 bridge — fix the probability and distribution vocabulary once; read them first. The
 middle sections (geometry/sensor FOV, logs and dB, the GT/s → GB/s bandwidth math,
 vectors, and the core physical relationships) are supporting reference math you reach for
-less often but want defensible when you do. The daily tools are the back half: **Bit Error Rate and
-confidence**, **process capability and limits**, **Statistical Process Control**, **gauge R&R**, **sampling and
+less often but want defensible when you do. The daily tools are the back half: **BER and
+confidence**, **process capability and limits**, **SPC**, **gauge R&R**, **sampling and
 AQL**, **yield and throughput**, and **reliability**. Sections cross-reference each other
 by name throughout; the one-page formula sheet at the end collapses the whole chapter into
 something you can pin to a station.
@@ -20,7 +20,7 @@ something you can pin to a station.
 
 ## Probability Fundamentals
 
-Everything downstream — Cpk, control limits, AQL, Bit Error Rate (BER) confidence — is a probability
+Everything downstream — Cpk, control limits, AQL, BER confidence — is a probability
 statement dressed in engineering units. Get the four rules right and the rest follows.
 
 ### The rules you actually use
@@ -37,7 +37,7 @@ that fail both.
 
 **Multiplication (AND).** General: $P(A \cap B) = P(A)\,P(B \mid A)$. Drop the
 conditional **only** when $A$ and $B$ are independent.
-*If GPU and Non-Volatile Memory Express failures are independent,* $P(\text{both}) = 0.02 \times 0.01 = 0.0002$.
+*If GPU and NVMe failures are independent,* $P(\text{both}) = 0.02 \times 0.01 = 0.0002$.
 
 **Independence is not mutual exclusivity.** Independent means knowing $A$ leaves
 $P(B)$ unchanged. Mutually exclusive means $A$ happening forces $B$ not to ($P(A \cap B) = 0$).
@@ -93,7 +93,7 @@ containment.
 - **Permutations (order matters):** $P(n,k) = \dfrac{n!}{(n-k)!}$. *Assign 3 priority tests across 8 stations:* $8 \cdot 7 \cdot 6 = 336$.
 - **Combinations (order does not):** $\binom{n}{k} = \dfrac{n!}{k!\,(n-k)!}$. *Pull 3 boards from 10 for teardown:* $\binom{10}{3} = 120$.
 - **Identity:** $\binom{n}{k} = \binom{n}{n-k}$. **Handy:** $\binom{n}{2} = \tfrac{n(n-1)}{2}$; $\binom{5}{2} = 10$, $\binom{6}{3} = 20$.
-- **Multiplication principle:** 4 GPU types $\times$ 3 Non-Volatile Memory Express (NVMe) $\times$ 2 Network Interface Card (NIC) $=24$ configs.
+- **Multiplication principle:** 4 GPU types $\times$ 3 NVMe $\times$ 2 Network Interface Card (NIC) $=24$ configs.
 
 The binomial coefficient is the $\binom{n}{k}$ that shows up in the binomial
 distribution and in every "how many of these $n$ boards fail" calculation below.
@@ -155,7 +155,7 @@ $$P(X = k) = \frac{\lambda^{k} e^{-\lambda}}{k!}, \qquad
 \mathbb{E}[X] = \operatorname{Var}(X) = \lambda.$$
 
 Poisson is the most important distribution for a compute-test engineer because **bit
-errors are Poisson** (*Bit Error Rate (BER) and Confidence*) and **defect counts per board are Poisson** ($c$-charts, *Statistical Process Control (SPC)*).
+errors are Poisson** (*BER and Confidence*) and **defect counts per board are Poisson** ($c$-charts, *SPC*).
 Use it whenever events are rare, independent, and arrive at a roughly constant rate.
 
 *Station averages $\lambda = 2$ failures/shift. $P(0)$ ?* $e^{-2} = 0.135$. *$P(X \ge 5)$ ?*
@@ -368,8 +368,8 @@ corners on 7, edges on 4 — a consistency check on the count.
 ## Algebra and Signal Math
 
 Practical algebra: log and dB scales, SNR, and the signaling-rate math you actually do on
-a high-speed link. The GT/s → GB/s conversion below is the bridge between the Bit Error Rate (BER) work in
-*Bit Error Rate and Confidence* and the bandwidth numbers quoted on a PCIe/Non-Volatile Memory Express (NVMe) spec sheet.
+a high-speed link. The GT/s → GB/s conversion below is the bridge between the BER work in
+*BER and Confidence* and the bandwidth numbers quoted on a PCIe/NVMe spec sheet.
 
 ### Logarithms and decibels
 
@@ -403,7 +403,7 @@ $$\text{SNR}=\frac{P_\text{signal}}{P_\text{noise}}, \qquad
 $\text{SNR}=3.3/0.01=330\Rightarrow 20\log_{10}330=50.4$ dB. (As a power ratio $330^2$,
 $10\log_{10}(330^2)$ gives the same 50.4 dB — the two forms agree because a voltage ratio
 of 330 *is* a power ratio of $330^2$.) On a SerDes link a higher SNR margin is what shows
-up downstream as the lower Bit Error Rate (BER) you confidence-test in *Bit Error Rate and Confidence*.
+up downstream as the lower BER you confidence-test in *BER and Confidence*.
 
 ### Bandwidth math: GT/s to GB/s
 
@@ -425,10 +425,10 @@ $$\text{GB/s per lane}=\frac{\text{GT/s}\times\text{coding efficiency}}{8\ \text
 | 5 | 32.0 | 128b/130b | 3.938 | 63.0 |
 | 6 | 64.0 | PAM4 + FEC | 7.563 | 121 |
 
-*Worked: PCIe Gen4 x4 Non-Volatile Memory Express (NVMe) usable rate.* $16\times(128/130)/8=1.969$ GB/s per lane
-$\times4=7.88$ GB/s. (Gen6 switches to PAM4 — 2 bits/symbol — plus FLIT-mode FEC, so a
+*Worked: PCIe Gen4 x4 NVMe usable rate.* $16\times(128/130)/8=1.969$ GB/s per lane
+$\times4=7.88$ GB/s. (Gen6 switches to Pulse Amplitude Modulation 4-level (PAM4) — 2 bits/symbol — plus Fixed-size Link Packet (FLIT)-mode Forward Error Correction (FEC), so a
 "transfer" no longer equals one bit; the table value already accounts for the encoding.
-This is also why Gen6 Bit Error Rate (BER) acceptance in *Bit Error Rate and Confidence* tests the *post-FEC* error count.)
+This is also why Gen6 BER acceptance in *BER and Confidence* tests the *post-FEC* error count.)
 
 ### Averaging to reduce noise
 
@@ -445,7 +445,7 @@ fixing a noisy gauge (the *Gauge R&R* section) rather than averaging around it.
 $$f=a\pm b:\quad \sigma_f=\sqrt{\sigma_a^2+\sigma_b^2}\ \ (\text{add in quadrature}),$$
 $$f=a\cdot b\ \text{or}\ a/b:\quad \frac{\sigma_f}{f}=\sqrt{\left(\tfrac{\sigma_a}{a}\right)^2+\left(\tfrac{\sigma_b}{b}\right)^2}\ \ (\text{relative, in quadrature}).$$
 *$P=VI$, $V=48.0\pm0.2$, $I=10.0\pm0.1$, $P=480$ W:*
-$\tfrac{\sigma_P}{P}=\sqrt{(0.2/48)^2+(0.1/10)^2}=\sqrt{1.74\times10^{-5}+1.0\times10^{-4}}=0.0108$,
+$\tfrac{\sigma_P}{P}=\sqrt{(0.2/48)^2+(0.1/10)^2}=0.0108$,
 so $\sigma_P=480\times0.0108=\pm5.2$ W. This is the same root-sum-square that governs
 tolerance stack-ups and the variance addition in *Expected value and variance*.
 
@@ -525,8 +525,8 @@ conditions. Reconstruct these from first principles rather than recall them blin
 ## BER and Confidence — the PCIe BERT Math
 
 This is the centerpiece for a compute/high-speed-link test engineer, and the statistical
-core of the PCIe Bit Error Rate Test (BERT) tool. The interview and the job both ask the same thing: **"You
-ran a SerDes/PCIe link for $N$ bits and saw $E$ errors — what Bit Error Rate (BER) can you claim, and how
+core of the PCIe BERT tool. The interview and the job both ask the same thing: **"You
+ran a SerDes/PCIe link for $N$ bits and saw $E$ errors — what BER can you claim, and how
 long must you run to prove a target?"** The link-layer detail lives in the **PCIe
 chapter**; the statistics live here.
 
@@ -534,10 +534,10 @@ chapter**; the statistics live here.
 
 Errors on a healthy link are rare and effectively independent, so the error count over
 $n$ transmitted bits is **Poisson** with mean $\lambda = n p$, where $p$ is the true bit
-error ratio (BER). A Bit Error Rate Test (BERT) runs a known pattern (PRBS) and counts mismatches; that count
+error ratio (BER). A BERT runs a known pattern (PRBS) and counts mismatches; that count
 is your Poisson observation.
 
-**Confidence level (CL)** = the probability that, *if the true Bit Error Rate were as bad as your
+**Confidence level (CL)** = the probability that, *if the true BER were as bad as your
 target $p$*, you would have seen *more than* the $E$ errors you observed. High CL means a
 truly bad link would almost certainly have shown more errors than you saw — so a clean
 run is strong evidence the real BER is below the target.
@@ -565,27 +565,27 @@ Memorize the constant $-\ln(1-\text{CL})$:
 for 99%, about $4.6/p$. This is the bit-domain twin of the *rule of three* — with 0
 failures in $n$ trials, the upper 95% bound on the failure rate is $\approx 3/n$.
 
-**Worked — bits to prove Bit Error Rate (BER) $\le 10^{-12}$ at 95% CL, zero errors.**
+**Worked — bits to prove BER $\le 10^{-12}$ at 95% CL, zero errors.**
 $$n = \frac{2.996}{10^{-12}} = 2.996 \times 10^{12}\ \text{bits} \approx 3 \times 10^{12}.$$
 On one PCIe Gen5 lane at $32$ GT/s (use the raw $32 \times 10^{9}$ bit/s for the link
 test): $t = 3 \times 10^{12} / 32 \times 10^{9} \approx 94$ s. So a ~95-second clean run
 on one lane proves $\le 10^{-12}$ at 95% CL. For 99% CL scale by $4.605/2.996 = 1.54$ →
 ~145 s.
 
-**Worked — what Bit Error Rate did I prove?** A run of $n = 10^{13}$ bits with $E = 0$:
+**Worked — what BER did I prove?** A run of $n = 10^{13}$ bits with $E = 0$:
 $$p_{95} = \frac{2.996}{10^{13}} = 3.0 \times 10^{-13}.$$
 You have demonstrated BER $\le 3.0 \times 10^{-13}$ at 95% confidence.
 
 ### Allowing observed errors — the chi-squared upper bound
 
-If you saw $E > 0$ errors and still want a confidence-bounded Bit Error Rate (BER), the exact one-sided
+If you saw $E > 0$ errors and still want a confidence-bounded BER, the exact one-sided
 upper limit on a Poisson mean is a clean chi-squared expression:
 $$\boxed{\ \text{BER}_\text{upper} = \frac{\chi^2_{1-\alpha,\ 2(E+1)}}{2n}\ }$$
 where $\chi^2_{q,\nu}$ is the $q$-quantile with $\nu$ degrees of freedom. This is the
 form lab software and the Telcordia/standards methods use. Two checks that it is the
 right formula:
 
-- For $E = 0$: $\nu = 2$, and $\chi^2_{1-\alpha,2} = -2\ln(\alpha) = -2\ln(1-\text{CL})$, so $\text{BER}_\text{upper} = -\ln(1-\text{CL})/n$ — **identical** to the zero-error "3/Bit Error Rate" rule.
+- For $E = 0$: $\nu = 2$, and $\chi^2_{1-\alpha,2} = -2\ln(\alpha) = -2\ln(1-\text{CL})$, so $\text{BER}_\text{upper} = -\ln(1-\text{CL})/n$ — **identical** to the zero-error "3/BER" rule.
 - It is exact for any $E$, where the normal approximation $\hat p \pm z\sqrt{\hat p/n}$ falls apart in the small-count, low-$p$ regime BER lives in.
 
 **Worked — $E = 2$ errors at 95% CL.** $n = 2 \times 10^{12}$, $\nu = 2(2+1) = 6$,
@@ -612,10 +612,10 @@ A fixed-$n$ acceptance run wastes time: a great link passes long before $n$, and
 link should be rejected almost immediately. **Wald's Sequential Probability Ratio Test
 (SPRT)** evaluates after every error (or every block) and emits one of three verdicts —
 **pass**, **continue**, or **reject** — drawing two parallel boundary lines in the
-(bits, cumulative-errors) plane. This is what a good Bit Error Rate Test (BERT) does instead of always running
+(bits, cumulative-errors) plane. This is what a good BERT does instead of always running
 to the bitter end.
 
-The test discriminates between an acceptable Bit Error Rate (BER) $p_0$ and a rejectable Bit Error Rate $p_1 > p_0$,
+The test discriminates between an acceptable BER $p_0$ and a rejectable BER $p_1 > p_0$,
 with producer's risk $\alpha$ (reject a good link) and consumer's risk $\beta$ (accept a
 bad one). Plot cumulative errors $E$ against transmitted bits $n$; the two decision lines
 are parallel with the same slope:
@@ -653,11 +653,11 @@ soaking the full run.
 
 The tradeoff is variable test time — fine for engineering bring-up and margining, less
 ideal for a fixed-takt production line where you usually pin the run length with the
-zero-error "3/Bit Error Rate" rule instead.
+zero-error "3/BER" rule instead.
 
 ### Practical notes (cross-ref the PCIe chapter)
 
-- **Per-lane vs aggregate.** A x16 link is 16 lanes; testing them in parallel feels like a 16x speedup, and for *time* it is — to prove $10^{-12}$ at 95% CL you still need $3 \times 10^{12}$ bits **on each lane**, but 16 lanes deliver those bits simultaneously, so the ~94 s single-lane run covers all 16 at once. The trap is in the *accounting*: if you pool the 16 lanes' errors and divide by the aggregate bit count, you prove only the *aggregate* Bit Error Rate (BER), which hides a single sick lane. Concretely, one lane running at $10^{-11}$ (10x over spec) alongside 15 clean lanes at $10^{-13}$ gives a pooled Bit Error Rate of $(10^{-11} + 15 \times 10^{-13})/16 \approx 7.2 \times 10^{-13}$ — under $10^{-12}$, so the aggregate **passes** while a lane is an order of magnitude out. Always **count errors per lane and margin the worst one**; report per-lane BER, never the link average.
+- **Per-lane vs aggregate.** A x16 link is 16 lanes; testing them in parallel feels like a 16x speedup, and for *time* it is — to prove $10^{-12}$ at 95% CL you still need $3 \times 10^{12}$ bits **on each lane**, but 16 lanes deliver those bits simultaneously, so the ~94 s single-lane run covers all 16 at once. The trap is in the *accounting*: if you pool the 16 lanes' errors and divide by the aggregate bit count, you prove only the *aggregate* BER, which hides a single sick lane. Concretely, one lane running at $10^{-11}$ (10x over spec) alongside 15 clean lanes at $10^{-13}$ gives a pooled BER of $(10^{-11} + 15 \times 10^{-13})/16 \approx 7.2 \times 10^{-13}$ — under $10^{-12}$, so the aggregate **passes** while a lane is an order of magnitude out. Always **count errors per lane and margin the worst one**; report per-lane BER, never the link average.
 - **Targets.** PCIe Gen1–5 spec raw BER $\le 10^{-12}$; **Gen6 (PAM4)** relaxes the *raw* target to $\le 10^{-6}$ and leans on **FEC** for an effective post-FEC BER $\le 10^{-12}$ — so for Gen6 you confidence-test the *post-FEC* error count, not the raw symbol errors. Note what the relaxed raw target does to run time: at $p = 10^{-6}$ the zero-error 95% run is only $n = 2.996/10^{-6} \approx 3 \times 10^{6}$ bits — microseconds — so the meaningful Gen6 acceptance run is the *post-FEC* one against the $10^{-12}$ effective target, back to the ~minutes-per-lane regime.
 
 ```text
@@ -721,8 +721,8 @@ $C_{pk} = 9/9 = 1.00$ — marginal, ~1,350 PPM. A $4^\circ$ mean shift (just ove
 moved the escape rate ~184×. The leverage is brutal because the defect rate lives in the
 *tail* of the normal: out there the curve is dropping near-exponentially, so a shift
 measured in fractions of a sigma multiplies the escape count by orders of magnitude. This
-is why thermal limits get guardbanded and why a slow $\bar X$ drift (caught by the Statistical Process Control (SPC)
-charts in *Statistical Process Control*) is worth chasing long before any single board
+is why thermal limits get guardbanded and why a slow $\bar X$ drift (caught by the SPC
+charts in *SPC*) is worth chasing long before any single board
 fails.
 
 **Two-sided, off-center.** Spec $45$–$55$, $\mu = 50$, $\sigma = 2$:
@@ -745,7 +745,7 @@ uncertainty* so you do not pass parts that are actually out, or scrap parts that
 actually in.
 
 - **Spec limits** come from the customer / design (the LSL/USL).
-- **Control limits** come from the *process* and go on the Statistical Process Control (SPC) chart — never put spec limits on a control chart (*Statistical Process Control*).
+- **Control limits** come from the *process* and go on the SPC chart — never put spec limits on a control chart (*SPC*).
 - **Test (guardband) limits** are the lines your tester actually uses, pulled *inside* the spec by a **guardband** $g$ to protect against gauge error:
 $$\text{upper test limit} = \text{USL} - g, \qquad \text{lower test limit} = \text{LSL} + g.$$
 
@@ -770,7 +770,7 @@ guardband back out and recover yield.
 
 ## Statistical Process Control (SPC)
 
-Capability is a snapshot; Statistical Process Control (SPC) is the movie. A control chart plots a statistic over time
+Capability is a snapshot; SPC is the movie. A control chart plots a statistic over time
 against a centerline (CL) and control limits (UCL/LCL) set at $\pm 3\sigma$ **of the
 plotted statistic** — derived from the process, not the spec. A point outside the limits,
 or any rule trip, signals an **assignable cause**: stop, investigate, correct. Random
@@ -839,7 +839,7 @@ Common Nelson additions: 6 steadily rising/falling (trend — tool wear); 14 alt
 
 ### Part Average Testing (PAT) — outlier screening
 
-Statistical Process Control (SPC) watches the *process*; **Part Average Testing (PAT)** watches the *part*. PAT is an
+SPC watches the *process*; **Part Average Testing (PAT)** watches the *part*. PAT is an
 outlier screen that flags a unit which passes every spec limit but sits far from its
 peers — the classic latent-defect signature on a compute board (a marginal solder joint,
 a leaky cap, a device drawing slightly more current than the population). The unit is "in
@@ -876,7 +876,7 @@ $10\sigma$-robust outlier from its peers, pulled as a latent-defect risk. On the
 dynamic PAT recomputes the center (say robust mean $2.03$ A) and re-centers the band so a
 uniformly higher-but-tight lot is not wrongly scrapped.
 
-> **PAT vs Statistical Process Control vs spec.** Spec limits protect the *customer* (fixed, from design). Control
+> **PAT vs SPC vs spec.** Spec limits protect the *customer* (fixed, from design). Control
 > limits (the variables-charts discussion) protect the *process* (from $\bar R/d_2$, on subgroup statistics). PAT
 > limits protect against the *individual latent outlier* (from robust part-population
 > statistics, tightened inside spec). Three different jobs — do not substitute one for
@@ -920,8 +920,8 @@ straight to *Setting limits and guardbands*: that 0.25 of gauge sigma is the unc
 ### Bland-Altman and tester-to-tester / Contract Manufacturer correlation
 
 GR&R answers "is this one station's measurement system capable?" The next question is
-"do two stations — or my station and the Contract Manufacturer's (CM) — *agree*?" When
-the same boards run on tester A and tester B (or in-house vs Contract Manufacturer), you must prove the two
+"do two stations — or my station and the Contract Manufacturer (CM)'s (CM) — *agree*?" When
+the same boards run on tester A and tester B (or in-house vs CM), you must prove the two
 read the same value before you trust a number that crosses sites. A naive correlation
 coefficient $r$ is the wrong tool: two testers can have $r=0.99$ yet a constant 0.3 A
 offset, which $r$ is blind to. The right tool is the **Bland-Altman** (difference-vs-mean)
@@ -974,7 +974,7 @@ $$\hat p \pm z_{\alpha/2}\sqrt{\frac{\hat p(1-\hat p)}{n}}.$$
 cannot honestly claim "96% yield" from this lot at 95% confidence. For small $x$ or $p$
 near 0/1, switch to an exact method — the zero-failure case is exactly the **rule of
 three**: 0 fails in $n$ gives an upper 95% bound $\approx 3/n$ (the bit-domain twin of the
-zero-error "3/Bit Error Rate (BER)" rule in *Bit Error Rate and Confidence*).
+zero-error "3/BER" rule in *BER and Confidence*).
 
 **Sample size to hit a margin $E$:** $n \approx z^2 p(1-p)/E^2$, worst case at $p = 0.5$.
 *95% CI, $\pm 3\%$:* $n = 1.96^2(0.25)/0.03^2 \approx 1068$. Note margin shrinks only as
@@ -1026,7 +1026,7 @@ sampling (*Sampling and AQL*) because the same defect fractions drive all three.
 (92.15%). Five steps each at 99%: $\text{RTY}=0.99^{5}=0.951$ — a line that is "99% at
 every step" still loses ~5% end-to-end. Ten steps at 99%: $0.99^{10}=0.904$. Step count is
 a yield tax. *On a Zoox compute board* the in-line gates (PCIe link, GPU Error-Correcting Code (ECC) scrub,
-Non-Volatile Memory Express (NVMe)/Double Data Rate (DDR) soak, Gigabit Multimedia Serial Link (GMSL) camera-lock) each carry an FPY; their product is what you start-quantity
+NVMe/Double Data Rate (DDR) soak, Gigabit Multimedia Serial Link (GMSL) camera-lock) each carry an FPY; their product is what you start-quantity
 against to hit a ship target.
 
 ### DPMO and DPPM — defects per million
@@ -1066,7 +1066,7 @@ So a DPMO target and a Cpk target are the same requirement in two dialects — b
 *which* convention (short-term Cpk vs shifted sigma level) the other party is quoting
 before you agree to a number.
 
-*Worked — a Gigabit Multimedia Serial Link (GMSL) camera-lock station.* A new station logs 18 camera-lock failures across
+*Worked — a GMSL camera-lock station.* A new station logs 18 camera-lock failures across
 60 boards, each board exercising 4 GMSL links (so 4 lock opportunities per board):
 $\text{DPMO} = 18/(60 \cdot 4) \times 10^{6} = 75{,}000$. Plugging in,
 sigma level $= 0.8406 + \sqrt{29.37 - 2.221\ln(75{,}000)} = 0.8406 + \sqrt{29.37 - 24.93}
@@ -1085,7 +1085,7 @@ shift, 2 stations. Per-station capacity $=480/20=24$ first-pass tests; total
 $2\times480=960$ station-minutes vs first-pass need $200\times20=4000$ min.
 $4000/960=4.17$ shifts of work — **you cannot do 200 in one shift with 2 stations.**
 Minimum stations $=\lceil 200\times20/480\rceil=\lceil8.33\rceil=9$ (before even counting
-the 3% retests). A long Bit Error Rate (BER) or Non-Volatile Memory Express (NVMe)/Double Data Rate (DDR) soak (*Bit Error Rate and Confidence*, the *Reliability* section) blows up the cycle time, so a soak
+the 3% retests). A long BER or NVMe/DDR soak (*BER and Confidence*, the *Reliability* section) blows up the cycle time, so a soak
 station is usually parallelized — many DUTs per station — rather than run in series at takt.
 
 ### Cost of test and where to put the gate
@@ -1097,7 +1097,7 @@ integration costs orders of magnitude more (the classic 10x-per-stage rule of th
 asymmetry is why the Bayes math in *Conditional probability and Bayes* matters — and why on a high-yield line a high
 false-positive rate, not low sensitivity, is usually what bleeds money. Place the gate
 where the marginal escape cost first exceeds the marginal test cost: cheap, high-coverage
-screens early; expensive soaks (Bit Error Rate (BER), HTOL) reserved for what the cheap screens cannot see.
+screens early; expensive soaks (BER, HTOL) reserved for what the cheap screens cannot see.
 
 ---
 
@@ -1135,7 +1135,7 @@ budget of ~228** that you then allocate down to components.
 
 **Series** (any one failure kills the system) — failure rates add:
 $$\lambda_\text{sys} = \sum_i \lambda_i, \qquad \text{MTBF}_\text{sys} = 1/\lambda_\text{sys}.$$
-*Board: 4 GPU (50,000 h each), 2 Non-Volatile Memory Express (NVMe) (200,000 h), 1 Network Interface Card (NIC) (500,000 h):*
+*Board: 4 GPU (50,000 h each), 2 NVMe (200,000 h), 1 NIC (500,000 h):*
 $\lambda = 8\times10^{-5} + 1\times10^{-5} + 2\times10^{-6} = 9.2\times10^{-5}/$h,
 MTBF $= 10{,}870$ h $\approx 1.24$ yr continuous. In FIT: $92{,}000$ FIT for the board.
 Run that through the AFR bridge above and it is sobering: $\text{AFR} = 1 - e^{-9.2\times10^{-5}\times8760} = 55\%$ — more than half of these boards would fail
@@ -1176,7 +1176,7 @@ is the one you will quote most.)
 > *mechanism's* published $E_a$ (electromigration ~0.7 eV, oxide/dielectric breakdown
 > ~0.3–0.7 eV, some ionic-contamination mechanisms ~1.0 eV), and when a failure mode is
 > unknown, use a **conservative low** $E_a$ — guessing high inflates your demonstrated life
-> and is exactly how an under-screened part reaches a robotaxi. A Non-Volatile Memory Express (NVMe) or Double Data Rate (DDR) soak gated
+> and is exactly how an under-screened part reaches a robotaxi. A NVMe or DDR soak gated
 > on Arrhenius is only as trustworthy as the $E_a$ behind it.
 
 ---
@@ -1215,7 +1215,7 @@ a decade.
 **Orders of magnitude and the rule of 72-ish.**
 - Powers of two: $2^{10} \approx 10^3$, so $2^{20} \approx 10^6$, $2^{30} \approx 10^9$. A 32-bit counter wraps at ~$4\times10^9$.
 - dB shortcuts: $\times 2 = +3$ dB, $\times 10 = +10$ dB. A $\times 8$ gain is $3\times3 = 9$ dB.
-- "3/Bit Error Rate (BER)" for run time (the zero-error "3/Bit Error Rate" rule); "3/n" rule of three for a zero-failure upper bound (the proportion-CI discussion).
+- "3/BER" for run time (the zero-error "3/BER" rule); "3/n" rule of three for a zero-failure upper bound (the proportion-CI discussion).
 
 **BER run time in your head.** $n \approx 3/p$ for 95% CL, then divide by the line rate.
 $10^{-12}$ at $32$ Gb/s: $3\times10^{12}$ bits $/ 3\times10^{10}$ bit/s $\approx 100$ s.

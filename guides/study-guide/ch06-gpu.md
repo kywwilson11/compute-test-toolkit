@@ -8,8 +8,8 @@ remapping, XID error codes, and a thermal-under-load behavior that idle tells yo
 about.
 
 This chapter assumes the **PCIe chapter** for the link layer (Link Training and Status State Machine (LTSSM), Advanced Error Reporting (AER), lane margining,
-the arm/stress/read discipline) and the **Memory chapter** for the host-DRAM Error Detection and Correction (EDAC) story —
-GPU Error-Correcting Code is the on-package analog of both. What you get here: the architecture you actually
+the arm/stress/read discipline) and the **Memory chapter** for the host-Dynamic Random-Access Memory (DRAM) Error Detection and Correction (EDAC) story —
+GPU ECC is the on-package analog of both. What you get here: the architecture you actually
 need (not a graphics-programming tour), ECC in real depth, the XID table with an action
 per code, the throttle-reasons bitmask decoded, NVLink, the health-check command set
 (`nvidia-smi -q`, DCGM), failure signatures mapped to root cause, and the manufacturing
@@ -21,7 +21,7 @@ flows — what is a screen versus what is an Return Merchandise Authorization (R
 ## 1. GPU Architecture, the Parts That Matter for Test
 
 You are not writing CUDA kernels. But you cannot test a part you cannot reason about, and
-the failure signatures map directly onto the architecture — a double-bit Error-Correcting Code (ECC) error lives in
+the failure signatures map directly onto the architecture — a double-bit ECC error lives in
 a specific memory array, a thermal slowdown throttles specific clock domains, an NVLink
 error is a specific SerDes. So: the architecture, filtered to what changes how you test.
 
@@ -54,7 +54,7 @@ What matters for test:
   the parts that get hot and draw power under real load are the tensor cores. A thermal
   soak that only loads FP32 CUDA cores under-stresses the part; `gpu-burn --tensor` and
   DCGM's targeted-stress plugins exist precisely to drive the tensor path.
-- **L2 and on-chip RAMs have Error-Correcting Code (ECC) too**, not just the external memory. When you read ECC
+- **L2 and on-chip RAMs have ECC too**, not just the external memory. When you read ECC
   counters you are reading errors aggregated across HBM/GDDR *and* the internal SRAMs.
 
 ### 1.2 Memory: HBM vs GDDR, and why you care
@@ -65,9 +65,9 @@ you are looking at:
 | | **HBM2e / HBM3** | **GDDR6 / GDDR6X** |
 |---|---|---|
 | Where | A100, H100, high-end datacenter | L40, consumer, many automotive parts |
-| Construction | Stacked Dynamic Random-Access Memory (DRAM) dies on a silicon interposer, in-package | Discrete chips around the GPU on the PCB |
+| Construction | Stacked DRAM dies on a silicon interposer, in-package | Discrete chips around the GPU on the PCB |
 | Bandwidth | Very high (TB/s), wide bus (1024-bit+ per stack) | High (hundreds of GB/s), narrower bus |
-| Error-Correcting Code (ECC) | Native, side-band Error-Correcting Code on extra dies | Often **inline/soft ECC** — capacity carved from the array |
+| ECC | Native, side-band ECC on extra dies | Often **inline/soft ECC** — capacity carved from the array |
 | Test implication | A bad stack is unrepairable in-package -> RMA | Can sometimes be a single discrete chip |
 
 The ECC distinction bites you. On older GDDR parts, enabling ECC **reduces usable memory and
@@ -114,18 +114,18 @@ and parsing free-text `-q` output is fragile; §6.1).
 
 ## 2. The ECC Model in Depth
 
-Datacenter GPUs run **Error-Correcting Code (ECC)** over their external memory and internal RAMs. This is the GPU's
+Datacenter GPUs run **ECC** over their external memory and internal RAMs. This is the GPU's
 error-detection conscience, and getting the gating right is the single most common place a
-GPU test is written wrong. Treat this section as the GPU analog of the Advanced Error Reporting (AER) chapter: same
+GPU test is written wrong. Treat this section as the GPU analog of the AER chapter: same
 philosophy (arm → stress → read; corrected vs uncorrected; volatile vs lifetime), different
 registers.
 
 ### 2.1 Single-bit (SBE) vs double-bit (DBE)
 
-Error-Correcting Code (ECC) on these parts is SECDED-class (Single-Error-Correct, Double-Error-Detect), with the
+ECC on these parts is SECDED-class (Single-Error-Correct, Double-Error-Detect), with the
 high-end memory controllers adding stronger codes:
 
-- **Corrected error — single-bit (SBE).** A single flipped bit the Error-Correcting Code fixed. Data is fine.
+- **Corrected error — single-bit (SBE).** A single flipped bit the ECC fixed. Data is fine.
   The exact analog of a PCIe *correctable* error. A handful over a long soak can be normal
   (cosmic rays, a marginal cell); a **high or climbing** SBE rate is a degrading-memory
   finding, and NVIDIA raises **XID 92** when the rate crosses a threshold.
@@ -136,7 +136,7 @@ high-end memory controllers adding stronger codes:
 
 ### 2.2 Volatile vs aggregate — the gating gotcha
 
-This is the distinction that breaks naive tools. NVIDIA keeps **two** sets of Error-Correcting Code (ECC) counters:
+This is the distinction that breaks naive tools. NVIDIA keeps **two** sets of ECC counters:
 
 | Counter set | Resets on | Lives in | What it tells you |
 |---|---|---|---|
@@ -154,7 +154,7 @@ queries `ecc.errors.uncorrected.aggregate.total` and fails on nonzero — a real
 — you scrap good, already-healed parts on their lifetime history. Conversely, gating only on
 aggregate can *miss* a fresh error if the part was reset between insertion and test.
 
-The correct flow mirrors Advanced Error Reporting (AER)'s arm/stress/read:
+The correct flow mirrors AER's arm/stress/read:
 
 1. **Baseline / arm** — read (or reset) the volatile counters so you are counting *your*
    stress window, not boot + enumeration + the previous unit.
@@ -189,7 +189,7 @@ parallel **Volatile** and **Aggregate** subtrees, each with its own SBE/DBE spli
 ```
 
 This exact part **passes**: volatile uncorrectable is 0 (nothing happened during your
-window), even though aggregate Dynamic Random-Access Memory (DRAM) uncorrectable is 1 — one lifetime DBE it took, remapped,
+window), even though aggregate DRAM uncorrectable is 1 — one lifetime DBE it took, remapped,
 and has run clean through since. A tool that gates on `ecc.errors.uncorrected.aggregate.total`
 scraps this good part; the correct tool gates on the **Volatile** subtree and logs the
 **Aggregate** subtree as genealogy. Two field-name details that trip up parsers: the
@@ -215,7 +215,7 @@ just log it — it **retires the bad memory** so it is never used again. Two mec
 |---|---|---|
 | Correctable / Uncorrectable **remap count** | Rows already remapped (lifetime) | History flag, not a fail by itself |
 | **Remap Pending : Yes** | A remap is queued but needs a **GPU reset** to take effect | The part is in a degraded state -> reset and re-verify; on a new unit, a finding |
-| **Remap Failure Occurred : Yes** | A remap was attempted and **failed** -> no spare row, or the remap mechanism itself failed | **Hard fail / Return Merchandise Authorization (RMA).** The part can no longer protect itself |
+| **Remap Failure Occurred : Yes** | A remap was attempted and **failed** -> no spare row, or the remap mechanism itself failed | **Hard fail / RMA.** The part can no longer protect itself |
 
 **When a remap fails** is the case that must always fail a unit: it means either the spare
 rows for that bank are exhausted (the memory is badly degraded) or the remapping hardware is
@@ -226,8 +226,8 @@ unrecoverable. **XID 64** is the kernel signature of this; **XID 63** is the ben
 fields above out of `nvidia-smi -q -d ROW_REMAPPER`.
 
 What actually trips the remap-failure flag is worth knowing, because it tells you *how
-degraded* a part is and it is also NVIDIA's stated Return Merchandise Authorization criterion. Per NVIDIA's GPU memory
-error management docs, every Dynamic Random-Access Memory (DRAM) bank ships with a fixed pool of spare rows, and a
+degraded* a part is and it is also NVIDIA's stated RMA criterion. Per NVIDIA's GPU memory
+error management docs, every DRAM bank ships with a fixed pool of spare rows, and a
 remapping **failure** is raised when any of these happens:
 
 - a remap is attempted for an uncorrectable error on a bank that **already has 8 rows
@@ -265,7 +265,7 @@ spare rows remain (Max = full spare pool, down to None = exhausted). A bank in *
 **None** is a degrading-part early warning even when the failure flag is still `No` — log it
 as a trend metric, the same way you trend SBE rate.
 
-> **The one-line Error-Correcting Code (ECC) gate.** *Fail on: volatile DBE > 0, remap-failure, remap-pending, or a
+> **The one-line ECC gate.** *Fail on: volatile DBE > 0, remap-failure, remap-pending, or a
 > critical XID. Log (do not fail) on: aggregate DBE, lifetime remap count.* That single rule
 > is what separates a correct GPU test from one that either passes corrupt parts or scraps
 > good ones.
@@ -362,9 +362,9 @@ nvidia-smi -q -d ECC | grep -A2 "Ecc Mode"     # Current: Enabled / Pending: Ena
 nvidia-smi -e 1 -i 0                            # ENABLE ECC on GPU 0 -- needs a GPU reset to apply
 ```
 
-Error-Correcting Code (ECC) mode is per-GPU persistent state in the InfoROM, and toggling it requires a reset (the
+ECC mode is per-GPU persistent state in the InfoROM, and toggling it requires a reset (the
 `Pending` line shows the value that takes effect after reset). A datacenter/AV part **must**
-run with Error-Correcting Code enabled; a station check that confirms `Ecc Mode: Current: Enabled` belongs in
+run with ECC enabled; a station check that confirms `Ecc Mode: Current: Enabled` belongs in
 your baseline, because a part that shipped (or got flashed) with ECC off has no memory
 protection at all.
 
@@ -420,7 +420,7 @@ and one of them is a classic trap. The official `-s` metric groups are:
 | `c` | Proc (SM) and memory clocks (MHz) |
 | `v` | Power violations (%) and thermal violations (boolean) |
 | `m` | Frame-buffer + BAR1 (+ confidential-compute) memory used (MB) |
-| `e` | **Error-Correcting Code (ECC) errors (aggregate SBE/DBE counts) AND PCIe replay errors** -- not ECC alone |
+| `e` | **ECC errors (aggregate SBE/DBE counts) AND PCIe replay errors** -- not ECC alone |
 | `t` | **PCIe Rx/Tx throughput (MB/s)** -- this is the trap: `t` is *throughput*, NOT temperature |
 
 The gotcha that bites people: `t` is **PCIe throughput**, and temperature comes from `p`.
@@ -442,7 +442,7 @@ into `dmesg` as:
 NVRM: Xid (PCI:0000:65:00): 48, pid=12345, name=python, ...
 ```
 
-Learning to read them is the GPU analog of decoding Advanced Error Reporting (AER) bits: **each code maps to a
+Learning to read them is the GPU analog of decoding AER bits: **each code maps to a
 root-cause bucket** (app vs memory vs bus vs NVLink vs firmware), which is what makes XID
 monitoring the single highest-signal GPU manufacturing check. You scrape `dmesg` (or
 journald) for `NVRM: Xid` across the stress window and **bucket by code.** The toolkit's
@@ -457,8 +457,8 @@ The codes that actually matter, with the action:
 | **31** | GPU memory page fault (FIFO: MMU Error) | App (usually) | Illegal address access. Usually the test app's bug; can be driver/HW if it repeats across apps |
 | **43** | GPU stopped processing (Channel Reset Verification Error) | SW teardown | The driver stopped a misbehaving context (app abort/SIGKILL). GPU stays healthy. Not a fail |
 | **45** | Preemptive cleanup / channel removal (due to previous errors) | SW teardown | Robust-channel recovery after an app was killed. Benign for the GPU |
-| **48** | **Double-Bit Error-Correcting Code (ECC) (DBE)** | **Memory HW** | **Uncorrectable memory error.** Reset/reboot to clear; **fail the unit.** Repeated across resets -> Return Merchandise Authorization (RMA) |
-| **62** | Internal micro-controller halt | Firmware HW | Firmware fault -> GPU reset. Repeated -> Return Merchandise Authorization |
+| **48** | **Double-Bit ECC (DBE)** | **Memory HW** | **Uncorrectable memory error.** Reset/reboot to clear; **fail the unit.** Repeated across resets -> RMA |
+| **62** | Internal micro-controller halt | Firmware HW | Firmware fault -> GPU reset. Repeated -> RMA |
 | **63** | Row-remap / page-retirement **event (succeeded)** | Memory HW | A row was successfully remapped; **reset pending.** On a *new* unit this is a finding (why did a fresh part remap?) -> reset, re-verify, log |
 | **64** | Row-remap / page-retirement **FAILURE** | **Memory HW** | Remap **failed** -- no spare row or broken remap HW. **Hard fail / RMA** (Section 2.3) |
 | **74** | **NVLink error** | **NVLink HW** | CRC/replay/recovery problem on a GPU-to-GPU or NVSwitch link. Read `nvidia-smi nvlink -e`; can be HW -> fail/RMA |
@@ -478,7 +478,7 @@ The codes that actually matter, with the action:
 
 A subtlety worth internalizing: **XID 79 ("fell off the bus") is a PCIe/power/thermal story,
 not a GPU-internal one.** When you see it, you do not start by suspecting the silicon — you
-correlate with the PCIe Advanced Error Reporting counters on that GPU's root port (PCIe chapter), the rail
+correlate with the PCIe AER counters on that GPU's root port (PCIe chapter), the rail
 voltages (a droop under load can drop the GPU off the link), and the thermal log (an
 over-temp can do the same). The XID tells you *what* happened; the surrounding telemetry
 tells you *which layer*.
@@ -537,7 +537,7 @@ pcie.replay.counter,clocks_throttle_reasons.active \
 This is exactly the field list the toolkit's `_query_nvidia_smi()` requests. Note it asks
 for **both** `.volatile.total` and `.aggregate.total` for corrected and uncorrected — so the
 code can gate on volatile and log aggregate (§2.2). The few things CSV cannot give you (the
-row-remapper detail, the Error-Correcting Code (ECC) *mode*) you fetch with a scoped `-q -d ROW_REMAPPER` and parse
+row-remapper detail, the ECC *mode*) you fetch with a scoped `-q -d ROW_REMAPPER` and parse
 narrowly, which is why `_query_row_remap()` is a separate function.
 
 The minimal Python pattern (the toolkit's `gpu.py` is the full version):
@@ -610,17 +610,17 @@ limit). `-r 4` adds **Memtest** and **Pulse Test**. A plaintext run prints a pas
 
 In a harness you do not parse that grid — you run `dcgmi diag -r 3 -j` and read the JSON,
 where each test carries a `status` plus, on failure, a `warnings` array with the specific
-reason (a thermal-violation message, a NVVS error code, an Error-Correcting Code (ECC) count). The `Fail - GPU 2` on
+reason (a thermal-violation message, a NVVS error code, an ECC count). The `Fail - GPU 2` on
 Targeted Stress above is the hook: the JSON for that entry will say *why* (most often a
 thermal throttle the stress provoked, which points you straight back to the §3.2 throttle
 bits for that GPU). Fold the per-test status into your pytest result and attach the warning
 text to the failure so the bench sees the bucket, not just "DCGM failed."
 
-`dcgmi diag -r 3` is close to a turnkey GPU module test: memory tests (catch Error-Correcting Code/memory
+`dcgmi diag -r 3` is close to a turnkey GPU module test: memory tests (catch ECC/memory
 defects), compute stress (drives thermal + power), PCIe checks, all with structured pass/fail.
 But it is not the *whole* test. Your job is to **wrap it**: set the right plugin thresholds,
 parse `-j` JSON, fold it into the pytest harness, and **add what it does not cover** — your
-PCIe lane margining (PCIe chapter), thermal-correlated Advanced Error Reporting (AER), XID bucketing across the soak,
+PCIe lane margining (PCIe chapter), thermal-correlated AER, XID bucketing across the soak,
 and rail-voltage measurements with a real DMM (power chapter). DCGM complements **gpu-burn**:
 gpu-burn is a brute max-thermal soak that proves the *cooling solution*; `-r 3/4` gives you
 structured per-subsystem coverage. Run both.
@@ -652,7 +652,7 @@ GPU drops off (XID 79) when the whole board is loaded at once.
 | Counter | What it counts | Reading it |
 |---|---|---|
 | **CRC FLIT Error** | Receive flow-control-digit (header/control) CRC errors | A few isolated ones can be recovered; a climbing rate is a marginal lane/SerDes |
-| **CRC Data Error** | Receive data-payload CRC errors | Same -- physical-layer integrity; climbing == Signal Integrity (SI)/SerDes problem |
+| **CRC Data Error** | Receive data-payload CRC errors | Same -- physical-layer integrity; climbing == SI/SerDes problem |
 | **Replay Error** | Transmit-side replays (a flit had to be re-sent) | The NVLink analog of a PCIe replay -- climbing == marginal link |
 | **Recovery Error** | Link had to run its recovery/retrain sequence | The serious one: the link went down far enough to need recovery; repeated == failing link |
 
@@ -684,26 +684,26 @@ unit fails on the fixture.
 
 | Symptom (what you observe) | Most likely root cause | First moves |
 |---|---|---|
-| Link at Gen3 (expected Gen4) / x8 (expected x16) | PCIe Signal Integrity (SI) margin, bent pin, bifurcation, thermal | **It's a PCIe problem** -- compare LnkCap both ends, retest hot/cold, lane-margin per lane (PCIe chapter) |
-| Replay count climbing under load | PCIe physical-layer SI, marginal lane, temperature | Decode Advanced Error Reporting (AER) bits on the root port; thermal soak; margining (PCIe chapter) |
-| Volatile **DBE > 0** / **XID 48** | Uncorrectable memory error (HBM/GDDR or SRAM) | **Fail the unit.** Check row-remapper state; repeated across resets -> Return Merchandise Authorization (RMA) |
-| **XID 64** / Remap Failure = Yes | Spare rows exhausted or broken remap HW | **Hard fail / Return Merchandise Authorization** -- the part can no longer self-heal (Section 2.3) |
+| Link at Gen3 (expected Gen4) / x8 (expected x16) | PCIe SI margin, bent pin, bifurcation, thermal | **It's a PCIe problem** -- compare LnkCap both ends, retest hot/cold, lane-margin per lane (PCIe chapter) |
+| Replay count climbing under load | PCIe physical-layer SI, marginal lane, temperature | Decode AER bits on the root port; thermal soak; margining (PCIe chapter) |
+| Volatile **DBE > 0** / **XID 48** | Uncorrectable memory error (HBM/GDDR or SRAM) | **Fail the unit.** Check row-remapper state; repeated across resets -> RMA |
+| **XID 64** / Remap Failure = Yes | Spare rows exhausted or broken remap HW | **Hard fail / RMA** -- the part can no longer self-heal (Section 2.3) |
 | Remap Pending = Yes on a new unit | A remap is queued (recent uncorrectable) | Reset, re-verify; ask *why a fresh part remapped* -- a finding |
 | High/climbing SBE rate / **XID 92** | Degrading memory cells | Trend it across the soak; fail if it climbs; correlate with temp |
 | Clocks sag under load, throttle bits `0x40`/`0x20` | **Cooling problem** -- bad TIM/mount, dead fan, pump-out | Re-seat heatsink, re-paste, check fan RPM; *not* a silicon defect |
 | Clocks sag, throttle bit `0x80` (power brake) | Power-delivery problem -- PSU/VRM asserted brake | Scope the rails under load; check PSU sizing and the power-brake net |
 | Clocks sag, only `0x04` (SW power cap) at high load | Often **normal** -- hitting the configured power limit | Check the limit is set correctly (`-q -d POWER`); raise if too conservative |
 | **XID 79** -- "fell off the bus" | **PCIe / power / thermal HW** (not GPU-internal) | Correlate AER (root port) + rail voltage + temp; reseat; **hard fail** |
-| **XID 74** / NVLink CRC/replay climbing | NVLink SerDes problem | `nvidia-smi nvlink -e`; check the peer GPU and NVSwitch; can be HW |
+| **XID 74** / NVLCRC/replay climbing | NVLink SerDes problem | `nvidia-smi nvlink -e`; check the peer GPU and NVSwitch; can be HW |
 | `temperature.memory` high but core OK | HBM/GDDR cooling path (separate from die) | Check memory thermal pads/contact; HBM throttles ~95 degC |
-| GPU not enumerated at all (`nvidia-smi -L` short) | Power rail, PCIe link dead, seating, BIOS | Rails first; `dmesg` for Link Training and Status State Machine (LTSSM)-stuck/training-fail; reseat; bifurcation (PCIe chapter) |
+| GPU not enumerated at all (`nvidia-smi -L` short) | Power rail, PCIe link dead, seating, BIOS | Rails first; `dmesg` for LTSSM-stuck/training-fail; reseat; bifurcation (PCIe chapter) |
 | **XID 119/120** -- GSP fault | GPU firmware (GSP) | Reset; reflash/match driver+firmware; repeated -> RMA |
 
 The throughline: **the throttle bitmask and the XID code each name a layer.** Thermal-bit
 throttle → cooling. Power-brake bit → power delivery. XID 48/64/92/94/95 → memory. XID 79 →
 link/power/thermal (go correlate). XID 74 → NVLink. Your test should never report only "GPU
 failed" — it should report *which bit / which XID*, because that is the first fork in the
-debug tree, and it is what lets Electrical Engineering (EE) fix the board instead of guessing.
+debug tree, and it is what lets EE fix the board instead of guessing.
 
 ---
 
@@ -724,11 +724,11 @@ added to a part that was going to fail anyway.
 - **Burn-in / thermal soak.** `gpu-burn` or `dcgmi diag -r 3` for a sustained interval
   (typically 15+ minutes to reach thermal steady state). This is where a bad TIM application,
   a dead fan, or paste pump-out surfaces as a thermal throttle — defects that **cannot** be
-  caught at room-temperature Printed Circuit Board Assembly.
-- **Error-Correcting Code (ECC) stress.** `dcgmi diag -r 3/4` memory tests (and `cuda-memtest --stress` if available)
+  caught at room-temperature PCBA.
+- **ECC stress.** `dcgmi diag -r 3/4` memory tests (and `cuda-memtest --stress` if available)
   drive the memory array to surface weak cells -> volatile DBE / row-remap events.
 - **Thermal-correlated link + XID monitoring.** Run the burn while watching the throttle
-  bitmask, Advanced Error Reporting (AER) on the PCIe link, and `dmesg` XIDs — the marginal-lane-at-85degC and
+  bitmask, AER on the PCIe link, and `dmesg` XIDs — the marginal-lane-at-85degC and
   fell-off-the-bus-under-load defects only appear here.
 - **Power characterization.** Measure the rails with a DMM/scope under full load; confirm no
   droop, no power-brake assertion.
@@ -752,7 +752,7 @@ about *why each parameter is set where it is*:
   sync-boost, or `0x4` SW power cap if you deliberately capped power); volatile DBE stays 0;
   no new XID in the windowed `dmesg` scrape. A bad TIM mount shows the opposite: temperature
   keeps climbing to the hard limit and `0x40` (HW thermal) latches.
-- **Error-Correcting Code-stress as a distinct objective.** Thermal soak proves the *cooling*; the memory test
+- **ECC-stress as a distinct objective.** Thermal soak proves the *cooling*; the memory test
   (DCGM **Memtest** / **Memory**, walking-1s and pattern writes) proves the *array*. They are
   different defects — a part can cool perfectly and still have weak cells — so a complete
   module test runs both, not one as a proxy for the other. The ECC-stress pass criterion is
@@ -779,13 +779,13 @@ The distinction that decides what happens to a failing unit:
   heatsink, re-apply TIM, replace a fan, re-flash firmware, reseat the card. A thermal
   throttle from a bad mount, an XID 119 from mismatched firmware, a Gen3 link from a poorly
   seated card: you rework and re-test, and the unit passes. The defect never leaves your line.
-- **An Return Merchandise Authorization (RMA) is a defect in the GPU itself that you cannot fix** — a DBE that recurs across
+- **An RMA is a defect in the GPU itself that you cannot fix** — a DBE that recurs across
   resets, a remap *failure* (no spare rows / broken remap HW, XID 64), a recurring NVLink HW
   fault (XID 74), a part that repeatedly falls off the bus after power/thermal/seating have
   been cleared (XID 79). The part goes back to the vendor.
 
-The judgment call lives in the middle: **a part with nonzero *aggregate* Error-Correcting Code (ECC) or a lifetime
-remap count is not automatically either.** It is Return Merchandise Authorization *history* (§2.2) — most often it tells
+The judgment call lives in the middle: **a part with nonzero *aggregate* ECC or a lifetime
+remap count is not automatically either.** It is RMA *history* (§2.2) — most often it tells
 you a **used or returned part entered your new-build line** (a supply-chain/genealogy
 finding), which is why you *log* aggregate and remap counts on every unit even when they
 pass. A fresh part should have a clean lifetime history; one that does not is a flag for

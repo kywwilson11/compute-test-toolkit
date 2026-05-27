@@ -2,10 +2,10 @@
 
 Memory test has the same shape as every other interface in this guide: **clear the
 counters → stress it (hot) → read the counters → decode an error to a physical part you
-can RMA.** The counter system for Dynamic Random-Access Memory (DRAM) is **Error Detection and Correction (EDAC)**, and it
+can Return Merchandise Authorization (RMA).** The counter system for Dynamic Random-Access Memory (DRAM) is **Error Detection and Correction (EDAC)**, and it
 is the DRAM analog of PCIe Advanced Error Reporting (AER) and GPU Error-Correcting Code (ECC) — same mental model, different sysfs. On Zoox's
 server-grade compute the DRAM is almost certainly **ECC** (RDIMM/LRDIMM), and verifying
-that Error-Correcting Code *actually detects and corrects* — not just that the box boots — is a functional-
+that ECC *actually detects and corrects* — not just that the box boots — is a functional-
 safety requirement, not a nicety: ECC is a fault-tolerance mechanism the manufacturing test
 must prove engages.
 
@@ -20,15 +20,15 @@ must prove engages.
 You do not need to design a memory controller, but a handful of facts change what you test
 and how you read a failure:
 
-- **The bus is 64 data bits; Error-Correcting Code (ECC) adds 8** for a **72-bit** channel. That extra Dynamic Random-Access Memory (DRAM) device
+- **The bus is 64 data bits; ECC adds 8** for a **72-bit** channel. That extra DRAM device
   per rank is what carries the ECC syndrome — enough for **SECDED** (Single-Error-Correct,
   Double-Error-Detect) per 64-bit word.
-- **Ranks and channels.** A Dual Inline Memory Module (DIMM) has one or more **ranks** (a set of DRAM chips the
+- **Ranks and channels.** A DIMM has one or more **ranks** (a set of DRAM chips the
   controller activates together to make a full data word). The controller has multiple
-  **channels**, each driving one or more DIMMs. Error Detection and Correction (EDAC) reports per-`csrow`/per-`channel` (DDR4
+  **channels**, each driving one or more DIMMs. EDAC reports per-`csrow`/per-`channel` (DDR4
   style) or per-`dimm`/per-`rank` (DDR5 style), which is the granularity at which you localize
   a fault.
-- **DDR5 splits each DIMM into two independent 32-bit sub-channels** (so a DDR5 Dual Inline Memory Module presents
+- **DDR5 splits each DIMM into two independent 32-bit sub-channels** (so a DDR5 DIMM presents
   as *two* narrower channels), runs at higher data rates, moves voltage regulation **onto the
   DIMM** (the PMIC), and adds **on-die ECC** (below). The sub-channel split matters because a
   fault localizes to a sub-channel, and the higher rates make signal-integrity and thermal
@@ -44,16 +44,16 @@ and how you read a failure:
   double-bit** error. A corrected single-bit event is a **CE**; a detected-but-uncorrectable
   double-bit (or worse) event is a **UE**.
 - **Chipkill / SDDC (Single Device Data Correction):** high-end controllers go beyond SECDED
-  and can **correct an entire failed x4 (or x8) Dynamic Random-Access Memory (DRAM) device** by spreading Reed-Solomon symbols
+  and can **correct an entire failed x4 (or x8) DRAM device** by spreading Reed-Solomon symbols
   across devices. This is a stronger scheme than basic 72-bit SECDED — a whole chip can die and
   the system keeps running and correcting. Know whether the platform has it, because it changes
   what "a CE" means (the controller may be masking a dead device).
-- **On-die Error-Correcting Code (ODECC, DDR5):** *internal* single-bit correction **inside each DRAM die**,
+- **On-die ECC (ODECC, DDR5):** *internal* single-bit correction **inside each DRAM die**,
   before data leaves the chip. DDR5 mandates it (it is a *yield* feature — it lets the fab
   ship die with isolated weak cells): each die computes a SECDED-class code over an internal
   ~128-bit word with 8 extra check bits and corrects single-bit errors on read. The check
   bits are **not** transmitted on the bus, so the correction is **invisible to the host and
-  does not replace system ECC** — the host's Error Detection and Correction counters never see an error ODECC silently
+  does not replace system ECC** — the host's EDAC counters never see an error ODECC silently
   fixed. DDR5 also adds **on-die Error Check and Scrub (ECS)**, an internal scrub the die runs
   on its own array, again invisibly. The danger is mistaking "DDR5 has ECC" (on-die, internal,
   invisible) for "system ECC is on and clean" (controller-level, the 72-bit channel ECC, which
@@ -82,11 +82,11 @@ and how you read a failure:
 ### The memory controller (where the counters come from)
 
 On modern server silicon the **integrated memory controller (iMC)** lives on the CPU die,
-one or more per socket, each owning several channels. When Error-Correcting Code (ECC) corrects or detects an error,
+one or more per socket, each owning several channels. When ECC corrects or detects an error,
 the iMC logs it in **machine-check (MCA) registers**, and the platform reports it either via
-a **CMCI** (Corrected Machine Check Interrupt) for CEs or an **MCE** for UEs. The Linux Error Detection and Correction (EDAC)
+a **CMCI** (Corrected Machine Check Interrupt) for CEs or an **MCE** for UEs. The Linux EDAC
 subsystem (and `rasdaemon`) consumes those events and surfaces them as the counters you read.
-This is why the model is identical to Advanced Error Reporting (AER): a hardware block latches errors into registers, an
+This is why the model is identical to AER: a hardware block latches errors into registers, an
 OS layer drains them, and your test arms/stresses/reads. The chipset-specific EDAC driver
 (`skx_edac`, `i10nm_edac`, `amd64_edac`, etc.) is what knows your controller's topology and
 must be **loaded** for `/sys/devices/system/edac/mc/` to populate — a missing driver looks
@@ -111,7 +111,7 @@ cat /sys/devices/system/edac/mc/mc0/dimm0/size              # MB
 ls /sys/devices/system/edac/mc/mc0/
 ```
 
-The structure under each `mcN` (these attribute names are the kernel Error Detection and Correction (EDAC) sysfs ABI):
+The structure under each `mcN` (these attribute names are the kernel EDAC sysfs ABI):
 
 ```text
 /sys/devices/system/edac/mc/mc0/
@@ -159,7 +159,7 @@ S4ECD4ED
 ```
 
 **To read it in a test:** sum `ce_count`/`ue_count` across every `mcN` for the totals, and
-walk each `dimmN`/`rankN` for the per-Dual Inline Memory Module (DIMM) breakdown, falling back to the directory name
+walk each `dimmN`/`rankN` for the per-DIMM breakdown, falling back to the directory name
 (`dimm0`) when `dimm_label` is empty. That is exactly what the toolkit's `_read_edac()` does:
 
 ```python
@@ -192,7 +192,7 @@ a board whose label DB you have not built yet.
 ### rasdaemon and decoding an error to a physical DIMM silkscreen label
 
 This is the highest-value capability in the whole chapter, because it turns a vague "the
-board has memory errors" into an **actionable Return Merchandise Authorization (RMA)**: *"DIMM_A1 is throwing 40 CE/hour, swap
+board has memory errors" into an **actionable RMA**: *"DIMM_A1 is throwing 40 CE/hour, swap
 that stick."* `rasdaemon` is the userspace daemon that consumes the kernel's Reliability, Availability, Serviceability (RAS) tracepoints,
 decodes each CE/UE, and logs it — with the DIMM label and a timestamp — to a SQLite DB.
 
@@ -210,7 +210,7 @@ ras-mc-ctl --layout         # the memory topology (controllers, channels, slots,
   2 2026-05-24 11:42:09 -0700  1 Corrected error(s)  memory read error at CPU_SrcID#0_MC#1_Chan#0_DIMM#0  ... label="DIMM_A1"
 ```
 
-`--summary` rolls the same data into per-Dual Inline Memory Module (DIMM) totals (the `location:` tuple is
+`--summary` rolls the same data into per-DIMM totals (the `location:` tuple is
 `mc:top:mid:low`, i.e. controller : channel : slot, with `-1` meaning "not applicable at
 this level"):
 
@@ -260,9 +260,9 @@ or fail.
 
 The error classes and what each means for a verdict:
 
-- **CE (Corrected Error):** a single-bit flip the Error-Correcting Code (ECC) fixed. The data was *correct* — nothing
+- **CE (Corrected Error):** a single-bit flip the ECC fixed. The data was *correct* — nothing
   crashed. A handful over a long soak can be cosmic-ray noise; the signal is **rate** and
-  **concentration** (many on one Dual Inline Memory Module (DIMM)), not the existence of one CE.
+  **concentration** (many on one DIMM), not the existence of one CE.
 - **UE (Uncorrectable Error):** ECC detected an error it could not fix (double-bit, or a
   failure beyond the code's strength). The data is *wrong*; the consequence is a machine-check
   — typically a kernel panic or an application crash. **Any UE on a new unit fails it.**
@@ -272,9 +272,9 @@ The Reliability, Availability, Serviceability (RAS) features built to manage the
 - **Predictive Failure Analysis (PFA):** rather than wait for a UE, the platform watches the
   **CE rate per DIMM/row** and flags a DIMM as *predicted-to-fail* when its CE rate crosses a
   threshold — the assumption being that a cell throwing rising single-bit errors will
-  eventually throw an uncorrectable one. In the field this triggers a proactive Return Merchandise Authorization (RMA) before a
+  eventually throw an uncorrectable one. In the field this triggers a proactive RMA before a
   crash; in manufacturing it is *why* per-DIMM CE concentration is a gate, not just total CE.
-- **Post-Package Repair (PPR):** DDR4/DDR5 Dynamic Random-Access Memory (DRAM) ships with **spare rows** inside each device.
+- **Post-Package Repair (PPR):** DDR4/DDR5 DRAM ships with **spare rows** inside each device.
   When a row goes bad, the controller/BIOS can **remap a failing row to a spare** — **soft PPR**
   (volatile, until next boot) or **hard PPR** (a permanent, one-time fuse blow). This is the
   DRAM analog of Non-Volatile Memory Express (NVMe) spare blocks or GPU row-remapping. Test relevance: a board that has
@@ -289,12 +289,12 @@ The Reliability, Availability, Serviceability (RAS) features built to manage the
 
 ### Stress and soak: stressapptest and memtester
 
-The stress *provokes* errors; Error Detection and Correction (EDAC) *counts* them. The two tools, and when to use each:
+The stress *provokes* errors; EDAC *counts* them. The two tools, and when to use each:
 
 - **`stressapptest`** (Google's "stressful application test") — the manufacturing favorite,
   because it runs **under Linux**, inside your normal pytest/test environment. It hammers
   memory **bandwidth and patterns** using many threads, and it detects errors **two ways**:
-  by **miscompare** (it writes known data, reads it back, and compares — catching errors Error-Correcting Code (ECC)
+  by **miscompare** (it writes known data, reads it back, and compares — catching errors ECC
   might mask *and* errors on non-ECC paths) and via the system's ECC/EDAC counters. It also
   exercises some I/O and cache coherency. Typical soak invocation:
 
@@ -330,7 +330,7 @@ Status: PASS - please verify no corrected errors
 ```
 
 A `stressapptest` **miscompare** is a hard fail — it means data read back wrong, which on an
-ECC system implies the error exceeded Error-Correcting Code's correction strength (effectively a UE) or hit a
+ECC system implies the error exceeded ECC's correction strength (effectively a UE) or hit a
 path ECC doesn't cover. The failure line names the address, the expected vs actual bits, and
 the worker thread:
 
@@ -344,7 +344,7 @@ The re-read tells you something: if the **first** read was wrong and the **re-re
 expected, the bit flipped and self-corrected — a transient/marginal cell or a soft error,
 still a fail on a new unit but more "marginal DIMM" than "stuck cell." A miscompare whose
 re-read *also* reads wrong is a hard/stuck fault. Always pair the stress run with a
-**before/after EDAC read**: the tool provokes, EDAC attributes the error to a Dual Inline Memory Module (DIMM). The tool
+**before/after EDAC read**: the tool provokes, EDAC attributes the error to a DIMM. The tool
 says "something is wrong"; EDAC + the label DB say "DIMM_A1 is wrong." Note that on an ECC
 system, a single-bit flip stressapptest provokes is usually *corrected before stressapptest
 ever sees it* — it shows up as a **CE in EDAC**, not a stressapptest miscompare. So the two
@@ -353,14 +353,14 @@ catches what got past ECC. That is exactly why the gate reads **both**.
 
 ### Temperature and voltage dependence — run it hot
 
-Dynamic Random-Access Memory (DRAM) marginality is **strongly temperature- and voltage-dependent**, and this is the single
+DRAM marginality is **strongly temperature- and voltage-dependent**, and this is the single
 most important operational fact in this chapter. The physics: hotter cells leak charge faster,
 so a marginal cell that holds its value at 25 C loses it before the next refresh at 70 C;
 voltage droop (a sagging VDD/VDDQ rail under load) shrinks the noise margin the same way. The
 consequence for test:
 
 - **A room-temperature memory test is a weak test.** The classic escape is **room-temp pass /
-  hot fail** — a Dual Inline Memory Module (DIMM) that is clean on the bench and throws CEs (or UEs) at operating
+  hot fail** — a DIMM that is clean on the bench and throws CEs (or UEs) at operating
   temperature in the vehicle. So you soak **at temperature** (thermal chamber, or under a load
   that self-heats the platform) and/or **at worst-case voltage** if the platform lets you margin
   the rail.
@@ -368,7 +368,7 @@ consequence for test:
   same moment — a CE burst coincident with a rail droop is a **power-delivery** finding (a weak
   VRM/PMIC), not a bad DIMM. This is the same "is it the part or the support circuitry?"
   discipline as the NVMe thermal-throttle-vs-bad-drive split.
-- **DDR5 ties this together:** higher data rates (tighter margins) plus on-die Error-Correcting Code (ECC) (which hides
+- **DDR5 ties this together:** higher data rates (tighter margins) plus on-die ECC (which hides
   early degradation) means the hot soak is doing *more* of the catching on DDR5 than it did on
   DDR4. Lean on it.
 
@@ -376,13 +376,13 @@ consequence for test:
 
 | Symptom | Most likely cause | Decision / first moves |
 |---|---|---|
-| **Any UE** (`ue_count > 0`) | A real uncorrectable memory fault | **Hard fail.** Find the Dual Inline Memory Module (DIMM) via `ras-mc-ctl --errors`; Return Merchandise Authorization (RMA) that stick |
+| **Any UE** (`ue_count > 0`) | A real uncorrectable memory fault | **Hard fail.** Find the DIMM via `ras-mc-ctl --errors`; RMA that stick |
 | CEs **concentrated on one DIMM** | That DIMM/rank is marginal (PFA signal) | Fail / RMA the named DIMM even if the *total* is under budget |
 | CEs **spread evenly, low rate**, no concentration | Possibly cosmic-ray noise / benign | Pass if under the total CE limit; log for fleet trend |
 | CEs **only under load / heat** | Marginal cell at temperature, or **rail droop** | Run hot; measure VDDQ during the burst — droop = power, not DIMM |
-| `stressapptest` **miscompare** | Data read back wrong (beyond Error-Correcting Code (ECC), or non-ECC path) | Hard fail; treat as effectively a UE; capture which address |
+| `stressapptest` **miscompare** | Data read back wrong (beyond ECC, or non-ECC path) | Hard fail; treat as effectively a UE; capture which address |
 | **UE escalating to MCE / kernel panic** mid-soak | Severe uncorrectable fault | Hard fail; the panic log + `ras-mc-ctl` identify the DIMM |
-| **No `mc*` nodes** in Error Detection and Correction (EDAC) sysfs at all | EDAC driver not loaded (silent escape) | Fix the test environment — load the chipset EDAC driver; a "clean" no-data result is invalid |
+| **No `mc*` nodes** in EDAC sysfs at all | EDAC driver not loaded (silent escape) | Fix the test environment — load the chipset EDAC driver; a "clean" no-data result is invalid |
 | Board needed/consumed **PPR** to pass on a new DIMM | Marginal DIMM that BIOS repaired around | Log PPR state; flag as marginal — don't ship a part that needed repair to pass |
 | Cluster of CEs in **adjacent rows** | Possible row-hammer signature | Note it; verify refresh-management mitigations are enabled |
 
@@ -401,7 +401,7 @@ enforces:
 |---|---|---|
 | `no_uncorrectable` | `total_ue == 0` | **Any UE = fail.** Non-negotiable on a new unit |
 | `ce_total <= max_ce_total` | bounded total CE (default 100) | A small CE count over a soak can be benign; a flood is a finding |
-| `no_ce_concentration` | worst Dual Inline Memory Module (DIMM) `<= max_ce_per_dimm` (default 20) | **A hot DIMM even within the total budget is suspect** (PFA) — concentration localizes a marginal stick |
+| `no_ce_concentration` | worst DIMM `<= max_ce_per_dimm` (default 20) | **A hot DIMM even within the total budget is suspect** (PFA) — concentration localizes a marginal stick |
 
 The third check is the subtle, high-leverage one: **total CE under budget is not enough.** A
 board with 100 CE spread across 8 DIMMs is plausibly benign noise; a board with 100 CE *all on
@@ -430,10 +430,10 @@ def _limits(total_ce, total_ue, per_dimm, max_ce_total, max_ce_per_dimm):
 
 The full memory flow at module test, in order:
 
-1. **Verify Error Detection and Correction (EDAC) is alive.** `ls /sys/devices/system/edac/mc/` shows `mc0` (etc.) — the
+1. **Verify EDAC is alive.** `ls /sys/devices/system/edac/mc/` shows `mc0` (etc.) — the
    chipset EDAC driver is loaded. No nodes = invalid test, fix the environment first.
 2. **Confirm topology.** `ras-mc-ctl --layout` / `dmidecode --type memory` — the right number,
-   size, and speed of DIMMs are present (a missing or down-clocked Dual Inline Memory Module (DIMM) is its own defect).
+   size, and speed of DIMMs are present (a missing or down-clocked DIMM is its own defect).
 3. **Baseline the counters.** Read CE/UE per controller and per DIMM (or reset where allowed)
    so you measure the *delta* across the soak, not boot-time noise.
 4. **Soak hot.** `stressapptest -s <soak> -W` (most of RAM, copy threads) at temperature —

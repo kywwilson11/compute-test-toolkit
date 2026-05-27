@@ -2,7 +2,7 @@
 
 Four families of bus carry everything on a Zoox compute board that *isn't* PCIe. **Gigabit Multimedia Serial Link (GMSL)**
 brings camera pixels in from the harness. **Automotive Ethernet** brings radar, lidar, and
-inter-module traffic. **Controller Area Network (CAN)/CAN-FD** is the vehicle's control nervous system — brakes,
+inter-module traffic. **Controller Area Network (CAN)/Controller Area Network Flexible Data-Rate (CAN-FD)** is the vehicle's control nervous system — brakes,
 steering, power distribution. And **I2C/SPI/UART** are the housekeeping buses that
 configure, identify, and monitor every die on the board. The first three are high-speed
 serial links and share a single mental model with PCIe (the Networking and PCIe chapters);
@@ -12,12 +12,12 @@ turns up.
 This chapter goes deepest on **GMSL**, because on a robotaxi the camera path is both the
 highest-channel-count interface you own and the one whose failures are most likely to
 surface late — on the vehicle, over 15 m of coax, at temperature — where they cost the most
-to catch. Everything else here is real and you'll use it daily, but Gigabit Multimedia Serial Link is where a Compute
+to catch. Everything else here is real and you'll use it daily, but GMSL is where a Compute
 Test Engineer earns the title.
 
 > **The one mental model.** PCIe, GMSL, automotive Ethernet, NVLink, USB, SATA — all the
 > same kind of thing: a serial differential SerDes link that recovers a clock from the data
-> (Clock and Data Recovery (CDR)), encodes/scrambles for DC balance, equalizes to fight channel loss (TX emphasis + RX
+> (CDR), encodes/scrambles for DC balance, equalizes to fight channel loss (TX emphasis + RX
 > Continuous-Time Linear Equalizer (CTLE)/Decision Feedback Equalizer (DFE)), *trains* both ends up together, and *counts errors*. The failure physics are
 > identical — channel loss, jitter, Inter-Symbol Interference (ISI), reflections, temperature, connector/cable quality.
 > Learn the model once; what changes per link is the **vocabulary and the tooling**. So your
@@ -30,7 +30,7 @@ Test Engineer earns the title.
 
 ### What GMSL is and why a robotaxi lives on it
 
-Gigabit Multimedia Serial Link (GMSL, Analog Devices / Maxim) is a SerDes designed to move
+GMSL is a SerDes designed to move
 **uncompressed** sensor video from a remote camera to a host System-on-Chip (SoC) over a single inexpensive
 cable, while *simultaneously* carrying bidirectional control, power, and synchronization on
 that same cable. That "everything on one coax" property is the whole point: a robotaxi has
@@ -68,14 +68,14 @@ frame capture is the gold end-to-end check and not just a "lock" bit.
 |---|---|---|---|
 | Forward rate | up to ~3.125 Gbps | **3 or 6 Gbps** | 3 / 6 / **12** Gbps |
 | Reverse rate | ~1 Mbps (slower control) | **187.5 Mbps** (1.5 Gbps option) | 187.5 Mbps |
-| Signaling | Non-Return-to-Zero (NRZ) | NRZ | Non-Return-to-Zero (<=6G), **Pulse Amplitude Modulation 4-level (PAM4)** at 12G |
+| Signaling | NRZ | NRZ | NRZ (<=6G), **PAM4** at 12G |
 | Forward EQ | fixed/limited | **continuous adaptive** | continuous adaptive |
 | Control tunnel | basic I2C | **I2C + UART, GPIO tunneling** | same + more |
 | Typical AV part | MAX9271/MAX9286 | **MAX9295/MAX96717 + MAX9296/MAX96712** | MAX96793 + MAX96792A |
 
 (Rates: ADI GMSL1/GMSL2 channel-spec user guides and the GMSL Wikipedia summary — GMSL1
 downlink up to 3.125 Gbps; GMSL2 forward 3 or 6 Gbps, reverse 187.5 Mbps with a 1.5 Gbps
-reverse option on some parts; GMSL3 forward 12 Gbps using PAM4 above 6 Gbps.)
+reverse option on some parts; GMSL3 forward 12 Gbps using Pulse Amplitude Modulation 4-level (PAM4) above 6 Gbps.)
 
 The forward rate is **fixed/selectable**, not auto-negotiated — set by CFG-strap resistors at
 power-on or by register writes. This is a key difference from Ethernet: there is no
@@ -109,7 +109,7 @@ lock.
 The serializer takes a parallel CSI-2 stream and **serializes** it onto the differential
 forward channel; the deserializer recovers the clock from the data stream (no separate clock
 wire), **deserializes** it back to CSI-2, and drives the SoC. Two facts drive everything you
-do with Gigabit Multimedia Serial Link (GMSL2):
+do with GMSL2:
 
 1. **The deserializer initiates and owns link training.** At power-on the deserializer drives
    the link and the serializer responds; the handshake is automatic and needs *no software*.
@@ -120,8 +120,8 @@ do with Gigabit Multimedia Serial Link (GMSL2):
 
 2. **GMSL2 runs *continuous adaptive equalization*.** At 3/6 Gbps over many meters of coax the
    channel badly attenuates the high-frequency content — the raw eye is closed. The
-   deserializer's receiver continuously adapts its equalizer (Continuous-Time Linear Equalizer (CTLE) + decision-feedback
-   equalization, Decision Feedback Equalizer (DFE) — the receiver cancels inter-symbol interference using its own recent bit
+   deserializer's receiver continuously adapts its equalizer (CTLE + decision-feedback
+   equalization, DFE — the receiver cancels inter-symbol interference using its own recent bit
    decisions) and **re-optimizes roughly once per second** to track temperature drift, cable
    aging, and connector wear. It also runs an **eye-opening monitor**: a built-in margin
    measurement with programmable alarm thresholds that fires a run-time alert when the link
@@ -142,7 +142,7 @@ not noise.
 
 ### Forward and reverse control channels
 
-Gigabit Multimedia Serial Link (GMSL) is **full-duplex on one conductor**. The two directions are:
+GMSL is **full-duplex on one conductor**. The two directions are:
 
 - **Forward channel** (3/6 Gbps): serializer → deserializer. Carries the video plus embedded
   data (statistics lines, the sensor's embedded metadata rows).
@@ -150,7 +150,7 @@ Gigabit Multimedia Serial Link (GMSL) is **full-duplex on one conductor**. The t
   tunnel, GPIO state, frame-sync triggers, and link-management traffic.
 
 The reverse channel is what makes GMSL more than a video pipe. The image sensor and the
-serializer sit at the *far* end of 15 m of coax, but the System-on-Chip (SoC) must configure them — set
+serializer sit at the *far* end of 15 m of coax, but the SoC must configure them — set
 exposure, gain, the output resolution/format, enable the sensor's streaming, arm frame-sync.
 GMSL solves this by **tunneling I2C** (and optionally UART) over the reverse channel so the
 SoC's *local* I2C controller can read and write registers in the remote serializer and sensor
@@ -195,7 +195,7 @@ pin appears at the serializer pin across the coax. This is how:
 
 - **Frame-sync** triggers reach the sensor (the host's FSYNC pulse is tunneled to each
   camera's trigger input — see below).
-- A camera's **error/interrupt** line is brought back to the System-on-Chip (SoC) (sensor fault → serializer
+- A camera's **error/interrupt** line is brought back to the SoC (sensor fault → serializer
   GPIO → tunneled → deserializer GPIO → SoC interrupt).
 - **Reset / power-enable** of the remote module can be driven from the host side.
 
@@ -207,7 +207,7 @@ the **I2C tunnel** is alive (you can read a known sensor ID register through it)
 ### Video transport: tunnel mode vs pixel mode, data types, virtual channels
 
 The deserializer reconstructs a MIPI Alliance (MIPI) **CSI-2** stream for the SoC, and how the video crosses
-the Gigabit Multimedia Serial Link (GMSL) link is configured in one of two modes — a real Electrical Engineering (EE)/firmware decision you must
+the GMSL link is configured in one of two modes — a real EE/firmware decision you must
 understand to debug a "frames are corrupt / wrong format" failure:
 
 - **Pixel mode** (the original GMSL2 mode). The serializer *strips* the CSI-2 packet header
@@ -255,7 +255,7 @@ root causes, three different fixes.
 For sensor fusion, all the cameras in a cluster must expose **at the same instant** —
 otherwise a moving object lands at inconsistent positions across cameras and perception
 mis-fuses it. Software timestamp matching is far too jittery; this has to be **hardware**
-frame sync, and Gigabit Multimedia Serial Link (GMSL) provides it through GPIO tunneling:
+frame sync, and GMSL provides it through GPIO tunneling:
 
 ```text
   Host FSYNC source (SoC GPIO timer, or deserializer's internal generator)
@@ -269,7 +269,7 @@ frame sync, and Gigabit Multimedia Serial Link (GMSL) provides it through GPIO t
 ```
 
 The FSYNC master can be the **deserializer's own internal frame-sync generator** (free-
-running at a programmed rate) or an **external** source (a System-on-Chip (SoC) GPIO timer, or a vehicle-wide
+running at a programmed rate) or an **external** source (a SoC GPIO timer, or a vehicle-wide
 clock for cross-cluster alignment). The key point for test: a single pulse is fanned out over
 the *control channel* to every camera — there is no separate sync wire per camera. So
 frame-sync depends on (a) every link being locked and (b) the GPIO/frame-sync tunnel being
@@ -285,7 +285,7 @@ configured on every link.
 
 ### Coax vs STP cabling and Power-over-Coax (PoC)
 
-Gigabit Multimedia Serial Link (GMSL) runs over either **50 Ω coax** or **100 Ω shielded twisted pair (STP)**. Coax has lower
+GMSL runs over either **50 Ω coax** or **100 Ω shielded twisted pair (STP)**. Coax has lower
 insertion loss per meter and can support runs up to ~50% longer for the same link margin, so
 robotaxi camera harnesses are typically coax. STP shows up where routing or weight favors it.
 The cable choice changes the channel-loss budget and the termination, both of which your
@@ -312,7 +312,7 @@ modes onto one connector:
   scope. Two caveats worth knowing: it needs a **dedicated line-fault pin/divider circuit**,
   and on many parts it **cannot run simultaneously with PoC on the simple bias-tee** — the
   datasheet specifies an *alternate* PoC+line-fault filter topology if you want both. So
-  whether your board exposes line-fault at all is an Electrical Engineering (EE) schematic question; confirm it before
+  whether your board exposes line-fault at all is an EE schematic question; confirm it before
   a test step depends on it.
 
 > **The PoC mental checklist.** Camera totally dead → PoC/connector (power gone). Camera
@@ -329,13 +329,13 @@ are the canonical Maxim/ADI ones.)
 
 | What | Where (MAX9296/96712 family) | Meaning |
 |---|---|---|
-| **Gigabit Multimedia Serial Link (GMSL2) link lock** | reg `0x0013`, **bit 3** (`LOCKED`) | 1 = Phase-Locked Loop (PLL)s locked and the forward receive datapath is operational |
+| **GMSL2 link lock** | reg `0x0013`, **bit 3** (`LOCKED`) | 1 = PLLs locked and the forward receive datapath is operational |
 | **GMSL1 link lock** | a *separate*, mode-specific lock reg (see below) | 1 = locked when the link came up in **GMSL1** mode (different reg from the GMSL2 bit) |
 | **LOCK pin** | open-drain output pin | hardware mirror of lock; high = locked. A board-level "is it up" you can scope |
-| **Decode / line-CRC errors** | per-link error-count registers | accumulate on a marginal channel; the GMSL analog of PCIe Advanced Error Reporting (AER) correctable |
+| **Decode / line-CRC errors** | per-link error-count registers | accumulate on a marginal channel; the GMSL analog of PCIe AER correctable |
 | **Video-pipe / packet status** | pipe status regs | per-pipe "video detected", overflow, line-length errors |
 | **PoC / line-fault status** | line-fault detect regs | open/short/short-to-battery on the cable (alternate circuit; see PoC section) |
-| **(F-parts) safety status** | dedicated error/CRC regs + ERRB pin | memory CRC/Error-Correcting Code (ECC), register-readback mismatch, lock-step fault |
+| **(F-parts) safety status** | dedicated error/CRC regs + ERRB pin | memory CRC/ECC, register-readback mismatch, lock-step fault |
 
 The GMSL2 lock bit `0x0013[3]` (`LOCKED`) is well-documented and is what the Jetson/ADI
 flows read (e.g. `i2cget -y <bus> 0x48 0x0013`, mask `0x08`). The single most important
@@ -367,7 +367,7 @@ not "good," it's "broken."
 
 What the error counters are actually counting is worth knowing so you read them right. GMSL2
 protects its traffic with multiple CRCs: each **control packet** carries a 4-bit sequence
-number and a 16-bit CRC, and the link checks (and strips) the **CSI-2 packet Error-Correcting Code (ECC)** on the
+number and a 16-bit CRC, and the link checks (and strips) the **CSI-2 packet ECC** on the
 header and the **CSI-2 CRC** on the footer as it converts to/from pixel form. So the
 per-link "decode error" / line-CRC counters increment on *physical-layer* decode failures and
 CRC mismatches — the marginal-channel symptom. (End-to-end **Video Line CRC**, VID_PXL_CRC, is
@@ -379,7 +379,7 @@ the frame capture and any sensor-side CRC, especially on GMSL2.
 ### Multi-camera deserializer topologies
 
 A quad deserializer (MAX96712) is the AV building block: four coax inputs, four cameras, one
-CSI-2 output (often split across two D-PHY/C-PHY ports) to the System-on-Chip (SoC). Common topologies you'll
+CSI-2 output (often split across two D-PHY/C-PHY ports) to the SoC. Common topologies you'll
 test:
 
 ```text
@@ -419,7 +419,7 @@ laptop/CI demos.
   no_link_errors   : decode/CRC error_count == 0      (marginal-channel catch)
   ```
 
-  This is the Gigabit Multimedia Serial Link (GMSL) equivalent of the PCIe rule "don't just report `errors=5` — report *which*
+  This is the GMSL equivalent of the PCIe rule "don't just report `errors=5` — report *which*
   layer." Lock without frames = reverse-channel/sensor-config problem; frames with wrong
   resolution = pipe/data-type config; lock + frames + rising errors = marginal coax.
 
@@ -457,7 +457,7 @@ sync are doing) and it points at the layer.
 | **Intermittent lock** (drops and re-locks, worse hot) | Marginal eye: cable loss/length, connector, PoC noise, temperature | Read **eye-opening monitor** margin + alarm; soak hot/cold and watch lock + error count; reseat/replace coax; check PoC filter |
 | **All links locked, but DESYNC** (cameras stream individually, fusion off) | Frame-sync not reaching one camera: GPIO/FSYNC tunnel mapping, marginal reverse channel on one link | Verify FSYNC source + per-link GPIO-tunnel config; confirm every camera fires on the pulse; check the one link's reverse channel |
 | **Locked, frames captured, but corrupt/wrong size/color** | Video-pipe config: wrong data type (RAW10 vs RAW12), pixel-mode bpp, VC/stream mapping | Compare sensor output format vs pipe config; check tunnel vs pixel mode; verify VC -> `/dev/videoN` mapping |
-| **Locked, but decode/CRC error count climbing** | Marginal channel — the Gigabit Multimedia Serial Link (GMSL) "links up but fails Bit Error Rate Test (BERT)" pattern | Trend `error_count` over a soak; eye-monitor margin; suspect cable/connector/temperature; this is a *fail* even though it locked |
+| **Locked, but decode/CRC error count climbing** | Marginal channel — the GMSL "links up but fails BERT" pattern | Trend `error_count` over a soak; eye-monitor margin; suspect cable/connector/temperature; this is a *fail* even though it locked |
 | **Camera won't configure** (lock OK, I2C NACKs) | Reverse-channel / I2C-tunnel / address-translation problem | `i2cdetect` the deserializer locally; check tunnel enabled; verify translated sensor/ser addresses; `dmesg` for `-ENXIO` |
 | **One sensor of an identical set unreachable** | Address-translation collision/misconfig | Check each remote's *translated* address is distinct; two cameras translated to the same address collide |
 
@@ -472,12 +472,12 @@ sync are doing) and it points at the layer.
 
 ### Mapping GMSL to manufacturing-test phases
 
-How the Gigabit Multimedia Serial Link (GMSL) checks above spread across the line — and which numbers you trend for yield:
+How the GMSL checks above spread across the line — and which numbers you trend for yield:
 
 | Phase | What runs | The yield/quality signal you watch |
 |---|---|---|
 | **Bare-board / ICT** | continuity + impedance on the coax/STP traces, PoC-rail presence | shorts/opens before any silicon is stressed; bad-trace boards never reach lock test |
-| **Module / Printed Circuit Board Assembly (PCBA) functional** | per-link lock, `v4l2` resolution + frame capture, error_count==0, **eye-monitor margin** captured, frame-sync across the cluster | **camera-lock first-pass yield** (locked-and-streaming / attempted); **eye-margin distribution** (a left-shifting histogram = a marginal lot or a connector/PCB change); DESYNC rate |
+| **Module / PCBA functional** | per-link lock, `v4l2` resolution + frame capture, error_count==0, **eye-monitor margin** captured, frame-sync across the cluster | **camera-lock first-pass yield** (locked-and-streaming / attempted); **eye-margin distribution** (a left-shifting histogram = a marginal lot or a connector/PCB change); DESYNC rate |
 | **Cabling / harness screen** | PoC line-fault status (open/short/short-to-batt) on every conductor; lock + error_count through the *real* harness cable, not a bench pigtail | **PoC fault rate by conductor/connector**; lock-fail localized to "cable" vs "module" by swapping a golden cable |
 | **Soak / thermal** | lock held + `error_count` and eye-margin **trended over hours, hot and cold** | **drop events per camera-hour** and **error-count slope**; a unit that locks at 25 degC but drops or climbs errors at 85 degC is the classic late escape |
 | **Vehicle / EOL** | full-harness lock, frame-sync across clusters, end-to-end capture into the perception stack | final **escape rate** — what the earlier phases with margin limits are trying to drive to zero |
@@ -559,11 +559,11 @@ verdict so the operator gets one PASS/FAIL with the per-camera detail attached.
 
 ## CAN and CAN-FD — The Vehicle Control Bus
 
-Controller Area Network (CAN) is the vehicle's low-bandwidth, ultra-reliable control bus:
+CAN is the vehicle's low-bandwidth, ultra-reliable control bus:
 brake controllers, steering modules, power distribution, body electronics. Your compute
 board has **CAN transceivers** you must prove work — send actuator commands, read vehicle
 state, run diagnostics over UDS/DoIP. The compute platform's *high-bandwidth* sensor data
-rides Ethernet/PCIe/Gigabit Multimedia Serial Link (GMSL); Controller Area Network Flexible Data-Rate (CAN-FD) is the control-plane link to the rest of the car.
+rides Ethernet/PCIe/GMSL; CAN-FD is the control-plane link to the rest of the car.
 
 ### The bus, physically
 
@@ -581,7 +581,7 @@ Two wires, **CAN_H and CAN_L**, differential, multi-drop. Bits are **dominant (0
 
 **Termination: 120 Ω at *each physical end* of the bus.** With both terminators present you
 measure **~60 Ω** across CAN_H/CAN_L with the bus powered off (two 120 Ω in parallel). This
-DMM check is the single fastest, highest-value Controller Area Network (CAN) test on the line:
+DMM check is the single fastest, highest-value CAN test on the line:
 
 - **~60 Ω** → both terminators present, healthy.
 - **~120 Ω** → one terminator missing (you're reading a single resistor).
@@ -618,7 +618,7 @@ no time is wasted (nondestructive arbitration).
 | ACK | 2 bit | receivers acknowledge |
 | EOF | 7 bit | end of frame (recessive) |
 
-**Controller Area Network Flexible Data-Rate (CAN-FD)** extends Classic Controller Area Network (CAN) where you need more data but Ethernet is
+**CAN-FD** extends Classic CAN where you need more data but Ethernet is
 overkill (e.g., faster ECU firmware flashing):
 
 | Feature | Classic CAN | CAN-FD |
@@ -639,7 +639,7 @@ don't send FD frames while a classic-only node is present).
 
 ### Bit timing and the sample point
 
-A Controller Area Network (CAN) bit is divided into time quanta with a programmable **sample point** — the fraction of
+A CAN bit is divided into time quanta with a programmable **sample point** — the fraction of
 the bit time at which the receiver samples the level (commonly **75–87.5%** of the bit).
 Both ends must agree on bit rate *and* roughly on sample-point placement, or you get
 intermittent errors that look like noise. A **wrong bit-rate/timing config** is a top cause
@@ -650,7 +650,7 @@ or the controller's `tq`/`prop_seg`/`phase_seg` settings).
 ### Error frames and the three error states
 
 Every node keeps a **Transmit Error Counter (TEC)** and **Receive Error Counter (REC)**.
-Controller Area Network (CAN)'s brilliance is *self-healing fault confinement* — a node that's causing errors
+CAN's brilliance is *self-healing fault confinement* — a node that's causing errors
 progressively removes itself:
 
 ```text
@@ -665,7 +665,7 @@ progressively removes itself:
                                              then both counters reset to 0)
 ```
 
-The boundaries are exact and worth memorizing: error-passive at **Transmit Error Counter (TEC) or Receive Error Counter (REC) >= 128**,
+The boundaries are exact and worth memorizing: error-passive at **TEC or REC >= 128**,
 bus-off at **TEC > 255** (the 8-bit counter's top). A node drops back from error-passive to
 error-active only once *both* counters fall to **<= 127** again. (Sources: the CAN error-
 confinement rules as documented by can-wiki.info and the CSS Electronics CAN-errors intro.)
@@ -686,7 +686,7 @@ bus and forces a retransmit — and bumps the counters.
 
 ### Linux: SocketCAN and can-utils
 
-Linux treats Controller Area Network (CAN) as a network interface (SocketCAN), so the tooling is `ip` + `can-utils`:
+Linux treats CAN as a network interface (SocketCAN), so the tooling is `ip` + `can-utils`:
 
 ```bash
 # Bring up the interface (classic, 500 kbit/s -- the common vehicle rate)
@@ -740,7 +740,7 @@ $ ip -details -statistics link show can0
 ```
 
 On a *sick* bus those same fields are the diagnosis — note `state BUS-OFF` and a saturated
-Transmit Error Counter (TEC), and the bus-error/restart counts climbing:
+TEC, and the bus-error/restart counts climbing:
 
 ```text
     can <FD> state BUS-OFF (berr-counter tx 255 rx 0) restart-ms 100
@@ -762,7 +762,7 @@ $ candump -e can0
 That `acknowledge-slot` / `error-on-tx` with the TEC at 128 is the textbook **single-node /
 no-ACK** signature from the trap above — the board transmitted, nobody ACKed, TEC jumped.
 
-**The DBC database.** Raw Controller Area Network (CAN) is just IDs and bytes; a **DBC** file (Vector's format) is the
+**The DBC database.** Raw CAN is just IDs and bytes; a **DBC** file (Vector's format) is the
 schema that says "ID 0x100 byte 0 bits 0–7 is `WheelSpeed`, scale 0.1, offset 0, unit km/h."
 Tools like `cantools` (Python) decode live traffic against a DBC so your test reads *signals*
 ("wheel speed = 42.3 km/h"), not bytes. Manufacturing tests use a DBC to assert that a board
@@ -773,11 +773,11 @@ rather than hand-packing bytes.
 
 1. **Termination check** — DMM across CAN_H/CAN_L, expect ~60 Ω (5-second, highest-yield
    check).
-2. **Bring-up at the configured bitrate** with a known partner on the bus (Controller Area Network (CAN) tool / another
+2. **Bring-up at the configured bitrate** with a known partner on the bus (CAN tool / another
    board / loopback) — never solo.
 3. **Loopback / known-frame exchange** — send known frames, verify received intact in both
    directions; confirm the bitrate is right (wrong bitrate → immediate errors).
-4. **Watch Transmit Error Counter (TEC)/Receive Error Counter (REC) and state** — must stay `ERROR-ACTIVE`, TEC/REC at/near 0, never go
+4. **Watch TEC/REC and state** — must stay `ERROR-ACTIVE`, TEC/REC at/near 0, never go
    `BUS-OFF` under traffic.
 5. **Stress** — `cangen` near max bus load, confirm no error frames and counters stay clean.
 6. **Bus-off recovery** — deliberately inject errors, confirm the controller recovers.
@@ -790,14 +790,14 @@ rather than hand-packing bytes.
 `ip -details -statistics link show`: it classifies `state` (BUS-OFF / ERROR-PASSIVE /
 ERROR-WARNING / ERROR-ACTIVE), parses `berr-counter tx/rx` into **TEC/REC**, and detects FD
 mode. Its three checks encode the gate: `not_bus_off`, `error_active` (the *only* fully
-healthy state), and `low_errors` (Transmit Error Counter (TEC) and Receive Error Counter (REC) both < 96 — a margin below the 128
+healthy state), and `low_errors` (TEC and REC both < 96 — a margin below the 128
 error-passive threshold, so a unit that's *trending* toward trouble fails before it actually
 crosses into error-passive). That sub-threshold limit is the CAN version of "capture the
 parameter, set the limit below the cliff."
 
 > **Higher layers are awareness-level for you day one.** **UDS** (ISO 14229) diagnostics —
 > sessions, security access, Read/Write Data By Identifier, Routine Control (self-tests),
-> firmware download — ride on Controller Area Network (CAN) (ISO 15765 / ISO-TP) or on Ethernet via **DoIP** (ISO
+> firmware download — ride on CAN (ISO 15765 / ISO-TP) or on Ethernet via **DoIP** (ISO
 > 13400, TCP port 13400, for fast firmware flashing). **SOME/IP** and **DDS** (ROS 2's
 > transport) are service-oriented middleware over Automotive Ethernet. You'll meet them, but
 > the compute-board CAN test is about the transceiver, termination, and error counters.
@@ -946,12 +946,12 @@ portable read; raw MDIO is the fallback.)
 `ethernet.py`'s `check_ethernet(iface)` → `EthHealth` parses `ethtool` for **link, speed
 (handling "2.5G" → 2500 Mbps), and master/slave role**, reads **Receive (RX)/Transmit (TX) errors** from
 `ethtool -S`, optionally runs an `iperf3` throughput leg, and — on supported PHYs — runs a
-**Time-Domain Reflectometry (TDR) cable test** (`--cable-test-tdr`), parsing fault `pair`/`code`/`distance_m`. The checks:
+**TDR cable test** (`--cable-test-tdr`), parsing fault `pair`/`code`/`distance_m`. The checks:
 `link_up`, `speed_ok` (>= expected — catches a 1000BASE-T1 link that came up at 100), 
 `low_errors` (rx+tx < 10), `throughput_ok`, and `cable_ok` (TDR not a fault). Note the
 deliberate design that the real TDR path treats *unsupported* as **"skipped," never a fail**,
 so a PHY that can't do TDR doesn't false-fail a good link — the same "don't punish a missing
-capability" discipline you want everywhere in Manufacturing Test (MT) code.
+capability" discipline you want everywhere in MT code.
 
 > **Contrast with the Networking chapter.** That chapter owns the IP/socket/`tcpdump`/iperf
 > layer and standard Ethernet. Here the *additions* are: single-pair PAM3 PHYs, the
@@ -967,7 +967,7 @@ These three carry *configuration, identity, and health*, not sensor bandwidth: w
 your rails in spec (power monitor), what time is it (RTC). They're far simpler than PCIe — and
 that's exactly why you must know them cold: **when a high-speed link won't come up, the reason
 is frequently sitting in a register you read over I2C.** (Full depth lives in the Embedded
-Buses chapter; this is the test-floor essentials and the Gigabit Multimedia Serial Link (GMSL) tie-in.)
+Buses chapter; this is the test-floor essentials and the GMSL tie-in.)
 
 | Property | I2C | SPI | UART |
 |---|---|---|---|
@@ -1016,7 +1016,7 @@ not clocking; stuck low = a device holding the bus or a hung target stretching S
 weak / bus capacitance too high; missing ACK = wrong address / unpowered / in reset / the
 7-vs-8-bit mistake. `dmesg` logs `-ETIMEDOUT`/`-ENXIO` (no ACK) with the bus and address.
 
-**The Gigabit Multimedia Serial Link (GMSL) tie-in (why I2C is *the* camera-bring-up bus).** As covered in the GMSL section,
+**The GMSL tie-in (why I2C is *the* camera-bring-up bus).** As covered in the GMSL section,
 the deserializer is a *local* I2C device that **tunnels** transactions over the reverse
 channel to the remote serializer and sensor, with **address translation** so identical
 cameras don't collide. The whole camera diagnostic flow is I2C: talk to the deserializer
@@ -1113,7 +1113,7 @@ ser.close()
 
 **Common test uses:** the boot console (watch a board power up, catch a bootloader hang or a
 kernel panic in real time) is the highest-value UART; also GPS modules, instrument links, and
-a camera module's MCU when it speaks UART (possibly tunneled over Gigabit Multimedia Serial Link (GMSL)).
+a camera module's MCU when it speaks UART (possibly tunneled over GMSL).
 
 ---
 
@@ -1124,15 +1124,15 @@ same way PCIe and Non-Volatile Memory Express (NVMe) do:
 
 | Bus | What you prove | Earliest phase that catches it | Captured parameter |
 |---|---|---|---|
-| **Gigabit Multimedia Serial Link (GMSL)** | each link locks, streams frames, error-free, frame-synced | lock/format at **module**; marginality at **vehicle** (real 15 m harness) | per-link lock, **eye-monitor margin**, decode-error count, frame-sync state |
-| **Controller Area Network (CAN)** | transceiver works, no bus-off under load | **module** (with a bus partner); vehicle EOL talks to real ECUs | state, **Transmit Error Counter (TEC)/Receive Error Counter (REC)**, termination ohms |
-| **Auto Ethernet** | link at rate, low errors, cable healthy | **module**; harness faults at **vehicle** | speed, master/slave role, rx/tx errors, **Time-Domain Reflectometry (TDR) distance-to-fault** |
-| **I2C/SPI/UART** | every housekeeping device present and readable | **Printed Circuit Board Assembly (PCBA)/module** (enumeration + known-ID reads) | `i2cdetect` map, known-ID readbacks |
+| **GMSL** | each link locks, streams frames, error-free, frame-synced | lock/format at **module**; marginality at **vehicle** (real 15 m harness) | per-link lock, **eye-monitor margin**, decode-error count, frame-sync state |
+| **CAN** | transceiver works, no bus-off under load | **module** (with a bus partner); vehicle EOL talks to real ECUs | state, **TEC/REC**, termination ohms |
+| **Auto Ethernet** | link at rate, low errors, cable healthy | **module**; harness faults at **vehicle** | speed, master/slave role, rx/tx errors, **TDR distance-to-fault** |
+| **I2C/SPI/UART** | every housekeeping device present and readable | **PCBA/module** (enumeration + known-ID reads) | `i2cdetect` map, known-ID readbacks |
 
 The throughline is the same one the rest of this guide hammers: **capture the parameter, not
 just the verdict.** "Camera locked" / "CAN is up" / "Ethernet linked" are binary and hide the
-margin. The GMSL eye-monitor margin, the CAN Transmit Error Counter/Receive Error Counter trend, the Ethernet TDR distance, the
-GMSL decode-error count over a soak — those are the *numbers* that let Design Verification (DV) set a data-driven
+margin. The GMSL eye-monitor margin, the CAN TEC/REC trend, the Ethernet TDR distance, the
+GMSL decode-error count over a soak — those are the *numbers* that let DV set a data-driven
 limit and MT check it, and that turn a vehicle-level "passes at 25 °C, drops at 85 °C" escape
 into a module-level catch with evidence already attached. Most of the expensive failures here
 are *only detectable* late (over the full harness, at temperature) but were *introducible*

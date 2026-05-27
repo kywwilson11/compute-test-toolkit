@@ -1,7 +1,7 @@
 ## NVMe and Storage
 
 An Non-Volatile Memory Express (NVMe) SSD is two things at once, and you test it as both. It is a **PCIe endpoint** —
-so everything in the PCIe chapter applies *first*: a Non-Volatile Memory Express drive that throws Bad-TLP
+so everything in the PCIe chapter applies *first*: a NVMe drive that throws Bad-Transaction Layer Packet (TLP)
 correctable errors, trains x4→x2, or drops to Gen3 is a PCIe problem wearing a storage
 costume, and you debug it with `lspci`, Advanced Error Reporting (AER), and lane margining, not `nvme-cli`. And it
 is a **storage controller** with its own command set, health telemetry, self-test
@@ -11,15 +11,15 @@ alone is enormous and sustained), so "does it hit rated bandwidth and *hold* it 
 continuous write soak at temperature" is a real safety-relevant question, not a benchmark.
 
 > **Rule of thumb for the floor.** When a drive misbehaves, ask "PCIe or storage?" before
-> you touch `nvme-cli`. Check the link first: `nvme list`, then the drive's PCIe BDF in
-> sysfs (`current_link_speed`/`current_link_width`) and its Advanced Error Reporting counters. A throttling-or-
+> you touch `nvme-cli`. Check the link first: `nvme list`, then the drive's PCIe Bus/Device/Function (BDF) in
+> sysfs (`current_link_speed`/`current_link_width`) and its AER counters. A throttling-or-
 > errors story on the *link* is a PCIe-chapter problem; a SMART/media/self-test story is a
 > storage problem. Half the "NVMe failures" you will chase are actually link failures.
 
 ### Why NVMe (and why the queue model matters to test)
 
-Non-Volatile Memory Express (NVMe) replaced AHCI as the host-controller interface for flash. AHCI was designed for
-spinning disks: one command queue, 32 entries. Non-Volatile Memory Express allows up to **65,535 I/O queues of
+NVMe replaced AHCI as the host-controller interface for flash. AHCI was designed for
+spinning disks: one command queue, 32 entries. NVMe allows up to **65,535 I/O queues of
 65,536 commands each**, which is what lets it exploit flash's internal parallel channels.
 That parallelism is also *why* the manufacturing performance test looks the way it does:
 sequential bandwidth is a single-queue, large-block test, but **IOPS is a queue-depth and
@@ -32,16 +32,16 @@ but misses IOPS often has a controller or parallelism problem, not a media probl
 The host and controller communicate through **queues that live in host memory**:
 
 - **Submission Queue (SQ):** the host writes a command here, then writes the SQ's
-  **doorbell register** (in the controller's BAR-mapped Memory-Mapped I/O (MMIO) space) to tell the controller
-  "go look." The doorbell is the one piece of the model that is a real Memory-Mapped I/O register on the
+  **doorbell register** (in the controller's Base Address Register (BAR)-mapped Memory-Mapped I/O (MMIO) space) to tell the controller
+  "go look." The doorbell is the one piece of the model that is a real MMIO register on the
   device; the queues themselves are host RAM.
 - **Completion Queue (CQ):** the controller writes a completion entry here and raises an
-  **MSI-X interrupt**. The host processes completions and writes the CQ doorbell to free
+  **Message Signaled Interrupt Extended (MSI-X) interrupt**. The host processes completions and writes the CQ doorbell to free
   slots. A phase-bit in each entry tells the host which entries are new without re-reading
   the doorbell.
 - **Admin queue:** exactly one pair (SQ0/CQ0), created at init. It carries *management*
   commands — Identify, Get Log Page, Get/Set Feature, Format, Firmware Download/Commit,
-  Device Self-Test, Create/Delete I/O Queue. This is the queue your test program lives on.
+  Device Self-Test (DST), Create/Delete I/O Queue. This is the queue your test program lives on.
 - **I/O queues:** created via admin commands, typically **one SQ/CQ pair per CPU core** for
   lock-free parallelism. They carry Read/Write/Flush/Compare. This is where `fio` traffic
   goes.
@@ -82,11 +82,11 @@ EDSFF with a real heatsink and airflow.
 
 ### Admin vs I/O command sets, and Identify
 
-Non-Volatile Memory Express (NVMe) splits commands into two sets, matching the two queue types:
+NVMe splits commands into two sets, matching the two queue types:
 
 | Set | Where it runs | Representative commands |
 |---|---|---|
-| **Admin** | Admin queue (SQ0/CQ0) | Identify, Get Log Page, Get/Set Feature, Format NVM, Firmware Download/Commit, Device Self-Test, Create/Delete I/O SQ/CQ, Sanitize |
+| **Admin** | Admin queue (SQ0/CQ0) | Identify, Get Log Page, Get/Set Feature, Format NVM, Firmware Download/Commit, DST, Create/Delete I/O SQ/CQ, Sanitize |
 | **NVM I/O** | I/O queues | Read, Write, Flush, Compare, Write Zeroes, Dataset Management (TRIM), Write Uncorrectable |
 
 Two **Identify** commands anchor every qualification because they are how you confirm you
@@ -111,7 +111,7 @@ nvme id-ns /dev/nvme0n1 -o json     # Identify Namespace (CNS 0x00)
 
 `id-ctrl` gives you model/serial/FW (traceability — every test record must capture these),
 the **temperature thresholds** the drive throttles against (`wctemp`/`cctemp`, in Kelvin),
-and the **OACS** bitmap that tells you whether Device Self-Test is even supported (bit 4).
+and the **OACS** bitmap that tells you whether DST is even supported (bit 4).
 `id-ns` gives you the namespace size and the **active LBA format** — which is how you verify
 a drive was provisioned to 512 B vs 4 KB blocks (a provisioning mistake that silently
 changes performance and capacity).
@@ -245,8 +245,8 @@ or the dedicated subcommands. The Get-Log-Page surface:
 | 0x01 | **Error Information** | Ring of recent command errors: status code, command ID, **LBA**, namespace ID, error count — far more detail than SMART's `num_err_log_entries` summary | `nvme error-log` |
 | 0x02 | **SMART / Health** | The core health page above | `nvme smart-log` |
 | 0x03 | **Firmware Slot Info** | Active slot + next slot + per-slot revision strings | `nvme fw-log` |
-| 0x06 | **Device Self-Test** | Result of the last self-tests (up to 20 entries) + current-operation % | `nvme self-test-log` |
-| 0x07 | **Telemetry Host-Initiated** | Vendor binary blob for FA/Return Merchandise Authorization (RMA), triggered by the host | `nvme telemetry-log` |
+| 0x06 | **DST** | Result of the last self-tests (up to 20 entries) + current-operation % | `nvme self-test-log` |
+| 0x07 | **Telemetry Host-Initiated** | Vendor binary blob for FA/RMA, triggered by the host | `nvme telemetry-log` |
 | 0x08 | **Telemetry Controller-Initiated** | Vendor blob the controller captured on its own (e.g., at an internal fault) | `nvme telemetry-log` |
 | 0x0D | **Persistent Event Log** | **Non-volatile, cross-power-cycle history**: power cycles, thermal excursions, firmware changes, error bursts — the richest field-return artifact | `nvme persistent-event-log` |
 
@@ -284,7 +284,7 @@ code against the NVMe spec status tables, or let `nvme-cli` print the parentheti
 
 **Telemetry (0x07/0x08)** is a vendor-defined binary dump — you do not parse it on the
 line; you **capture it on a failure** and hand it to the SSD vendor's FA team. Capturing it
-costs you nothing and is the single thing the vendor will ask for on an Return Merchandise Authorization.
+costs you nothing and is the single thing the vendor will ask for on an Return Merchandise Authorization (RMA).
 
 > **The non-volatile logs are the RMA story.** SMART resets some context across power
 > cycles and a `format`/`sanitize` can clear logs entirely. The **Persistent Event Log
@@ -415,8 +415,8 @@ guessing wrong on a real 41 C reading.
 
 ### PCIe-attach implications (point to the PCIe chapter)
 
-An Non-Volatile Memory Express (NVMe) drive is a PCIe endpoint, full stop. The whole PCIe chapter — Link Training and Status State Machine (LTSSM), link
-train/width, Advanced Error Reporting (AER) correctable/uncorrectable decode, the write-1-to-clear arm/stress/read
+An NVMe drive is a PCIe endpoint, full stop. The whole PCIe chapter — Link Training and Status State Machine (LTSSM), link
+train/width, AER correctable/uncorrectable decode, the write-1-to-clear arm/stress/read
 discipline, lane margining, retrain counting — applies to its link **before** any storage
 test is meaningful. Concretely, on the floor:
 
@@ -424,10 +424,10 @@ test is meaningful. Concretely, on the floor:
   from sysfs and read `current_link_speed` / `current_link_width`. A drive that trained
   Gen4→Gen3 or x4→x2 is a *PCIe* finding (SI, seating, bifurcation), and no amount of SMART
   reading will explain it.
-- **Watch its Advanced Error Reporting counters across the soak.** Bad-TLP / Replay-Timer correctables climbing
-  during a write soak point at physical-layer SI on the M.2/U.2 connector or trace —
+- **Watch its AER counters across the soak.** Bad-TLP / Replay-Timer correctables climbing
+  during a write soak point at physical-layer Signal Integrity (SI) on the M.2/U.2 connector or trace —
   identical to the PCIe-chapter triage, just on a drive.
-- **"Drive disappeared mid-test"** can be **DPC** (Downstream Port Containment) on the root
+- **"Drive disappeared mid-test"** can be **Downstream Port Containment (DPC)** (DPC) on the root
   port firing on a fatal error, a surprise-down, or a power glitch — read it the way the
   PCIe chapter says, not as "the SSD died."
 
@@ -500,11 +500,11 @@ watch -n 1 'nvme smart-log /dev/nvme0 -o json | jq ".temperature - 273"'
 |---|---|---|
 | In `lspci` but not in `nvme list` (no `/dev/nvme0n1`) | **No namespace provisioned**, or controller init failed | `ls /dev/nvme*` (is `/dev/nvme0` there?); `nvme id-ctrl /dev/nvme0`; `nvme list-ns /dev/nvme0`; create namespace if none |
 | Trained below expected speed/width (Gen4->Gen3, x4->x2) | **PCIe SI / seating / bifurcation** — a link problem | PCIe chapter: link speed/width, lane margining, reseat; *not* a SMART issue |
-| `critical_warning != 0` | Drive self-reports failing (spare/temp/read-only/backup) | Decode the bit; read SMART; read error-log 0x01; usually Return Merchandise Authorization (RMA) |
+| `critical_warning != 0` | Drive self-reports failing (spare/temp/read-only/backup) | Decode the bit; read SMART; read error-log 0x01; usually RMA |
 | `media_errors > 0` or rising | Bad NAND / uncorrectable media | Read error-log 0x01 for the LBAs; fail; capture telemetry |
-| Namespace went **read-only** (Critical-Warning bit 3) | Spare exhausted, or controller protective lockdown | Hard fail / Return Merchandise Authorization; the drive stopped accepting writes to protect data |
+| Namespace went **read-only** (Critical-Warning bit 3) | Spare exhausted, or controller protective lockdown | Hard fail / RMA; the drive stopped accepting writes to protect data |
 | Throughput cliff mid-soak; `thm_temp*_trans_count` rising | **Thermal throttling** — airflow/heatsink/mount | Fix cooling on the fixture/module; *not* inherently a bad drive |
-| **Controller timeout / reset** in `dmesg` (`nvme nvme0: I/O timeout`, `resetting controller`) | Firmware hang, severe thermal, or a dying drive; sometimes a PCIe link event | `dmesg | grep nvme`; check link/Advanced Error Reporting (AER); check temperature; reproduce; if persistent, RMA |
+| **Controller timeout / reset** in `dmesg` (`nvme nvme0: I/O timeout`, `resetting controller`) | Firmware hang, severe thermal, or a dying drive; sometimes a PCIe link event | `dmesg | grep nvme`; check link/AER; check temperature; reproduce; if persistent, RMA |
 | `power_on_hours`/`power_cycles` high on a "new" drive | **Re-stock / returned inventory** | Quality/supply-chain finding; flag the lot; not a drive defect |
 | DST `result != 0` | Controller's own diagnostic failed | Read the result code; fail; capture logs + telemetry for FA |
 
@@ -518,7 +518,7 @@ nvme nvme0: 16/0/0 default/read/poll queues
 ```
 
 A single timeout under a brutal soak can be a fluke; **repeated** timeouts or a controller
-reset is a failing unit (or a link that keeps dropping the drive — check Advanced Error Reporting/DPC first).
+reset is a failing unit (or a link that keeps dropping the drive — check AER/DPC first).
 
 ### Firmware update flow (you will own this)
 
@@ -541,13 +541,13 @@ re-qualify the test).
 
 ### Manufacturing-test flow (provision → test → soak → gate)
 
-The end-to-end Non-Volatile Memory Express (NVMe) flow at module test, in order:
+The end-to-end NVMe flow at module test, in order:
 
 1. **Enumerate & identify.** `nvme list` — drive present, correct model/FW? If it's in
    `lspci` but not here, **provision a namespace** (`nvme create-ns ... --nsze ... --ncap ...
    --flbas 0`, then `nvme attach-ns`) — un-provisioned drives are common and this is a
    *step*, not a failure.
-2. **Verify the PCIe link.** Expected speed/width (Gen4 x4 etc.); Advanced Error Reporting (AER) clean. (PCIe chapter.)
+2. **Verify the PCIe link.** Expected speed/width (Gen4 x4 etc.); AER clean. (PCIe chapter.)
 3. **Format / secure-erase to a known state.** `nvme format /dev/nvme0n1 --ses=1` (secure
    erase) or a **sanitize** for a stronger crypto/block erase — establishes a clean,
    known-LBA-format starting point and removes any factory test data. **Destructive — gated.**
@@ -561,7 +561,7 @@ The end-to-end Non-Volatile Memory Express (NVMe) flow at module test, in order:
    numbers, not just pass/fail).
 7. **Soak (module/burn-in).** Sustained write at temperature; watch for the throughput
    cliff and the thermal transition counters — this is the phase that catches throttling and
-   marginal drives that a room-temp Printed Circuit Board Assembly (PCBA) check passes.
+   marginal drives that a room-temp PCBA check passes.
 8. **Read the DST result** (poll log 0x06; `result==0`).
 9. **Post-stress SMART.** Re-read: **no new** `media_errors`, no new error-log entries, no
    new thermal transitions, `available_spare` unchanged. A delta here is the real catch.
@@ -597,7 +597,7 @@ for flag in h.history:        # used-stock / RMA-history flags that did NOT fail
     log.warning("NVMe history: %s", flag)   # e.g. "unsafe_shutdowns=40"
 ```
 
-Two design points worth lifting from that module into any Non-Volatile Memory Express (NVMe) test you write:
+Two design points worth lifting from that module into any NVMe test you write:
 
 - **Separate faults from history.** `checks` (faults) drive pass/fail; `history` (high
   lifetime counters) is logged for fleet/quality but does **not** auto-fail a drive that is

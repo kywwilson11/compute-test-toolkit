@@ -128,5 +128,9 @@
 \@ifundefined{cftchapnumwidth}{}{\setlength{\cftchapnumwidth}{2.6em}}
 \makeatother
 
-% Keep tables from overflowing; allow them to size to content.
+% Shrink table text to \small so wide multi-column tables fit. (We deliberately do NOT
+% redefine \texttt to auto-break: pandoc emits escaped specials like \^{} and \$ for the
+% regex chapter, which char-splitters such as seqsplit choke on. Long unbreakable tokens
+% in tables/prose are handled at the source instead.)
+\AtBeginEnvironment{longtable}{\small}
 \setlength{\emergencystretch}{3em}
