@@ -4,6 +4,7 @@ __pycache__/
 .hypothesis/
 toolkit/c/pcie_bert
 toolkit/c/test/runner
+toolkit/sim/qemu/.work/
 *.db
 .coverage
 htmlcov/

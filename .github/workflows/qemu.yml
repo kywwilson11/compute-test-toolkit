@@ -1,0 +1,66 @@
+# Phase 2 QEMU AER lane in CI (toolkit/sim/qemu/README.md).
+#
+# GitHub-hosted runners have no /dev/kvm, so this targets x86_64 / q35 under TCG (software
+# emulation). It mirrors the locally-verified aarch64/HVF recipe via the same scripts
+# (ARCH + ACCEL are the only knobs). NOTE: the x86_64/TCG path is authored to match the
+# aarch64 recipe but has not been run on an x86 host locally — CI is its first execution.
+name: qemu-aer-lane
+
+on:
+  push:
+    paths:
+      - 'toolkit/sim/qemu/**'
+      - 'toolkit/c/**'
+      - '.github/workflows/qemu.yml'
+  pull_request:
+    paths:
+      - 'toolkit/sim/qemu/**'
+      - 'toolkit/c/**'
+      - '.github/workflows/qemu.yml'
+  workflow_dispatch:
+
+jobs:
+  # Cheap, fast gate: the off-hardware unit tests that need no QEMU.
+  unit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: QMP client unit tests
+        working-directory: toolkit
+        run: python3 -m pytest tests/test_qmp_inject.py -q
+      - name: C engine unit tests
+        working-directory: toolkit/c
+        run: make ctest
+
+  # The real end-to-end binding test: boot a guest, inject AER from the host, assert the count.
+  e2e:
+    runs-on: ubuntu-latest
+    needs: unit
+    timeout-minutes: 30
+    env:
+      ARCH: x86_64
+      ACCEL: tcg
+      BOOT_TRIES: '300'   # TCG boots far slower than HVF; allow ~10 min to reach SSH
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install QEMU + UEFI firmware + cloud-init image tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y qemu-system-x86 qemu-utils ovmf cloud-image-utils
+      - name: Boot guest
+        working-directory: toolkit/sim/qemu
+        run: ./run_guest.sh start
+      - name: Inject + assert
+        working-directory: toolkit/sim/qemu
+        run: ./aer_test.sh 40
+      - name: Serial log on failure
+        if: failure()
+        working-directory: toolkit/sim/qemu
+        run: tail -n 200 .work/serial.log || true
+      - name: Stop guest
+        if: always()
+        working-directory: toolkit/sim/qemu
+        run: ./run_guest.sh stop || true
