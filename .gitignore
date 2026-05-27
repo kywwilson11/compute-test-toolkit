@@ -3,6 +3,7 @@ __pycache__/
 .pytest_cache/
 .hypothesis/
 toolkit/c/pcie_bert
+toolkit/c/pcie_bert [0-9]*
 toolkit/c/test/runner
 toolkit/sim/qemu/.work/
 *.db
