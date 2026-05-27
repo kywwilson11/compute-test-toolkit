@@ -7,8 +7,7 @@ test & diagnostics): two deep prep guides and a working, tested test toolkit.
 
 ```
 .
-├── Zoox_Study_Guide-11.pdf       # the original 296-page interview-prep guide
-├── guides/                       # NEW — forward-looking, doing-the-job guides
+├── guides/                       # forward-looking, doing-the-job guides
 │   ├── 01-job-prep-deep-dive.md  # + pdf/  (28 pp): deep technical, per JD interface
 │   ├── 02-success-guide.md       # + pdf/  (15 pp): ramp, CMs, debugging, CI, the LPs
 │   ├── build.sh / header.tex      # rebuild PDFs: `bash guides/build.sh`

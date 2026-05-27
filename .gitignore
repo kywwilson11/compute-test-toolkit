@@ -13,3 +13,5 @@ htmlcov/
 mutants/
 *.egg-info/
 .DS_Store
+# Third-party input doc — kept locally, never published.
+reference/Zoox_Study_Guide-11.pdf
