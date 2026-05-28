@@ -34,6 +34,7 @@ def test_context_manager_opens_and_closes():
         assert store.recent(10)[0]["measured"]["ber"] == 1e-13   # measured round-trips
     # __exit__ closed the connection.
     import sqlite3
+
     import pytest
     with pytest.raises(sqlite3.ProgrammingError):
         store.recent(1)

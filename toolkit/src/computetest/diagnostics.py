@@ -56,6 +56,7 @@ class PcieDiagnostic:
             r.append(f"BERT skipped: {self.bert.note or 'no PCIe error source'}")
         if self.margin and self.margin.lanes and not self.margin.ok:
             w = self.margin.worst_lane
+            assert w is not None    # `self.margin.lanes` is truthy -> worst_lane returns one
             r.append(f"lane {w.lane} margin {w.timing_ui:.3f}UI < {self.margin.limit_ui}UI")
         return r
 

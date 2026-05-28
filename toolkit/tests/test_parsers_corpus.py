@@ -27,10 +27,14 @@ def _read(*parts: str) -> str:
 
 
 # --- NVMe: replay real-format smart-log/id-ctrl through check_nvme(mock=False) ------ #
+_PM9A3 = "SAMSUNG MZQL2960HCJR-00A07"
 NVME_CASES = {
-    "nvme/2.10/samsung-pm9a3":    dict(model="SAMSUNG MZQL2960HCJR-00A07", temp=41, avail=100, used=0, ok=True,  history=0),
-    "nvme/2.11/samsung-pm9a3":    dict(model="SAMSUNG MZQL2960HCJR-00A07", temp=41, avail=100, used=0, ok=True,  history=0),
-    "nvme/2.11/used-stock-drive": dict(model="SAMSUNG MZQL2960HCJR-00A07", temp=47, avail=100, used=1, ok=False, history=3),
+    "nvme/2.10/samsung-pm9a3":
+        dict(model=_PM9A3, temp=41, avail=100, used=0, ok=True,  history=0),
+    "nvme/2.11/samsung-pm9a3":
+        dict(model=_PM9A3, temp=41, avail=100, used=0, ok=True,  history=0),
+    "nvme/2.11/used-stock-drive":
+        dict(model=_PM9A3, temp=47, avail=100, used=1, ok=False, history=3),
 }
 
 

@@ -36,7 +36,8 @@ class MemoryHealth:
 
     @property
     def worst_dimm(self) -> str | None:
-        return max(self.per_dimm, key=self.per_dimm.get) if self.per_dimm else None
+        # lambda (vs dict.get) returns int, not int | None, so mypy types max() correctly.
+        return max(self.per_dimm, key=lambda d: self.per_dimm[d]) if self.per_dimm else None
 
     def summary(self) -> str:
         fails = [k for k, v in self.checks.items() if not v]
@@ -94,7 +95,7 @@ def check_memory(*, mock: bool | None = None, max_ce_total: int = 100,
 
     checks = _limits(total_ce, total_ue, per_dimm, max_ce_total, max_ce_per_dimm)
     history = []
-    worst = max(per_dimm, key=per_dimm.get) if per_dimm else None
+    worst = max(per_dimm, key=lambda d: per_dimm[d]) if per_dimm else None
     if worst and per_dimm[worst] > 0:
         history.append(f"{worst} has {per_dimm[worst]} CE (swap that stick)")
     return MemoryHealth(controllers, total_ce, total_ue, per_dimm, checks, history)
@@ -111,7 +112,12 @@ def _real_stress_memory(seconds: int, mb: int | None) -> bool:  # pragma: no cov
     cmd = ["stressapptest", "-s", str(seconds), "-W"]
     if mb:
         cmd += ["-M", str(mb)]
-    return subprocess.run(cmd, capture_output=True, text=True).returncode == 0
+    # +30 s wall-clock slack for the tool's own teardown; a runaway run is treated as fail.
+    try:
+        return subprocess.run(cmd, capture_output=True, text=True,
+                              timeout=seconds + 30).returncode == 0
+    except subprocess.TimeoutExpired:
+        return False
 
 
 def _read_int(path: str) -> int:  # pragma: no cover - real-hw path

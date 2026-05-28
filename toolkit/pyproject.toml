@@ -13,7 +13,9 @@ dependencies = []
 sci = ["scipy"]                      # faster/exacter BER math (a pure-python fallback ships built in)
 yaml = ["pyyaml"]                    # YAML test plans (JSON works without it)
 dashboard = ["fastapi", "uvicorn"]   # the results dashboard
-dev = ["pytest"]
+# Single source of truth for what `pip install -e .[dev]` brings in for CI + local.
+# mutmut pinned to 2.x: 3.x rewrote the config/runner model; we use the 2.x [mutmut] format.
+dev = ["pytest", "hypothesis", "coverage", "ruff", "mypy", "mutmut<3", "pyyaml"]
 
 [project.scripts]
 computetest = "computetest.cli:main"
@@ -34,9 +36,39 @@ source = ["src/computetest"]
 
 [tool.coverage.report]
 show_missing = true
+# CI gate: we sit at ~98% currently; 95% leaves a small honest buffer for the real-hw
+# paths whose coverage swings when corpus seeds change.
+fail_under = 95
 exclude_lines = [
     "pragma: no cover",                 # real-hardware sysfs/subprocess paths (run on the bench)
     "if __name__ == .__main__.:",       # module demos
     "raise NotImplementedError",
     "if TYPE_CHECKING:",
 ]
+
+# --- ruff: defaults + import-sort + bugbear; tests opt out of E741 (short loop vars). -----
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+# E/F/W = pycodestyle/pyflakes basics; I = import sorting; B = bugbear (catches real bugs);
+# UP = pyupgrade (keep us on modern Python idioms).
+select = ["E", "F", "W", "I", "B", "UP"]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests sometimes intentionally do unused-imports (fixture side-effects) or single-letter vars.
+"tests/**" = ["E741"]
+
+# --- mypy: scope to src, strict optional; scipy/uvicorn have no stubs upstream. ----------
+[tool.mypy]
+python_version = "3.10"
+files = ["src"]
+strict_optional = true
+warn_unused_ignores = true
+warn_redundant_casts = true
+no_implicit_optional = true
+
+[[tool.mypy.overrides]]
+module = ["scipy.*", "uvicorn", "fastapi", "fastapi.*"]
+ignore_missing_imports = true

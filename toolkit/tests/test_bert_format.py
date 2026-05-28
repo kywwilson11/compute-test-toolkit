@@ -1,7 +1,6 @@
 """BertResult.summary() branches, run_many, the python-engine reject->fail path, the
 conductor's idle-name skip, and default_c_runner's process error-handling (via a fake
 'C binary'). Complements test_bert.py (python engine) and test_conductor.py (engine='c')."""
-import os
 import stat
 
 import pytest

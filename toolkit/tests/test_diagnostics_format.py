@@ -2,8 +2,14 @@
 the mock backend with injected faults. Complements test_diagnostics.py (clean/degraded
 single device) and test_chain.py (chain status)."""
 from computetest import diagnostics
-from computetest.backend import (MockBackend, MockDevice, PORT_ENDPOINT, PORT_ROOT,
-                                  PORT_SWITCH_DOWNSTREAM, PORT_SWITCH_UPSTREAM)
+from computetest.backend import (
+    PORT_ENDPOINT,
+    PORT_ROOT,
+    PORT_SWITCH_DOWNSTREAM,
+    PORT_SWITCH_UPSTREAM,
+    MockBackend,
+    MockDevice,
+)
 
 
 def _dev_be(bdf="0000:03:00.0", **kw):

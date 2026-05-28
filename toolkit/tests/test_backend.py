@@ -5,16 +5,28 @@ file exercises everything that runs on a laptop: the link-rate physics helpers, 
 PciDevice properties, the Backend base defaults, and the MockBackend's faithful
 latch/undercount/device-status/downtrain behavior + the backend-selection policy.
 """
-import os
 
 import pytest
 
 from computetest import backend as bk
 from computetest.backend import (
-    AER_CORR_STATUS, AER_UNCORR_STATUS, Backend, DEVSTA_CORR, DEVSTA_FATAL,
-    DEVSTA_NONFATAL, ECAP_AER, LinkStatus, MockBackend, MockDevice, PciDevice,
-    PORT_ENDPOINT, RealBackend, _COR_BAD_TLP, link_bits_per_second, mock_mode,
-    select_backend)
+    _COR_BAD_TLP,
+    AER_CORR_STATUS,
+    DEVSTA_CORR,
+    DEVSTA_FATAL,
+    DEVSTA_NONFATAL,
+    ECAP_AER,
+    PORT_ENDPOINT,
+    Backend,
+    LinkStatus,
+    MockBackend,
+    MockDevice,
+    PciDevice,
+    RealBackend,
+    link_bits_per_second,
+    mock_mode,
+    select_backend,
+)
 
 
 # --- Pure link-rate physics ------------------------------------------------- #
@@ -198,6 +210,41 @@ def test_select_backend_auto_uses_sysfs_presence(monkeypatch):
     assert isinstance(select_backend(), RealBackend)   # a Linux PCI host
     monkeypatch.setattr(bk.os.path, "isdir", lambda p: False)
     assert isinstance(select_backend(), MockBackend)   # a laptop
+
+
+# --- RealBackend BDF validation (security: no path traversal via sys_root) ---- #
+@pytest.mark.parametrize("evil_bdf", [
+    "../../etc/passwd",          # the classic traversal
+    "../0000:01:00.0",           # one level up still escapes sys_root
+    "0000:01:00.0/../foo",       # mid-path traversal
+    "/etc/passwd",                # absolute path
+    "0000:01:00.0\x00",          # null-byte path-truncation attempt
+    "0000:01:00.8",               # function > 7 is invalid PCIe
+    "abcd:ef:gh.0",               # non-hex
+    "",                           # empty
+    "0000:01:00.0 with spaces",   # whitespace
+])
+def test_realbackend_rejects_invalid_bdf(tmp_path, evil_bdf):
+    # Every public method that touches the filesystem must validate the BDF first,
+    # so a hostile plan-file or library caller can't escape sys_root or, worse,
+    # write to arbitrary config-space paths when running as root.
+    be = RealBackend(sys_root=str(tmp_path))
+    for op in (lambda: be.get_device(evil_bdf),
+               lambda: be.read_config(evil_bdf, 0, 4),
+               lambda: be.write_config(evil_bdf, 0, 0, 4),
+               lambda: be.link_chain(evil_bdf)):
+        with pytest.raises(ValueError, match="invalid BDF"):
+            op()
+
+
+def test_realbackend_accepts_valid_bdf(tmp_path):
+    # Sanity: a well-formed BDF passes validation (file may not exist; we only check
+    # validation does not raise — the I/O can OSError afterwards).
+    be = RealBackend(sys_root=str(tmp_path))
+    try:
+        be.get_device("0000:01:00.0")        # may OSError below; that's fine
+    except (OSError, ValueError) as e:
+        assert not isinstance(e, ValueError), "valid BDF must not be rejected"
 
 
 def test_mock_mode_policy(monkeypatch):

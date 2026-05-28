@@ -30,7 +30,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass, field
 
-from .backend import Backend, DOWNSTREAM_PORTS
+from .backend import DOWNSTREAM_PORTS, Backend
 
 
 @dataclass

@@ -130,11 +130,16 @@ def test_plan_json_emits_summary_object(capsys):
     assert "report" in data and "summary" in data and data["summary"]["total"] > 0
 
 
-def test_plan_yaml_loads_via_load_config(capsys):
+def test_plan_yaml_loads_via_load_config(tmp_path, capsys):
     pytest.importorskip("yaml")
-    rc = cli.main(["--backend", "mock", "plan",
-                   os.path.join(CONFIGS, "example_topology.yaml")])
-    assert cli.main is not None and rc in (cli.EXIT_PASS, cli.EXIT_FAIL)
+    # Copy the example with bert_max_s minimized — the test proves the YAML loader path
+    # works, not that production BERT timing runs (BERT timing is covered elsewhere).
+    # Without this override the test spends ~100 s running prod-length BERTs.
+    src = open(os.path.join(CONFIGS, "example_topology.yaml")).read()
+    dst = tmp_path / "plan.yaml"
+    dst.write_text(src.replace("bert_max_s: 30", "bert_max_s: 0.5"))
+    rc = cli.main(["--backend", "mock", "plan", str(dst)])
+    assert rc in (cli.EXIT_PASS, cli.EXIT_FAIL)
     assert "Test plan report:" in capsys.readouterr().out
 
 

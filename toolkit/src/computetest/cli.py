@@ -18,6 +18,7 @@ import argparse
 import json
 import os
 import sys
+from typing import Any
 
 from . import ber, diagnostics, ethernet, gmsl, gpu, nvme
 from .backend import select_backend
@@ -176,11 +177,14 @@ def _run(args) -> int:
         return _verdict_exit(d.status)
 
     if args.cmd in ("nvme", "gpu", "gmsl", "eth", "can"):
-        h = {"nvme": lambda: nvme.check_nvme(args.target),
-             "gpu": lambda: gpu.check_gpu(int(args.target)),
-             "gmsl": lambda: gmsl.check_gmsl(args.target),
-             "eth": lambda: ethernet.check_ethernet(args.target),
-             "can": lambda: ethernet.check_can(args.target)}[args.cmd]()
+        # The dispatch returns one of five distinct Health dataclasses; they share the
+        # .ok / .summary() / .to_dict() shape but not a common nominal type, so Any
+        # is the honest annotation here (a Protocol would be more boilerplate than payoff).
+        h: Any = {"nvme": lambda: nvme.check_nvme(args.target),
+                  "gpu": lambda: gpu.check_gpu(int(args.target)),
+                  "gmsl": lambda: gmsl.check_gmsl(args.target),
+                  "eth": lambda: ethernet.check_ethernet(args.target),
+                  "can": lambda: ethernet.check_can(args.target)}[args.cmd]()
         _emit(h.summary(), h.to_dict(), args.json)
         return EXIT_PASS if h.ok else EXIT_FAIL
 
@@ -216,6 +220,11 @@ def main(argv: list[str] | None = None) -> int:
     args = _build_parser().parse_args(argv)
     try:
         return _run(args)
+    except KeyboardInterrupt:
+        # Convention from Bash / autoconf: 128 + SIGINT(2) = 130. Without this, Ctrl-C
+        # during a long BERT prints a Python traceback into the station log.
+        print("interrupted", file=sys.stderr)
+        return 130
     except KeyError as e:
         print(f"error: device/target not found: {e}", file=sys.stderr)
         return EXIT_NOTFOUND

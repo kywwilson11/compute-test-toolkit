@@ -1,8 +1,14 @@
 """Whole-chain diagnostic: a switch topology (Root -> SwUp -> SwDown -> Endpoint).
 Bit errors are evaluated per-BDF (per direction); link downgrades per-link."""
 from computetest import diagnostics
-from computetest.backend import (MockBackend, MockDevice, PORT_ENDPOINT, PORT_ROOT,
-                                  PORT_SWITCH_DOWNSTREAM, PORT_SWITCH_UPSTREAM)
+from computetest.backend import (
+    PORT_ENDPOINT,
+    PORT_ROOT,
+    PORT_SWITCH_DOWNSTREAM,
+    PORT_SWITCH_UPSTREAM,
+    MockBackend,
+    MockDevice,
+)
 
 
 def _switch_board(**overrides):

@@ -11,7 +11,11 @@ toolkit/sim/qemu/.work/
 htmlcov/
 .mutmut-cache
 mutants/
+# Mutmut leftover mutant-copy files (created when a run is interrupted; otherwise cleaned).
+toolkit/src/computetest/* [0-9]*.py
+toolkit/src/computetest/* [0-9]*.bak
 *.egg-info/
 .DS_Store
+.claude/
 # Third-party input doc — kept locally, never published.
 reference/Zoox_Study_Guide-11.pdf

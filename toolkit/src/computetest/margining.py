@@ -18,9 +18,14 @@ Two backends, as everywhere:
 from __future__ import annotations
 
 import hashlib
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 
-from .backend import Backend, ECAP_LANE_MARGINING, MockBackend
+from .backend import ECAP_LANE_MARGINING, Backend, MockBackend
+
+# Spec-defined TX preset range (P0..P10); a module-level constant so the function
+# signature default is immutable (avoids the mutable-default antipattern).
+_DEFAULT_EQ_PRESETS: tuple[int, ...] = tuple(range(0, 11))
 
 # A typical manufacturing limit: each lane must have at least this timing margin,
 # expressed as a fraction of the unit interval (UI). 0.25 UI is a reasonable bar.
@@ -44,7 +49,7 @@ class MarginResult:
 
     def __post_init__(self):
         if self.lanes:
-            self.min_timing_ui = min(l.timing_ui for l in self.lanes)
+            self.min_timing_ui = min(lane.timing_ui for lane in self.lanes)
 
     @property
     def available(self) -> bool:
@@ -53,7 +58,7 @@ class MarginResult:
 
     @property
     def worst_lane(self) -> LaneMargin | None:
-        return min(self.lanes, key=lambda l: l.timing_ui) if self.lanes else None
+        return min(self.lanes, key=lambda lane: lane.timing_ui) if self.lanes else None
 
     @property
     def ok(self) -> bool:
@@ -64,6 +69,7 @@ class MarginResult:
             reason = f" ({self.note})" if self.note else ""
             return f"{self.bdf}: margining unavailable{reason}"
         w = self.worst_lane
+        assert w is not None    # the early-return above guarantees self.lanes is non-empty
         state = "OK" if self.ok else f"FAIL(lane {w.lane}={w.timing_ui:.3f}UI<{self.limit_ui}UI)"
         return (f"{self.bdf}: min margin {self.min_timing_ui:.3f} UI "
                 f"across {len(self.lanes)} lanes -> {state}")
@@ -72,7 +78,7 @@ class MarginResult:
         return {"bdf": self.bdf, "min_timing_ui": round(self.min_timing_ui, 4),
                 "limit_ui": self.limit_ui, "ok": self.ok, "available": self.available,
                 "note": self.note,
-                "lanes": {l.lane: round(l.timing_ui, 4) for l in self.lanes}}
+                "lanes": {lm.lane: round(lm.timing_ui, 4) for lm in self.lanes}}
 
 
 def _mock_lane_margin(bdf: str, lane: int, injected_ber: float) -> float:
@@ -155,7 +161,7 @@ class EqSweep:
 
 
 def characterize_equalization(backend: Backend, bdf: str,
-                              presets=range(0, 11)) -> EqSweep:
+                              presets: Iterable[int] = _DEFAULT_EQ_PRESETS) -> EqSweep:
     """Sweep TX presets, (mock) retrain, and record errors + eye margin per preset.
 
     On real hardware each step would set the preset via the Secondary PCIe

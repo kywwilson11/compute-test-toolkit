@@ -28,6 +28,7 @@ Plan format (dict, or JSON/YAML file):
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import Any
 
 from . import diagnostics, ethernet, gmsl, gpu, nvme, topology
 from .backend import Backend
@@ -71,6 +72,12 @@ def run_test_plan(backend: Backend, plan: dict, *, store: ResultStore | None = N
         if store:
             store.record(rec)
 
+    def add_health(subsystem: str, target: str, test_name: str, h: Any) -> None:
+        """Record a Layer-2 functional-check result. ``h`` is duck-typed: any object with
+        .ok / .summary() / .to_dict() (every check_*Health returns one)."""
+        add(TestRecord(subsystem, target, test_name,
+                       "pass" if h.ok else "fail", h.to_dict(), h.summary()))
+
     # 1. Enumeration: are the expected PCIe devices present?
     enum = topology.enumerate_against(backend, cfg)
     add(TestRecord("enum", "topology", "enumeration",
@@ -94,25 +101,15 @@ def run_test_plan(backend: Backend, plan: dict, *, store: ResultStore | None = N
     #    each device itself (a GPU's link is Layer 1 above; its ECC/thermal is here).
     fc = plan.get("functional_checks", {})
     for dev in fc.get("nvme", []):
-        h = nvme.check_nvme(dev)
-        add(TestRecord("nvme", dev, "smart", "pass" if h.ok else "fail",
-                       h.to_dict(), h.summary()))
+        add_health("nvme", dev, "smart", nvme.check_nvme(dev))
     for idx in fc.get("gpus", []):
-        h = gpu.check_gpu(idx)
-        add(TestRecord("gpu", str(idx), "health", "pass" if h.ok else "fail",
-                       h.to_dict(), h.summary()))
+        add_health("gpu", str(idx), "health", gpu.check_gpu(idx))
     for link in fc.get("gmsl", []):
-        h = gmsl.check_gmsl(link)
-        add(TestRecord("gmsl", link, "link+video", "pass" if h.ok else "fail",
-                       h.to_dict(), h.summary()))
+        add_health("gmsl", link, "link+video", gmsl.check_gmsl(link))
     for iface in fc.get("ethernet", []):
-        h = ethernet.check_ethernet(iface)
-        add(TestRecord("ethernet", iface, "link", "pass" if h.ok else "fail",
-                       h.to_dict(), h.summary()))
+        add_health("ethernet", iface, "link", ethernet.check_ethernet(iface))
     for iface in fc.get("can", []):
-        h = ethernet.check_can(iface)
-        add(TestRecord("can", iface, "state", "pass" if h.ok else "fail",
-                       h.to_dict(), h.summary()))
+        add_health("can", iface, "state", ethernet.check_can(iface))
 
     # 4. Whole-chain diagnostics (every link in an endpoint's path). Each entry is an
     #    endpoint BDF, or {endpoint, expected_speed, expected_width}.
@@ -121,10 +118,12 @@ def run_test_plan(backend: Backend, plan: dict, *, store: ResultStore | None = N
         kw = {} if isinstance(spec, str) else {
             "expected_speed": spec.get("expected_speed"),
             "expected_width": spec.get("expected_width")}
-        d = diagnostics.diagnose_chain(backend, ep, target_ber=cfg.target_ber,
-                                       confidence=cfg.confidence,
-                                       max_seconds=plan.get("bert_max_s", 30.0), **kw)
-        add(TestRecord("chain", ep, "chain", d.status, d.to_dict(), "; ".join(d.reasons())))
+        # Distinct name (vs the per-device PcieDiagnostic `d` above) keeps the types crisp.
+        chain_d = diagnostics.diagnose_chain(backend, ep, target_ber=cfg.target_ber,
+                                             confidence=cfg.confidence,
+                                             max_seconds=plan.get("bert_max_s", 30.0), **kw)
+        add(TestRecord("chain", ep, "chain", chain_d.status, chain_d.to_dict(),
+                       "; ".join(chain_d.reasons())))
 
     if store:
         store.heartbeat("idle", "PASS" if report.ok else "FAIL")

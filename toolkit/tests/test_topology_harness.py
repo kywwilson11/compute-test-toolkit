@@ -95,8 +95,13 @@ def test_link_chain_walks_switch_topology():
 
 
 def test_analyze_chain_errors_per_bdf_downgrades_per_link():
-    from computetest.backend import (MockDevice, PORT_ROOT, PORT_SWITCH_UPSTREAM,
-                                      PORT_SWITCH_DOWNSTREAM, PORT_ENDPOINT)
+    from computetest.backend import (
+        PORT_ENDPOINT,
+        PORT_ROOT,
+        PORT_SWITCH_DOWNSTREAM,
+        PORT_SWITCH_UPSTREAM,
+        MockDevice,
+    )
     be = MockBackend([
         MockDevice("0000:00:1c.0", parent=None, port_type=PORT_ROOT),
         MockDevice("0000:02:00.0", parent="0000:00:1c.0", port_type=PORT_SWITCH_UPSTREAM),
@@ -115,8 +120,13 @@ def test_analyze_chain_errors_per_bdf_downgrades_per_link():
 
 
 def test_plan_runs_chain_section():
-    from computetest.backend import (MockDevice, PORT_ROOT, PORT_SWITCH_UPSTREAM,
-                                      PORT_SWITCH_DOWNSTREAM, PORT_ENDPOINT)
+    from computetest.backend import (
+        PORT_ENDPOINT,
+        PORT_ROOT,
+        PORT_SWITCH_DOWNSTREAM,
+        PORT_SWITCH_UPSTREAM,
+        MockDevice,
+    )
     from computetest.harness import run_test_plan
     be = MockBackend([
         MockDevice("0000:00:1c.0", parent=None, port_type=PORT_ROOT),

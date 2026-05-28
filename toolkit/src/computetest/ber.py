@@ -32,9 +32,9 @@ GEN4_X16_BPS = link_bits_per_second(4, 16)
 
 # --- Fast path: scipy if available ------------------------------------------- #
 try:  # pragma: no cover - exercised only where scipy is installed
-    from scipy.special import gammainc as _gammainc          # lower regularized P(a,x)
-    from scipy.special import gammaincc as _gammaincc         # upper regularized Q(a,x)
-    from scipy.special import gammaincinv as _gammaincinv     # inverse in x
+    from scipy.special import gammainc as _gammainc  # lower regularized P(a,x)
+    from scipy.special import gammaincc as _gammaincc  # upper regularized Q(a,x)
+    from scipy.special import gammaincinv as _gammaincinv  # inverse in x
     _HAVE_SCIPY = True
 except Exception:  # pragma: no cover
     _HAVE_SCIPY = False

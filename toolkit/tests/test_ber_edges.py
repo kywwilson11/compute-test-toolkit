@@ -4,7 +4,6 @@ Complements test_ber.py: that file proves the fallback math is *correct* (matche
 this one proves the *guards* (negative inputs, empty data, boundary y) behave, so a
 bare-station run can't silently return a wrong verdict. Mutation testing leans on these.
 """
-import math
 
 import pytest
 
@@ -96,7 +95,8 @@ def test_ber_lower_bound_exact_value():
     catches an E-vs-E+1 slip in the fail-fast reject path (the verdict alone doesn't)."""
     sp = pytest.importorskip("scipy.special")
     n, E, CL = 1e12, 10, 0.90
-    assert ber.ber_lower_bound(n, E, CL) == pytest.approx(float(sp.gammaincinv(E, 1.0 - CL)) / n, rel=1e-9)
+    assert ber.ber_lower_bound(n, E, CL) == pytest.approx(
+        float(sp.gammaincinv(E, 1.0 - CL)) / n, rel=1e-9)
     wrong = float(sp.gammaincinv(E + 1, 1.0 - CL)) / n            # the off-by-one form
     assert abs(ber.ber_lower_bound(n, E, CL) - wrong) > 1e-15
 
@@ -105,6 +105,7 @@ def test_ber_upper_bound_exact_value():
     """Upper bound = chi2inv(CL, 2E+2)/(2n) = gammaincinv(E+1, CL)/n; pin it for E > 0."""
     sp = pytest.importorskip("scipy.special")
     n, E, CL = 3e12, 5, 0.95
-    assert ber.ber_upper_bound(n, E, CL) == pytest.approx(float(sp.gammaincinv(E + 1, CL)) / n, rel=1e-9)
+    assert ber.ber_upper_bound(n, E, CL) == pytest.approx(
+        float(sp.gammaincinv(E + 1, CL)) / n, rel=1e-9)
     wrong = float(sp.gammaincinv(E, CL)) / n
     assert abs(ber.ber_upper_bound(n, E, CL) - wrong) > 1e-15

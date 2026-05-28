@@ -43,7 +43,7 @@ class ResultStore:
         self.conn.executescript(SCHEMA)
         self.station, self.dut_serial, self.program_version = station, dut_serial, program_version
 
-    def __enter__(self) -> "ResultStore":
+    def __enter__(self) -> ResultStore:
         return self
 
     def __exit__(self, *exc) -> None:
@@ -71,7 +71,8 @@ class ResultStore:
             "SELECT ts, station, dut_serial, subsystem, target, test_name, status, "
             "measured, message FROM results ORDER BY id DESC LIMIT ?", (limit,))
         cols = [c[0] for c in cur.description]
-        rows = [dict(zip(cols, r)) for r in cur.fetchall()]
+        # strict=True: every row must have the same column count as the cursor description.
+        rows = [dict(zip(cols, r, strict=True)) for r in cur.fetchall()]
         for r in rows:
             r["measured"] = json.loads(r["measured"] or "{}")
         return rows

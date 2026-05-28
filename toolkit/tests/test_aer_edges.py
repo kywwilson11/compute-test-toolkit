@@ -5,8 +5,7 @@ fallbacks: snapshot/clear/read with no AER, the Device-Status (coarse) source, a
 'none' source — so a device that exposes neither can't be silently misread.
 """
 from computetest import aer
-from computetest.backend import (DEVSTA_CORR, DEVSTA_NONFATAL, ECAP_AER, MockBackend,
-                                  MockDevice)
+from computetest.backend import DEVSTA_CORR, DEVSTA_NONFATAL, ECAP_AER, MockBackend, MockDevice
 
 
 def _no_aer(bdf="0000:01:00.0", **kw):

@@ -11,8 +11,15 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from .backend import (AER_CORR_STATUS, AER_UNCORR_STATUS, DEVSTA_CORR, DEVSTA_FATAL,
-                      DEVSTA_NONFATAL, DEVSTA_UR, ECAP_AER, Backend)
+from .backend import (
+    AER_CORR_STATUS,
+    AER_UNCORR_STATUS,
+    DEVSTA_CORR,
+    DEVSTA_FATAL,
+    DEVSTA_NONFATAL,
+    ECAP_AER,
+    Backend,
+)
 
 # bit -> (short name, what it usually means)
 CORRECTABLE_BITS: dict[int, tuple[str, str]] = {
@@ -199,7 +206,8 @@ def read_errors(backend: Backend, bdf: str, source: str | None = None) -> ErrorR
     if src == "devstatus":
         ds = backend.read_device_status(bdf) or 0
         cor = DEVSTA_CORR if (ds & DEVSTA_CORR) else 0
-        unc = ds & (DEVSTA_NONFATAL | DEVSTA_FATAL)   # UR (bit 3) reported separately, not auto-fail
+        # UR (bit 3) is reported separately and is not an auto-fail.
+        unc = ds & (DEVSTA_NONFATAL | DEVSTA_FATAL)
         return ErrorReading(cor, unc, "devstatus")
     return ErrorReading(0, 0, "none")
 

@@ -39,7 +39,7 @@ try:  # pragma: no cover - exercised only where pyvisa is installed
     import pyvisa  # type: ignore
     _HAVE_PYVISA = True
 except Exception:  # pragma: no cover - the bare-laptop path this module is built for
-    pyvisa = None  # type: ignore
+    pyvisa = None
     _HAVE_PYVISA = False
 
 
@@ -87,10 +87,8 @@ def parse_scpi_float(raw: str) -> float:
     match = re.match(r"[+-]?(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?", first)
     if not match:
         raise InstrumentError(f"malformed SCPI numeric response: {raw!r}")
-    try:
-        value = float(match.group(0))
-    except ValueError:  # pragma: no cover - regex already guarantees a float-parseable match
-        raise InstrumentError(f"malformed SCPI numeric response: {raw!r}")
+    # The regex above only matches valid float literals, so float() cannot raise here.
+    value = float(match.group(0))
     if abs(value) >= SCPI_OVERFLOW:
         return float("inf") if value > 0 else float("-inf")
     return value
@@ -296,7 +294,7 @@ class SCPIInstrument:
         self._open = False
 
     # -- connection lifecycle --------------------------------------------------
-    def open(self) -> "SCPIInstrument":
+    def open(self) -> SCPIInstrument:
         """Open the VISA resource (idempotent). Returns self for chaining."""
         if not self._open:
             self.transport.open()
@@ -309,7 +307,7 @@ class SCPIInstrument:
             self.transport.close()
             self._open = False
 
-    def __enter__(self) -> "SCPIInstrument":
+    def __enter__(self) -> SCPIInstrument:
         return self.open()
 
     def __exit__(self, *exc: Any) -> None:
@@ -375,8 +373,8 @@ class SCPIInstrument:
         code_text, _, message = raw.partition(",")
         try:
             code = int(float(code_text.strip()))
-        except ValueError:
-            raise InstrumentError(f"malformed SYST:ERR? response: {raw!r}")
+        except ValueError as e:
+            raise InstrumentError(f"malformed SYST:ERR? response: {raw!r}") from e
         return code, message.strip().strip('"')
 
     def check_errors(self) -> list[str]:

@@ -145,12 +145,12 @@ def test_find_ext_cap_terminates_and_never_raises(blob, cap):
 
 def test_find_ext_cap_finds_chained_cap():
     blob = bytearray(4096)
-    blob[0x100:0x104] = (((0x140 << 20) | 0x000B)).to_bytes(4, "little")  # other cap -> 0x140
+    blob[0x100:0x104] = ((0x140 << 20) | 0x000B).to_bytes(4, "little")  # other cap -> 0x140
     blob[0x140:0x144] = (0x0001).to_bytes(4, "little")                    # AER, next = 0
     assert _BlobBackend(bytes(blob)).find_ext_cap("x", ECAP_AER) == 0x140
 
 
 def test_find_ext_cap_self_loop_terminates():
     blob = bytearray(4096)
-    blob[0x100:0x104] = (((0x100 << 20) | 0x0002)).to_bytes(4, "little")  # points at itself
+    blob[0x100:0x104] = ((0x100 << 20) | 0x0002).to_bytes(4, "little")  # points at itself
     assert _BlobBackend(bytes(blob)).find_ext_cap("x", ECAP_AER) is None

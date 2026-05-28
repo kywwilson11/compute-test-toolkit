@@ -1,5 +1,5 @@
 from computetest import aer
-from computetest.backend import (AER_CORR_STATUS, ECAP_AER, MockBackend, MockDevice)
+from computetest.backend import ECAP_AER, MockBackend, MockDevice
 
 
 def test_enumerate_and_device_fields():

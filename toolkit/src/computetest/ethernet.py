@@ -14,6 +14,14 @@ from dataclasses import dataclass, field
 from .backend import mock_mode
 
 _SPEED_RE = re.compile(r"Speed:\s*(\d+(?:\.\d+)?)\s*([MG])b?", re.I)
+# Linux IFNAMSIZ-1 (15) characters, the alphabet `ip`/`ethtool` accept. Rejects shell
+# metacharacters and option-like values (`--help`) — the iface flows into argv positions.
+_IFACE_RE = re.compile(r"^[A-Za-z0-9._-]{1,15}$")
+
+
+def _validate_iface(iface: str) -> None:
+    if not isinstance(iface, str) or not _IFACE_RE.match(iface):
+        raise ValueError(f"invalid network interface name: {iface!r}")
 
 
 @dataclass
@@ -66,6 +74,7 @@ def check_ethernet(iface: str = "eth0", *, expect_mbps: int = 1000,
                    min_throughput_mbps: float = 900, cable_test: bool = False,
                    iperf: bool = False, iperf_server: str | None = None,
                    mock: bool | None = None) -> EthHealth:
+    _validate_iface(iface)
     """Check link/speed/errors, and (opt-in) cable TDR + iperf3 throughput.
 
     Throughput is only measured (and gated by ``min_throughput_mbps``) when
@@ -84,13 +93,16 @@ def check_ethernet(iface: str = "eth0", *, expect_mbps: int = 1000,
     else:  # pragma: no cover - real-hw path
         if not shutil.which("ethtool"):
             raise RuntimeError("ethtool not found")
-        et = subprocess.run(["ethtool", iface], capture_output=True, text=True).stdout
+        # timeout=10 because a wedged/flaky PHY can wedge `ethtool` indefinitely.
+        et = subprocess.run(["ethtool", iface],
+                            capture_output=True, text=True, timeout=10).stdout
         up = "Link detected: yes" in et
         spd = _parse_speed(et)
         mlb = re.search(r"master-slave (?:cfg|status):\s*(\S+)", et, re.I)
         role = "master" if (mlb and "master" in mlb.group(1).lower()) else \
                ("slave" if mlb else "")
-        stats = subprocess.run(["ethtool", "-S", iface], capture_output=True, text=True).stdout
+        stats = subprocess.run(["ethtool", "-S", iface],
+                               capture_output=True, text=True, timeout=10).stdout
         rx_e, tx_e = _stat(stats, "rx_errors"), _stat(stats, "tx_errors")
         tput = _real_iperf(iperf_server) if iperf else 0.0
         ct = _real_cable_test(iface) if cable_test else None
@@ -182,6 +194,7 @@ def _can_fd_enabled(ip_link_output: str) -> bool:
 
 
 def check_can(iface: str = "can0", *, mock: bool | None = None) -> CanHealth:
+    _validate_iface(iface)
     use_mock = mock_mode() if mock is None else mock
     if use_mock:
         bad = "BAD" in iface
@@ -189,7 +202,7 @@ def check_can(iface: str = "can0", *, mock: bool | None = None) -> CanHealth:
         tec, rec, fd = (255 if bad else 0), (130 if bad else 0), ("fd" in iface.lower())
     else:  # pragma: no cover - real-hw path
         out = subprocess.run(["ip", "-details", "-statistics", "link", "show", iface],
-                             capture_output=True, text=True).stdout
+                             capture_output=True, text=True, timeout=10).stdout
         state = ("BUS-OFF" if "BUS-OFF" in out else
                  "ERROR-PASSIVE" if "ERROR-PASSIVE" in out else
                  "ERROR-WARNING" if "ERROR-WARNING" in out else "ERROR-ACTIVE")

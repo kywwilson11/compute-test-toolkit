@@ -1,6 +1,12 @@
 from computetest import diagnostics, dmesg
-from computetest.backend import (MockBackend, MockDevice, PORT_ENDPOINT, PORT_ROOT,
-                                  PORT_SWITCH_DOWNSTREAM, PORT_SWITCH_UPSTREAM)
+from computetest.backend import (
+    PORT_ENDPOINT,
+    PORT_ROOT,
+    PORT_SWITCH_DOWNSTREAM,
+    PORT_SWITCH_UPSTREAM,
+    MockBackend,
+    MockDevice,
+)
 
 SAMPLE = """\
 [  12.3] pcieport 0000:00:1c.0: AER: Corrected error received: 0000:04:00.0

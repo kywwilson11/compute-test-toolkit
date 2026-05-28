@@ -9,7 +9,7 @@ from __future__ import annotations
 import time
 from dataclasses import dataclass
 
-from .backend import Backend, LINK_SPEED_GTPS, link_bits_per_second
+from .backend import LINK_SPEED_GTPS, Backend, link_bits_per_second
 
 # Re-exported so callers needing the link payload rate have one obvious home
 # (the rate is a link property). `link_bits_per_second(4, 16)` = Gen4 x16 bytes-ish/s.

@@ -7,11 +7,17 @@ coax->deserializer->CSI-2->SoC path), and link error counters. Wraps i2c/sysfs +
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import subprocess
 from dataclasses import dataclass, field
 
 from .backend import mock_mode
+
+# Linux I2C device id: `<bus>-<7-bit-hex-addr>` (e.g. "1-0029"). Validating here
+# stops a hostile `link` value (path traversal / argv-option) from reaching sysfs/v4l2-ctl.
+_LINK_RE = re.compile(r"^\d{1,4}-[0-9a-fA-F]{4}$")
+_VIDEO_RE = re.compile(r"^/dev/video\d+$")
 
 
 @dataclass
@@ -64,7 +70,16 @@ def check_gmsl(link: str = "1-0029", video_device: str = "/dev/video0", *,
 
 def _real_check_gmsl(link, video_device, expect_w, expect_h,
                      frames) -> GmslHealth:  # pragma: no cover - real-hw path
-    # Real path (driver/board specific paths shown; adjust to your platform). ---
+    # Validate device identifiers BEFORE any sysfs/argv interpolation — a hostile value
+    # from a plan file is otherwise a sysfs information-disclosure / argv-option vector.
+    if not isinstance(link, str) or not _LINK_RE.match(link):
+        raise ValueError(f"invalid GMSL link id: {link!r}")
+    if not isinstance(video_device, str) or not _VIDEO_RE.match(video_device):
+        raise ValueError(f"invalid video device: {video_device!r}")
+    # Match the contract of nvme/gpu/ethernet: missing CLI -> RuntimeError (mapped to
+    # EXIT_UNAVAIL), NOT a silent fall-through that pretends the device failed.
+    if not shutil.which("v4l2-ctl"):
+        raise RuntimeError("v4l2-ctl not found (apt install v4l-utils)")
     locked = False
     lock_path = f"/sys/bus/i2c/devices/{link}/link_status"
     if os.path.exists(lock_path):
@@ -76,18 +91,23 @@ def _real_check_gmsl(link, video_device, expect_w, expect_h,
         with open(err_path) as fh:
             errors = int(fh.read().strip() or 0)
     w = h = 0
-    if shutil.which("v4l2-ctl"):
-        fmt = subprocess.run(["v4l2-ctl", "-d", video_device, "--get-fmt-video"],
-                             capture_output=True, text=True).stdout
-        for line in fmt.splitlines():
-            if "Width/Height" in line:
-                parts = line.split(":")[-1].strip().split("/")
-                w, h = int(parts[0]), int(parts[1])
-        cap = subprocess.run(["v4l2-ctl", "-d", video_device, "--stream-mmap",
-                              f"--stream-count={frames}", "--stream-to=/dev/null"],
-                             capture_output=True, text=True)
+    fmt = subprocess.run(["v4l2-ctl", "-d", video_device, "--get-fmt-video"],
+                         capture_output=True, text=True, timeout=10).stdout
+    for line in fmt.splitlines():
+        if "Width/Height" in line:
+            parts = line.split(":")[-1].strip().split("/")
+            w, h = int(parts[0]), int(parts[1])
+    # `--stream-mmap` is the most likely hang in the toolkit: a locked link with no
+    # frames flowing (the FrameSync bug this test is meant to catch) will wait forever.
+    # Bound it generously (2 s per frame, min 30 s) and treat timeout as "no frames".
+    stream_timeout = max(30, frames * 2)
+    try:
+        cap = subprocess.run(
+            ["v4l2-ctl", "-d", video_device, "--stream-mmap",
+             f"--stream-count={frames}", "--stream-to=/dev/null"],
+            capture_output=True, text=True, timeout=stream_timeout)
         captured = frames if cap.returncode == 0 else 0
-    else:
+    except subprocess.TimeoutExpired:
         captured = 0
     return GmslHealth(link, locked, video_device, w, h, captured, errors,
                       _limits(locked, w, h, captured, errors, expect_w, expect_h))

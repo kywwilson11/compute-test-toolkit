@@ -10,12 +10,20 @@ in `# pragma: no cover` code.
 from __future__ import annotations
 
 import pytest
+from sysfs_fixture import build_pci_tree
 
 from computetest.backend import (
-    AER_CORR_STATUS, CAP_PCIE, ECAP_AER, LinkStatus, MockBackend, MockDevice, PORT_ENDPOINT,
-    PORT_ROOT, PciDevice, RealBackend,
+    AER_CORR_STATUS,
+    CAP_PCIE,
+    ECAP_AER,
+    PORT_ENDPOINT,
+    PORT_ROOT,
+    LinkStatus,
+    MockBackend,
+    MockDevice,
+    PciDevice,
+    RealBackend,
 )
-from sysfs_fixture import build_pci_tree
 
 BDF = "0000:03:00.0"
 _REAL_SPEC = dict(bdf=BDF, vendor=0x10DE, device=0x2204, class_code=0x030000,

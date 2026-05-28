@@ -40,7 +40,8 @@ class NvmeHealth:
         state = "OK" if self.ok else "FAIL(" + ",".join(fails) + ")"
         s = self.smart
         hist = f"  history[{';'.join(self.history)}]" if self.history else ""
-        dst = f"  dst={'pass' if self.self_test.get('passed') else 'FAIL'}" if self.self_test else ""
+        dst = (f"  dst={'pass' if self.self_test.get('passed') else 'FAIL'}"
+               if self.self_test else "")
         return (f"{self.device} {self.model} fw={self.firmware} "
                 f"temp={s.get('temperature')}C used={s.get('percentage_used')}% "
                 f"media_err={s.get('media_errors')} poh={s.get('power_on_hours')} "
@@ -60,7 +61,8 @@ def _apply_limits(smart: dict, max_temp_c: int, max_power_on_hours: int) -> dict
         "percentage_used<2": smart.get("percentage_used", 0) < 2,
         "available_spare>=100": smart.get("available_spare", 0) >= 100,
         f"temp<={max_temp_c}": 0 < smart.get("temperature", 0) <= max_temp_c,
-        f"power_on_hours<={max_power_on_hours}": smart.get("power_on_hours", 0) <= max_power_on_hours,
+        f"power_on_hours<={max_power_on_hours}":
+            smart.get("power_on_hours", 0) <= max_power_on_hours,
     }
 
 
@@ -141,8 +143,12 @@ def check_nvme(device: str = "/dev/nvme0", *, mock: bool | None = None, max_temp
 
 
 # --- Device Self-Test (DST), log page 0x06 ------------------------------------- #
-def start_self_test(device: str, extended: bool = False, *, mock: bool | None = None) -> bool:
-    """Kick off a device self-test. Poll self_test_log()/poll_self_test() for the result."""
+def start_self_test(device: str, *, extended: bool = False, mock: bool | None = None) -> bool:
+    """Kick off a device self-test. Poll self_test_log()/poll_self_test() for the result.
+
+    `extended` is keyword-only: ``start_self_test(dev, True)`` (a magic-bool at the call
+    site) is a footgun the API now refuses by construction.
+    """
     if (mock_mode() if mock is None else mock):
         return True
     code = "2" if extended else "1"  # pragma: no cover - real-hw path

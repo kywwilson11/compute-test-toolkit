@@ -21,6 +21,7 @@ import subprocess
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from typing import Any
 
 from . import aer, ber
 from .backend import Backend, link_bits_per_second
@@ -198,7 +199,8 @@ def run_bert(backend: Backend, bdf: str, *, target_ber: float = 1e-12,
         note = ((note + "; ") if note else "") + \
                "errors present at idle (constant fault): " + ",".join(idle_names)
 
-    unc_decode = [n for _, n, _ in aer.ErrorReading(0, unc_bits_seen | idle_unc, source).uncorrectable]
+    unc_decode = [n for _, n, _ in
+                  aer.ErrorReading(0, unc_bits_seen | idle_unc, source).uncorrectable]
     # Report the SAME bits the verdict was decided on (one elapsed value, no re-reads).
     return BertResult(bdf, elapsed, verdict.bits, cor_total, unc_total, per,
                       dev.current_link_speed, dev.current_link_width, verdict,
@@ -276,7 +278,8 @@ def run_conductor(backend: Backend, bdf: str, *, target_ber: float = 1e-12,
     cor_total = unc_total = unc_bits_seen = 0
     n = elapsed = 0.0
     next_bits = n0 * margin                  # first window: target + margin
-    status, out = "continue", {}
+    status = "continue"
+    out: dict[str, Any] = {}
     while True:
         secs = (next_bits / bps) if bps > 0 else max_seconds
         secs = max(0.05, min(secs, max(0.05, max_seconds - elapsed)))
@@ -291,14 +294,16 @@ def run_conductor(backend: Backend, bdf: str, *, target_ber: float = 1e-12,
         n += out.get("bits", 0.0)
         elapsed += secs
 
-        if unc_total > 0:
-            status = "fail"; break            # any uncorrectable = immediate fail
+        if unc_total > 0:                     # any uncorrectable = immediate fail
+            status = "fail"
+            break
         decision = ber.sequential_decision(cor_total, n, target_ber, confidence)
         if decision in ("pass", "reject"):
             status = "pass" if decision == "pass" else "fail"
             break
         if n >= budget_bits or n >= max_bits_by_time or elapsed >= max_seconds:
-            status = "fail"; break            # budget/takt exhausted, target not proven
+            status = "fail"                   # budget/takt exhausted, target not proven
+            break
         need = ber.bits_for_confidence(target_ber, confidence, cor_total)
         next_bits = max(n0 * 0.25, need - n)  # extend toward the bits the current E needs
 

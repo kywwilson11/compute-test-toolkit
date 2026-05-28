@@ -34,7 +34,7 @@ class FakeQMPServer:
         self._srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self._srv.bind(("127.0.0.1", 0))
         self._srv.listen(1)
-        self.addr = "127.0.0.1:%d" % self._srv.getsockname()[1]
+        self.addr = f"127.0.0.1:{self._srv.getsockname()[1]}"
         self.commands: list[dict] = []
         self._thread = threading.Thread(target=self._serve, daemon=True)
         self._thread.start()
@@ -60,7 +60,8 @@ class FakeQMPServer:
                     if "nonexistent" in cl:        # mimic a QEMU error report (no leading "OK")
                         conn.sendall(b'{"return": "invalid id: nonexistent"}\r\n')
                     else:                          # QEMU success echoes "OK id: <id> ..."
-                        conn.sendall(b'{"return": "OK id: dev root bus: 0000:00, bus: 0 devfn: 3.0"}\r\n')
+                        conn.sendall(b'{"return": "OK id: dev root bus: 0000:00, '
+                                     b'bus: 0 devfn: 3.0"}\r\n')
                 else:
                     conn.sendall(b'{"return": {}}\r\n')
 
@@ -117,9 +118,11 @@ def test_execute_raises_on_qmp_error(server):
 
 def test_inject_accepts_ok_output_and_raises_on_error(server):
     with inject.QMPClient(server.addr) as q:
-        q.inject_correctable("nvme0", inject.COR_BAD_TLP)          # fake replies "OK id: ..." -> no raise
+        # fake replies "OK id: ..." -> no raise
+        q.inject_correctable("nvme0", inject.COR_BAD_TLP)
         with pytest.raises(inject.QMPError, match="failed"):
-            q.inject_correctable("nonexistent", inject.COR_BAD_TLP)  # fake replies error -> raise
+            # fake replies error string -> raise
+            q.inject_correctable("nonexistent", inject.COR_BAD_TLP)
 
 
 def test_main_count_injects_n_times_over_one_connection(server):
@@ -132,4 +135,5 @@ def test_main_count_injects_n_times_over_one_connection(server):
 def test_main_rejects_nonpositive_count():
     # argparse error() exits before any connection, so no server is needed
     with pytest.raises(SystemExit):
-        inject.main(["--qmp", "127.0.0.1:1", "--id", "rp0", "--correctable", "0x40", "--count", "0"])
+        inject.main(["--qmp", "127.0.0.1:1", "--id", "rp0",
+                     "--correctable", "0x40", "--count", "0"])

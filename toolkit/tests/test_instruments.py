@@ -13,8 +13,16 @@ import math
 import pytest
 
 from computetest import instruments
-from computetest.instruments import (DMM, ElectronicLoad, InstrumentError, PowerSupply,
-                                      Reading, SCPIInstrument, Scope, parse_scpi_float)
+from computetest.instruments import (
+    DMM,
+    ElectronicLoad,
+    InstrumentError,
+    PowerSupply,
+    Reading,
+    Scope,
+    SCPIInstrument,
+    parse_scpi_float,
+)
 
 
 # --- module imports and runs without pyvisa --------------------------------- #

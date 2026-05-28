@@ -83,7 +83,8 @@ PORT_ENDPOINT = 0x0
 PORT_ROOT = 0x4
 PORT_SWITCH_UPSTREAM = 0x5
 PORT_SWITCH_DOWNSTREAM = 0x6
-DOWNSTREAM_PORTS = (PORT_ROOT, PORT_SWITCH_DOWNSTREAM)   # receiver faces the leaf; owns the link below
+# Receiver faces the leaf; these ports own the link below them.
+DOWNSTREAM_PORTS = (PORT_ROOT, PORT_SWITCH_DOWNSTREAM)
 
 # Device Status error bits (W1C) — the no-AER fallback error source.
 DEVSTA_CORR = 1 << 0      # Correctable Error Detected
@@ -188,10 +189,11 @@ class Backend(abc.ABC):
     def clear_link_bw_status(self, bdf: str) -> None:
         """Write-1-to-clear the LBMS/LABS bandwidth-change latches in Link Status."""
 
-    def set_exercising(self, bdf: str, active: bool) -> None:
+    def set_exercising(self, bdf: str, active: bool) -> None:  # noqa: B027
         """Tell the backend whether the link is being exercised (driving traffic).
-        On real hardware the stress workload is external, so this is a no-op; the mock
-        uses it to gate error generation, enabling a true idle baseline (begin/end)."""
+        On real hardware the stress workload is external, so this is a deliberate
+        no-op default; the mock overrides it to gate error generation, enabling a
+        true idle baseline (begin/end). Intentionally non-abstract."""
 
     def link_chain(self, bdf: str) -> list[str]:
         """Return the ordered BDFs in the PCIe path to ``bdf`` (root port ... endpoint).
@@ -224,6 +226,18 @@ class RealBackend(Backend):
     def __init__(self, sys_root: str | None = None):
         self._sys_root = sys_root or os.environ.get("COMPUTETEST_SYSROOT") or RealBackend.SYS
 
+    @staticmethod
+    def _check_bdf(bdf: str) -> None:
+        """Reject any BDF that doesn't match the canonical DDDD:BB:DD.F shape.
+
+        Every public method that interpolates ``bdf`` into a sysfs path goes through
+        here. Without it, an attacker-controlled BDF from a plan file or library caller
+        (e.g. ``"../../etc/passwd"``) would escape ``sys_root`` — and with root, the
+        ``write_config`` path would be an arbitrary-write primitive.
+        """
+        if not isinstance(bdf, str) or not _BDF_RE.match(bdf):
+            raise ValueError(f"invalid BDF: {bdf!r}")
+
     def list_devices(self) -> list[str]:
         return sorted(os.path.basename(p) for p in glob.glob(f"{self._sys_root}/*"))
 
@@ -235,6 +249,8 @@ class RealBackend(Backend):
             return None
 
     def get_device(self, bdf: str) -> PciDevice:
+        self._check_bdf(bdf)
+
         def hexattr(name: str) -> int:
             v = self._attr(bdf, name)
             return int(v, 16) if v else 0
@@ -269,12 +285,14 @@ class RealBackend(Backend):
         )
 
     def read_config(self, bdf: str, offset: int, size: int = 4) -> int:
+        self._check_bdf(bdf)
         with open(f"{self._sys_root}/{bdf}/config", "rb") as fh:
             fh.seek(offset)
             data = fh.read(size)
         return int.from_bytes(data, "little")
 
     def write_config(self, bdf: str, offset: int, value: int, size: int = 4) -> None:
+        self._check_bdf(bdf)
         data = value.to_bytes(size, "little")
         # Opening config O_WRONLY/RDWR requires CAP_SYS_ADMIN (root) on Linux.
         fd = os.open(f"{self._sys_root}/{bdf}/config", os.O_RDWR)
@@ -336,6 +354,7 @@ class RealBackend(Backend):
             self.write_config(bdf, cap + PCIE_LINK_STATUS, LNKSTA_LBMS | LNKSTA_LABS, 2)
 
     def link_chain(self, bdf: str) -> list[str]:
+        self._check_bdf(bdf)
         # The sysfs realpath nests each upstream bridge: the BDF-shaped path
         # components ARE the chain, ordered root-port -> ... -> endpoint.
         real = os.path.realpath(f"{self._sys_root}/{bdf}")
@@ -530,7 +549,9 @@ class MockBackend(Backend):
         d._accrual_t = time.monotonic()          # reset the accrual window on state change
 
     def link_chain(self, bdf: str) -> list[str]:
-        chain, seen, cur = [], set(), bdf
+        chain: list[str] = []
+        seen: set[str] = set()
+        cur: str | None = bdf      # parent walk terminates at the root port (parent = None)
         while cur and cur in self._devs and cur not in seen:
             chain.append(cur)
             seen.add(cur)
