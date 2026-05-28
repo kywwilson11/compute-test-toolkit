@@ -94,18 +94,27 @@ those are covered by the Phase 0/1 parser tests and ultimately the bench. Phase 
   arch‑parametrized (`ARCH=x86_64 ./run_guest.sh start`); the x86_64/TCG path is authored to
   mirror the aarch64 recipe.
 
-### Known: Phase 2/3 e2e is non‑gating on the x86_64/TCG CI lane
+### CI state (x86_64/TCG runner): Phase 3 ✅ blocking, Phase 2 ⚠️ best‑effort
 
-The CI workflow's e2e steps run under `continue-on-error: true`. Both succeed on
-aarch64/HVF locally (40/40 AER, 8/8 Phase 3 binding checks) but on the GitHub Actions
-x86_64/TCG runner the engine sees **0/40** correctable errors despite the QMP injection
-echoing success — the kernel's `pcieport` AER IRQ handler appears to clear the W1C
-status bits faster than our engine polls. Unbinding `pcieport` from the root port (the
-obvious fix) did not resolve it, so the real fix likely needs `pci=noaer` injected via
-the guest kernel cmdline (cloud‑init / grub modification + reboot). That's best
-attempted from a real x86 dev box where iteration is sub‑minute rather than 8 minutes
-per CI round trip; until then the unit gate + the aarch64/HVF local proof are the
-binding signal, and the CI e2e is best‑effort.
+| Lane | aarch64 / HVF (local) | x86_64 / TCG (GitHub CI) |
+|------|------------------------|---------------------------|
+| Unit (QMP + Unity ctest) | ✅ blocking | ✅ blocking |
+| Phase 2 (AER inject + assert) | ✅ 40/40 | ⚠️ 0/40, `continue-on-error: true` |
+| Phase 3 (nvme‑loop / vcan / NIC) | ✅ 8/8 | ✅ 8/8 blocking |
+
+**Phase 3 was unblocked once `pci=noaer` landed** (`prepare.sh` writes
+`/etc/default/grub.d/99-noaer.cfg` and cloud‑init reboots once so the new kernel
+cmdline takes effect; `run_guest.sh` then polls `/proc/cmdline` for `pci=noaer` as a
+race‑free "reboot done" signal). With the kernel AER service disabled, vdev_setup's
+nvme‑loop / vcan bring‑up and the toolkit's real backend parsing all pass on x86 TCG.
+
+**Phase 2 still fails on x86_64/TCG even with `pci=noaer` in `/proc/cmdline` AND
+`pcieport` unbound from the target root port.** QEMU's HMP `pcie_aer_inject_error`
+echoes `"OK"` but the device's AER Correctable Error Status register stays at 0 — a
+deeper QEMU TCG‑vs‑HVF difference in how injected errors latch (aarch64/HVF latches
+them, x86/TCG doesn't, same QEMU version, same topology). Best debugged from a real
+x86 dev box where iteration is sub‑minute, not 8 min per CI round‑trip. Until then,
+the aarch64/HVF Phase 2 proof is the binding signal.
 
 ## Gotchas (learned proving this)
 
