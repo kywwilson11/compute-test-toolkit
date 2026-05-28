@@ -16,7 +16,12 @@ defaults:
 jobs:
   mutmut:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    # 1264 mutants × ~5 s avg (mix of fast-kills and full-suite survivors) ≈ 105 min
+    # sequential; 150 min is ~150 % of expected, with budget for the test suite
+    # widening over time. Runs in the middle of the night, so the long wall-clock
+    # is harmless. (If this ever grows past a single 6-hour job we can shard by
+    # module across 6 parallel jobs -- they don't share state.)
+    timeout-minutes: 150
     env:
       COMPUTETEST_BACKEND: mock
     steps:
