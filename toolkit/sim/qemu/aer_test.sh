@@ -25,6 +25,17 @@ OUT_JSON="$WORK/aer_out.json"
 
 is_running || { echo "no guest running — './run_guest.sh start' first" >&2; exit 1; }
 
+echo "==> disabling kernel AER service for $TARGET_BDF (engine must see the W1C bits)"
+# The kernel's `pcieport` AER IRQ handler clears AER status bits as soon as the device
+# raises the error. On aarch64-HVF the engine happens to win that race; on x86 TCG the
+# kernel handler is fast enough that the bits are gone before the engine's next poll
+# (saw 0/40 errors in CI). Unbinding pcieport from this port stops kernel AER handling
+# entirely — the device's W1C latch still records injections, and the engine reads them.
+# (Harmless: pcieport just provides port services like AER reporting + hotplug, which
+# we explicitly don't want here; the nvme endpoint behind it stays driven by `nvme`.)
+"${SSH[@]}" "echo $TARGET_BDF | sudo tee /sys/bus/pci/drivers/pcieport/unbind \
+             >/dev/null 2>&1 || true"
+
 echo "==> shipping engine sources to guest:$ENGINE_DIR"
 "${SSH[@]}" "mkdir -p $ENGINE_DIR"
 "${SCP[@]}" "$C_SRC/pcie_bert.c" "$C_SRC/pcie_bert_core.c" "$C_SRC/pcie_bert_core.h" \
