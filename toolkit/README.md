@@ -15,9 +15,13 @@ control**.
   develop, demo, and run the entire test suite on macOS. Force it with
   `COMPUTETEST_BACKEND=mock|real`; otherwise it auto-selects (real if Linux sysfs is present).
 
-> **First time? Read [`USAGE.md`](USAGE.md)** — install/verify in 5 minutes, the per-command
-> reference (flags, real output, exit codes, `--json` shapes), the **config reference**,
-> running on a real station, the safety model, and troubleshooting.
+> **First time?**
+> - **[`MANUAL.md`](MANUAL.md)** — the **in-depth user manual** (~20 min read): mental
+>   model, verdict semantics, BERT explained, troubleshooting cookbook, workflows.
+>   Start here.
+> - **[`USAGE.md`](USAGE.md)** — per-command **reference** (every flag, every exit code,
+>   real captured output, the `--json` shapes). Refer here once you know what you're
+>   trying to do.
 
 ## What it checks
 
@@ -48,6 +52,7 @@ CLI (auto-selects mock on a laptop, real hardware on a Linux station):
 PYTHONPATH=src python3 -m computetest.cli list                 # enumerate PCIe devices
 PYTHONPATH=src python3 -m computetest.cli diagnose             # full PCIe diagnostic, all devices
 PYTHONPATH=src python3 -m computetest.cli bert -d 0000:03:00.0 --target-ber 1e-12
+# At Gen5 x16 (the current Zoox compute target) ~6 s of BERT proves BER <= 1e-12 @ 95 %.
 PYTHONPATH=src python3 -m computetest.cli plan configs/example_plan.json
 ```
 
