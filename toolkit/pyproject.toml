@@ -70,5 +70,7 @@ warn_redundant_casts = true
 no_implicit_optional = true
 
 [[tool.mypy.overrides]]
-module = ["scipy.*", "uvicorn", "fastapi", "fastapi.*"]
+# yaml stubs (`types-PyYAML`) aren't a dev-dep — yaml is used only by an optional
+# `.yaml` plan-loader path, so the missing-stubs check on a fresh CI env is noise.
+module = ["scipy.*", "uvicorn", "fastapi", "fastapi.*", "yaml"]
 ignore_missing_imports = true

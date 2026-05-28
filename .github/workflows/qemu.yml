@@ -28,9 +28,13 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+          cache: 'pip'
+      - name: Install pytest
+        working-directory: toolkit
+        run: python -m pip install pytest
       - name: QMP client unit tests
         working-directory: toolkit
-        run: python3 -m pytest tests/test_qmp_inject.py -q
+        run: python -m pytest tests/test_qmp_inject.py -q
       - name: C engine unit tests
         working-directory: toolkit/c
         run: make ctest
