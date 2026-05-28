@@ -14,6 +14,7 @@ mutants/
 # Mutmut leftover mutant-copy files (created when a run is interrupted; otherwise cleaned).
 toolkit/src/computetest/* [0-9]*.py
 toolkit/src/computetest/* [0-9]*.bak
+toolkit/src/computetest/*.bak
 *.egg-info/
 .DS_Store
 .claude/

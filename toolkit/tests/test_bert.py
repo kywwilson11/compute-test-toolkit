@@ -17,8 +17,20 @@ def test_clean_link_passes():
     assert r.verdict.confidence_reached >= 0.95
 
 
-def test_marginal_link_fails_confidence():
-    r = bert.run_bert(_be(), "0000:04:00.0", target_ber=1e-9, confidence=0.95, max_seconds=1.5)
+def test_marginal_link_fails_confidence(monkeypatch):
+    # Deterministic timing: a synthetic monotonic clock drives both the BERT loop AND
+    # the MockDevice's Poisson-error accrual (which uses time.monotonic for `dt`).
+    # Without this, the test was wall-clock sensitive and could spuriously pass on slow
+    # CI runners where the loop iterated few enough times for the seq decision to fall
+    # below target before any errors latched (a pre-existing flake — caught when the
+    # macos-latest runner exposed it).
+    t = [0.0]
+    def clock():
+        t[0] += 0.001
+        return t[0]
+    monkeypatch.setattr("computetest.backend.time.monotonic", clock)
+    r = bert.run_bert(_be(), "0000:04:00.0", target_ber=1e-9, confidence=0.95,
+                      max_seconds=1.5, clock=clock, sleep=lambda _s: None)
     assert r.status == "fail"
     assert r.correctable > 0
 
