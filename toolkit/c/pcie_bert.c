@@ -205,12 +205,19 @@ int main(int argc, char **argv) {
         fprintf(stderr, "warning: link speed/width unknown for %s; bits=0\n", bdf);
     close(fd);
 
+    /* Achieved correctable-poll rate, reported so Python (or the operator) can flag a
+     * loaded host where the count may saturate at R errors/sec on a catastrophic link.
+     * The W1C model collapses N errors-of-one-type per window into 1 bit set, so the
+     * count is exact only while error rate << poll rate; otherwise it caps at the poll
+     * rate (still a correct "many errors" fail signal, but not a calibrated count). */
+    double poll_rate_hz = (elapsed > 0) ? (double)iters / elapsed : 0.0;
     if (json) {
         printf("{\"bdf\":\"%s\",\"seconds\":%.3f,\"source\":\"%s\",\"link_speed_code\":%d,"
                "\"link_width\":%d,\"link_unknown\":%s,\"bits\":%.6e,\"correctable\":%ld,"
-               "\"uncorrectable\":%ld,\"uncorrectable_bits\":%u,\"per_correctable\":{",
+               "\"uncorrectable\":%ld,\"uncorrectable_bits\":%u,\"poll_rate_hz\":%.0f,"
+               "\"per_correctable\":{",
                bdf, elapsed, source, code, width, link_unknown ? "true" : "false",
-               bits, cor_total, unc_total, unc_seen);
+               bits, cor_total, unc_total, unc_seen, poll_rate_hz);
         int first = 1;
         for (int i = 0; i < n_cor; i++) {
             if (cor_events[i]) {
@@ -220,8 +227,9 @@ int main(int argc, char **argv) {
         }
         printf("}}\n");
     } else {
-        printf("BDF %s: %.3fs, %s, Gen%d x%d, bits=%.3e, correctable=%ld, uncorrectable=%ld\n",
-               bdf, elapsed, source, code, width, bits, cor_total, unc_total);
+        printf("BDF %s: %.3fs, %s, Gen%d x%d, bits=%.3e, correctable=%ld, uncorrectable=%ld, "
+               "poll=%.0f Hz\n",
+               bdf, elapsed, source, code, width, bits, cor_total, unc_total, poll_rate_hz);
     }
     return (unc_total > 0) ? 3 : 0;  /* nonzero exit if any uncorrectable error */
 }

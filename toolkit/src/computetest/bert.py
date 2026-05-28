@@ -234,7 +234,7 @@ def default_c_runner(bdf: str, seconds: float, binary: str = "c/pcie_bert") -> d
     """Run the compiled C counter for one window and return its parsed JSON.
 
     Contract (the C engine's only job — count fast, accurately, for ``seconds``):
-      {source, link_speed_code, link_width, link_unknown, bits,
+      {source, link_speed_code, link_width, link_unknown, bits, poll_rate_hz,
        correctable, uncorrectable, uncorrectable_bits, per_correctable:{name:count}}
     """
     try:
@@ -311,6 +311,7 @@ def run_conductor(backend: Backend, bdf: str, *, target_ber: float = 1e-12,
     next_bits = n0 * margin                  # first window: target + margin
     status = "continue"
     out: dict[str, Any] = {}
+    min_poll_rate_hz: float | None = None    # for the slow-poll-rate calibration warning
     while True:
         secs = (next_bits / bps) if bps > 0 else max_seconds
         secs = max(0.05, min(secs, max(0.05, max_seconds - elapsed)))
@@ -324,6 +325,11 @@ def run_conductor(backend: Backend, bdf: str, *, target_ber: float = 1e-12,
         unc_bits_seen |= out.get("uncorrectable_bits", 0)
         n += out.get("bits", 0.0)
         elapsed += secs
+        # Track the slowest poll cadence the C runner achieved this run; we use it to
+        # flag a loaded host where the count saturates on a catastrophic Gen5/6 link.
+        prh = out.get("poll_rate_hz")
+        if prh is not None and prh > 0:
+            min_poll_rate_hz = prh if min_poll_rate_hz is None else min(min_poll_rate_hz, prh)
 
         if unc_total > 0:                     # any uncorrectable = immediate fail
             status = "fail"
@@ -354,6 +360,20 @@ def run_conductor(backend: Backend, bdf: str, *, target_ber: float = 1e-12,
                  + [nm for _, nm, _ in aer.ErrorReading(0, idle_unc, source).uncorrectable])
         note = ((note + "; ") if note else "") + \
                "errors present at idle (constant fault): " + ",".join(names)
+
+    # Calibration check: the W1C bit-counting model is exact only while the error rate
+    # is far below the achieved poll rate. If poll_rate_hz drops below 10x the rate we
+    # could detect at our target (i.e. error rate where reject would fire), the count
+    # saturates and a catastrophic Gen5/Gen6 link could be undercounted. Honest signal:
+    # surface this in the note so the operator knows the count is a lower bound, not a
+    # calibrated rate. (Verdict stays correct: undercount only matters for catastrophic
+    # fails, which we still reject -- this just helps explain a borderline run.)
+    if min_poll_rate_hz is not None and bps > 0:
+        marginal_rate = 10.0 * target_ber * bps   # ~10x the target's saturation point
+        if min_poll_rate_hz < marginal_rate:
+            note = ((note + "; ") if note else "") + (
+                f"poll rate {min_poll_rate_hz:.0f} Hz < {marginal_rate:.0f} Hz "
+                f"(target_ber x bps x10); count saturates above this rate")
 
     verdict = ber.assess(cor_total, max(n, 1.0), target_ber, confidence, unc_total)
     verdict.status = status

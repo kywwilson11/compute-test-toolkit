@@ -30,6 +30,7 @@ import math
 import os
 import random
 import re
+import threading
 import time
 from dataclasses import dataclass, field
 
@@ -439,6 +440,14 @@ class MockBackend(Backend):
         if devices is None:
             devices = self.sample_board()
         self._devs: dict[str, MockDevice] = {d.bdf: d for d in devices}
+        # RLock (not Lock) because some public methods call others (e.g.
+        # clear_device_status -> write_config). Without serialization, `_rng`
+        # (Mersenne Twister) and the per-device _accrual_t / _cor_status / _bw_latched
+        # mutations are not safe for a future parallel BERT runner -- Poisson sampling
+        # would silently bias and counters could lose increments. Real hardware doesn't
+        # have this concern (kernel sysfs serializes per-fd); this lock makes the mock
+        # match that contract so tests + parallel runners produce identical behavior.
+        self._lock = threading.RLock()
 
     @staticmethod
     def sample_board() -> list[MockDevice]:
@@ -475,83 +484,90 @@ class MockBackend(Backend):
         return self._dev(bdf)._ext_caps.get(cap_id)
 
     def read_link_status(self, bdf: str) -> LinkStatus:
-        d = self._dev(bdf)
-        training = False
-        speed = d.link_speed
-        if d.inject_retrains_per_sec > 0 or d.inject_downtrain_per_sec > 0:
-            now = time.monotonic()
-            dt = now - d._last_ls_poll
-            d._last_ls_poll = now
-            if d.inject_retrains_per_sec > 0:
-                training = _poisson(self._rng, d.inject_retrains_per_sec * dt) > 0
-            if d.inject_downtrain_per_sec > 0 and \
-                    _poisson(self._rng, d.inject_downtrain_per_sec * dt) > 0:
-                d._bw_latched = True             # a speed/width change occurred
-                speed = max(1, d.link_speed - 2)  # transient dip (may recover)
-        d._min_speed_seen = min(d._min_speed_seen, speed)
-        return LinkStatus(speed, d.link_width, training,
-                          bw_changed=d._bw_latched, autonomous_bw=d._bw_latched)
+        with self._lock:
+            d = self._dev(bdf)
+            training = False
+            speed = d.link_speed
+            if d.inject_retrains_per_sec > 0 or d.inject_downtrain_per_sec > 0:
+                now = time.monotonic()
+                dt = now - d._last_ls_poll
+                d._last_ls_poll = now
+                if d.inject_retrains_per_sec > 0:
+                    training = _poisson(self._rng, d.inject_retrains_per_sec * dt) > 0
+                if d.inject_downtrain_per_sec > 0 and \
+                        _poisson(self._rng, d.inject_downtrain_per_sec * dt) > 0:
+                    d._bw_latched = True             # a speed/width change occurred
+                    speed = max(1, d.link_speed - 2)  # transient dip (may recover)
+            d._min_speed_seen = min(d._min_speed_seen, speed)
+            return LinkStatus(speed, d.link_width, training,
+                              bw_changed=d._bw_latched, autonomous_bw=d._bw_latched)
 
     def read_config(self, bdf: str, offset: int, size: int = 4) -> int:
-        d = self._dev(bdf)
-        aer = d._ext_caps.get(ECAP_AER)
-        if aer is not None and offset == aer + AER_CORR_STATUS:
-            if d.inject_stuck_cor:                # constant fault, present even at idle
-                d._cor_status |= d.inject_stuck_cor
-            if d._exercising:                     # rate errors only while exercised
-                d._accrue_and_latch(self._rng)
-            return d._cor_status & _mask(size)
-        if aer is not None and offset == aer + AER_UNCORR_STATUS:
-            if d.inject_uncorr_bit:               # a persistent fault re-latches each read
-                d._uncor_status |= (1 << d.inject_uncorr_bit)
-            return d._uncor_status & _mask(size)
-        if aer is not None and offset == aer:
-            return ECAP_AER  # capability header (id in low bits; next=0)
-        return 0
+        with self._lock:
+            d = self._dev(bdf)
+            aer = d._ext_caps.get(ECAP_AER)
+            if aer is not None and offset == aer + AER_CORR_STATUS:
+                if d.inject_stuck_cor:                # constant fault, present even at idle
+                    d._cor_status |= d.inject_stuck_cor
+                if d._exercising:                     # rate errors only while exercised
+                    d._accrue_and_latch(self._rng)
+                return d._cor_status & _mask(size)
+            if aer is not None and offset == aer + AER_UNCORR_STATUS:
+                if d.inject_uncorr_bit:               # a persistent fault re-latches each read
+                    d._uncor_status |= (1 << d.inject_uncorr_bit)
+                return d._uncor_status & _mask(size)
+            if aer is not None and offset == aer:
+                return ECAP_AER  # capability header (id in low bits; next=0)
+            return 0
 
     def write_config(self, bdf: str, offset: int, value: int, size: int = 4) -> None:
-        d = self._dev(bdf)
-        aer = d._ext_caps.get(ECAP_AER)
-        if aer is not None and offset == aer + AER_CORR_STATUS:
-            # Write-1-to-clear: clear exactly the bits set in ``value``.
-            d._cor_status &= ~(value & _mask(size))
-            d._accrual_t = time.monotonic()      # restart the error-accrual window
-        elif aer is not None and offset == aer + AER_UNCORR_STATUS:
-            d._uncor_status &= ~(value & _mask(size))
+        with self._lock:
+            d = self._dev(bdf)
+            aer = d._ext_caps.get(ECAP_AER)
+            if aer is not None and offset == aer + AER_CORR_STATUS:
+                # Write-1-to-clear: clear exactly the bits set in ``value``.
+                d._cor_status &= ~(value & _mask(size))
+                d._accrual_t = time.monotonic()      # restart the error-accrual window
+            elif aer is not None and offset == aer + AER_UNCORR_STATUS:
+                d._uncor_status &= ~(value & _mask(size))
 
     # Device Status (no-AER fallback error source) ------------------------------
     def read_device_status(self, bdf: str) -> int | None:
-        d = self._dev(bdf)
-        if not d.has_pcie_cap:
-            return None
-        if d.inject_stuck_cor:
-            d._cor_status |= d.inject_stuck_cor
-        if d.inject_uncorr_bit:
-            d._uncor_status |= (1 << d.inject_uncorr_bit)
-        if d._exercising:
-            d._accrue_and_latch(self._rng)
-        val = 0
-        if d._cor_status:
-            val |= DEVSTA_CORR
-        if d._uncor_status:
-            val |= DEVSTA_NONFATAL
-        return val
+        with self._lock:
+            d = self._dev(bdf)
+            if not d.has_pcie_cap:
+                return None
+            if d.inject_stuck_cor:
+                d._cor_status |= d.inject_stuck_cor
+            if d.inject_uncorr_bit:
+                d._uncor_status |= (1 << d.inject_uncorr_bit)
+            if d._exercising:
+                d._accrue_and_latch(self._rng)
+            val = 0
+            if d._cor_status:
+                val |= DEVSTA_CORR
+            if d._uncor_status:
+                val |= DEVSTA_NONFATAL
+            return val
 
     def clear_device_status(self, bdf: str, mask: int = 0xF) -> None:
-        d = self._dev(bdf)
-        if mask & DEVSTA_CORR:
-            d._cor_status = 0
-            d._accrual_t = time.monotonic()
-        if mask & (DEVSTA_NONFATAL | DEVSTA_FATAL):
-            d._uncor_status = 0
+        with self._lock:
+            d = self._dev(bdf)
+            if mask & DEVSTA_CORR:
+                d._cor_status = 0
+                d._accrual_t = time.monotonic()
+            if mask & (DEVSTA_NONFATAL | DEVSTA_FATAL):
+                d._uncor_status = 0
 
     def clear_link_bw_status(self, bdf: str) -> None:
-        self._dev(bdf)._bw_latched = False
+        with self._lock:
+            self._dev(bdf)._bw_latched = False
 
     def set_exercising(self, bdf: str, active: bool) -> None:
-        d = self._dev(bdf)
-        d._exercising = active
-        d._accrual_t = time.monotonic()          # reset the accrual window on state change
+        with self._lock:
+            d = self._dev(bdf)
+            d._exercising = active
+            d._accrual_t = time.monotonic()      # reset the accrual window on state change
 
     def link_chain(self, bdf: str) -> list[str]:
         chain: list[str] = []

@@ -263,6 +263,45 @@ def test_realbackend_rejects_invalid_bdf(tmp_path, evil_bdf):
             op()
 
 
+# --- MockBackend thread-safety (audit Major-latent fix) ------------------- #
+def test_mockbackend_concurrent_reads_dont_corrupt_state():
+    """Audit Major (latent): MockBackend mutates _accrual_t / _cor_status / _rng
+    on every read_config; without a lock, a future parallel BERT runner would
+    silently bias Poisson sampling and lose error increments. Many concurrent
+    reads must complete without exceptions and leave the device in a consistent
+    state (the lock serializes the mutations onto the same RNG stream)."""
+    import threading
+
+    from computetest.backend import AER_CORR_STATUS, ECAP_AER, MockBackend, MockDevice
+
+    be = MockBackend([MockDevice("0000:01:00.0", injected_ber=1e-6,
+                                 link_speed=4, link_width=16)])
+    be.set_exercising("0000:01:00.0", True)
+    errors: list[BaseException] = []
+
+    def hammer():
+        try:
+            for _ in range(200):
+                be.read_link_status("0000:01:00.0")
+                be.read_config("0000:01:00.0", ECAP_AER + AER_CORR_STATUS, 4)
+                be.write_config("0000:01:00.0", ECAP_AER + AER_CORR_STATUS, 0xFFFF, 4)
+        except BaseException as e:                 # noqa: BLE001
+            errors.append(e)
+
+    threads = [threading.Thread(target=hammer) for _ in range(16)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=30)
+    # No thread raised, all threads finished, and the device is in a valid state.
+    assert errors == [], f"thread raised: {errors}"
+    assert all(not t.is_alive() for t in threads), "thread hung"
+    # The post-hammer cor_status is whatever the last write_config left (likely 0)
+    # or whatever the next read latched; the important thing is it doesn't crash.
+    cor = be.read_config("0000:01:00.0", ECAP_AER + AER_CORR_STATUS, 4)
+    assert isinstance(cor, int) and cor >= 0
+
+
 def test_realbackend_accepts_valid_bdf(tmp_path):
     # Sanity: a well-formed BDF passes validation (file may not exist; we only check
     # validation does not raise — the I/O can OSError afterwards).

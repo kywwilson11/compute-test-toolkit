@@ -5,6 +5,7 @@ __pycache__/
 toolkit/c/pcie_bert
 toolkit/c/pcie_bert [0-9]*
 toolkit/c/test/runner
+toolkit/c/test/runner.dSYM/
 toolkit/sim/qemu/.work/
 *.db
 .coverage
