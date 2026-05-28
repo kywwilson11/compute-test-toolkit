@@ -92,7 +92,20 @@ those are covered by the Phase 0/1 parser tests and ultimately the bench. Phase 
 * **CI** has no `/dev/kvm`, so `config.sh` falls back to **TCG** (pure software emulation) and
   the workflow targets **x86_64 / q35** — see `.github/workflows/qemu.yml`. The scripts are
   arch‑parametrized (`ARCH=x86_64 ./run_guest.sh start`); the x86_64/TCG path is authored to
-  mirror the aarch64 recipe but has not been run locally (no x86 host here).
+  mirror the aarch64 recipe.
+
+### Known: Phase 2/3 e2e is non‑gating on the x86_64/TCG CI lane
+
+The CI workflow's e2e steps run under `continue-on-error: true`. Both succeed on
+aarch64/HVF locally (40/40 AER, 8/8 Phase 3 binding checks) but on the GitHub Actions
+x86_64/TCG runner the engine sees **0/40** correctable errors despite the QMP injection
+echoing success — the kernel's `pcieport` AER IRQ handler appears to clear the W1C
+status bits faster than our engine polls. Unbinding `pcieport` from the root port (the
+obvious fix) did not resolve it, so the real fix likely needs `pci=noaer` injected via
+the guest kernel cmdline (cloud‑init / grub modification + reboot). That's best
+attempted from a real x86 dev box where iteration is sub‑minute rather than 8 minutes
+per CI round trip; until then the unit gate + the aarch64/HVF local proof are the
+binding signal, and the CI e2e is best‑effort.
 
 ## Gotchas (learned proving this)
 

@@ -81,6 +81,84 @@ def test_large_a_gamma_converges(monkeypatch):
         assert ber.reg_lower_gamma(a, a) == pytest.approx(float(sp.gammainc(a, a)), rel=1e-6)
 
 
+def test_gen4_x16_bps_pinned():
+    """Pin the Gen4 x16 BPS constant. Without this, mutmut mutations to either arg
+    (link_bits_per_second(4, 16) -> (5, 16) or (4, 17)) survive: the constant flows
+    only into a human-readable "~Xs at Gen4 x16" estimate that no test cares about."""
+    from computetest.backend import link_bits_per_second
+    assert ber.GEN4_X16_BPS == link_bits_per_second(4, 16)
+    # Spec value: Gen4 = 16 GT/s, 16 lanes, 128/130 NRZ encoding -> ~252.06 Gb/s payload.
+    assert ber.GEN4_X16_BPS == pytest.approx(252_061_538_461.5385, rel=1e-9)
+
+
+def test_gen4_x16_distinguished_from_neighbours():
+    # Detects (4,16)->(5,16) and (4,16)->(4,17) drift: both produce visibly different rates.
+    from computetest.backend import link_bits_per_second
+    assert ber.GEN4_X16_BPS != link_bits_per_second(5, 16)
+    assert ber.GEN4_X16_BPS != link_bits_per_second(4, 17)
+
+
+# --- Fallback-path validation (force _HAVE_SCIPY=False so the fallback branches run) -- #
+def _force_fallback(monkeypatch):
+    monkeypatch.setattr(ber, "_HAVE_SCIPY", False)
+
+
+def test_reg_lower_gamma_fallback_validates_inputs(monkeypatch):
+    """Kills mutations to ber.py:93 (`a <= 0 or x < 0` -> `a < 0 or x < 0` etc.):
+    without these tests the fallback validation isn't exercised when scipy is present."""
+    _force_fallback(monkeypatch)
+    with pytest.raises(ValueError):
+        ber.reg_lower_gamma(0.0, 1.0)        # a == 0
+    with pytest.raises(ValueError):
+        ber.reg_lower_gamma(-0.5, 1.0)       # a < 0
+    with pytest.raises(ValueError):
+        ber.reg_lower_gamma(1.0, -0.5)       # x < 0
+    assert ber.reg_lower_gamma(1.0, 0.0) == 0.0   # x == 0 is the special case
+
+
+def test_reg_upper_gamma_fallback_validates_inputs(monkeypatch):
+    """Kills mutations on ber.py:106."""
+    _force_fallback(monkeypatch)
+    with pytest.raises(ValueError):
+        ber.reg_upper_gamma(0.0, 1.0)
+    with pytest.raises(ValueError):
+        ber.reg_upper_gamma(-1.0, 1.0)
+    with pytest.raises(ValueError):
+        ber.reg_upper_gamma(1.0, -1.0)
+    assert ber.reg_upper_gamma(1.0, 0.0) == 1.0   # x == 0 -> Q = 1
+
+
+def test_reg_lower_gamma_inv_fallback_validates_inputs(monkeypatch):
+    """Kills mutations on ber.py:117-120 (y boundary checks)."""
+    _force_fallback(monkeypatch)
+    with pytest.raises(ValueError):
+        ber.reg_lower_gamma_inv(1.0, -0.1)   # y < 0
+    with pytest.raises(ValueError):
+        ber.reg_lower_gamma_inv(1.0, 1.5)    # y > 1
+    assert ber.reg_lower_gamma_inv(1.0, 1.0) == float("inf")
+    assert ber.reg_lower_gamma_inv(1.0, 0.0) == 0.0
+
+
+def test_poisson_cdf_validates_lambda():
+    """Kills mutations on ber.py:144."""
+    with pytest.raises(ValueError):
+        ber.poisson_cdf(0, -1.0)
+    # k < 0 returns 0 (line 143), regardless of lam.
+    assert ber.poisson_cdf(-1, 5.0) == 0.0
+
+
+def test_fallback_matches_scipy_at_multiple_points(monkeypatch):
+    """Lock in scipy<->fallback equivalence at several (a, x) points. Mutations to the
+    fallback tolerances/iteration cap that bias the result by more than ~1e-9 are caught."""
+    sp = pytest.importorskip("scipy.special")
+    # Capture scipy values BEFORE forcing fallback, then disable.
+    points = [(2.0, 1.0), (5.0, 3.0), (10.0, 15.0), (1e3, 800.0)]
+    expected = [float(sp.gammainc(a, x)) for a, x in points]
+    _force_fallback(monkeypatch)
+    for (a, x), want in zip(points, expected, strict=True):
+        assert ber.reg_lower_gamma(a, x) == pytest.approx(want, rel=1e-8)
+
+
 def test_invalid_inputs_raise():
     with pytest.raises(ValueError):
         ber.confidence_le(-1, 1e12, 1e-12)          # negative errors
