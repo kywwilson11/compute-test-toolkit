@@ -124,6 +124,18 @@ def run_bert(backend: Backend, bdf: str, *, target_ber: float = 1e-12,
     bps = link_bits_per_second(dev.current_link_speed, dev.current_link_width)
     gen_note = _gen_note(dev.current_link_speed)
 
+    # Skip immediately on an unknown/zero link rate (sysfs enumeration failure): the
+    # loop would otherwise spin for the full max_seconds accumulating zero bits and
+    # fail with no useful data -- 30 s of wasted runtime per mis-enumerated device.
+    if bps <= 0:
+        v = ber.BertVerdict(0, 0.0, target_ber, confidence, 0.0,
+                            float("inf"), float("inf"), "skip")
+        return BertResult(bdf, 0.0, 0.0, 0, 0, {}, dev.current_link_speed,
+                          dev.current_link_width, v, aer_available=False,
+                          aer_source="none",
+                          note=f"link rate unknown (speed={dev.current_link_speed}, "
+                               f"width={dev.current_link_width}); cannot account bits")
+
     source = aer.error_source(backend, bdf)   # "aer" (rich) | "devstatus" (coarse) | "none"
     if source == "none":
         v = ber.BertVerdict(0, 0.0, target_ber, confidence, 0.0,
@@ -260,6 +272,16 @@ def run_conductor(backend: Backend, bdf: str, *, target_ber: float = 1e-12,
     dev = backend.get_device(bdf)
     bps = link_bits_per_second(dev.current_link_speed, dev.current_link_width)
     gen_note = _gen_note(dev.current_link_speed)
+
+    # Same skip-on-unknown-rate guard as run_bert: a 0-bps link wastes the full budget.
+    if bps <= 0:
+        v = ber.BertVerdict(0, 0.0, target_ber, confidence, 0.0,
+                            float("inf"), float("inf"), "skip")
+        return BertResult(bdf, 0.0, 0.0, 0, 0, {}, dev.current_link_speed,
+                          dev.current_link_width, v, aer_available=False,
+                          aer_source="none",
+                          note=f"link rate unknown (speed={dev.current_link_speed}, "
+                               f"width={dev.current_link_width}); cannot account bits")
 
     source = aer.error_source(backend, bdf)
     if source == "none":

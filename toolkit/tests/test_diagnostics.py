@@ -107,3 +107,32 @@ def test_skip_does_not_mask_a_real_fail():
                              do_margin=False, watch_retrains_s=0.02)
     assert d.bert.status == "skip"
     assert d.status == "fail"                       # the degrade dominates the skip
+
+
+# --- audit Major fixes: --no-bert must NOT false-PASS  -------------------- #
+def test_no_bert_returns_skip_not_pass():
+    """Audit Major: with --no-bert, PcieDiagnostic.status used to fall through to
+    'pass' because the bert-skip check was `bert and bert.status=='skip'`. With bert
+    being None it skipped the check and returned 'pass' from an unmeasured device.
+    Now: bert is None => 'skip' (we never claim PASS from a measurement we didn't make)."""
+    be = MockBackend([MockDevice("0000:03:00.0", 0x10DE, 0x2204, 0x030000, 4, 16, 4, 16)])
+    d = diagnostics.diagnose(be, "0000:03:00.0", do_bert=False, do_margin=False,
+                             watch_retrains_s=0.02)
+    assert d.bert is None
+    assert d.status == "skip"                       # NOT 'pass'
+    assert any("--no-bert" in r for r in d.reasons())
+
+
+def test_no_bert_with_devstatus_uncorrectable_fails():
+    """Audit Critical: with --no-bert AND a no-AER device that has a Device Status
+    uncorrectable, the old snapshot() returned (None, 0, 0) so PcieDiagnostic showed
+    PASS. With the snapshot Device-Status fallback, this now correctly FAILS."""
+    dev = MockDevice("0000:0d:00.0", 0x10DE, 0x2204, 0x030000, 4, 16, 4, 16)
+    dev._ext_caps.pop(ECAP_AER)                     # no AER -> snapshot falls back
+    be = MockBackend([dev])
+    be.inject_uncorrectable("0000:0d:00.0", 4)      # DLP error (uncorrectable)
+    d = diagnostics.diagnose(be, "0000:0d:00.0", do_bert=False, do_margin=False,
+                             watch_retrains_s=0.02)
+    assert d.bert is None
+    assert d.aer_snapshot.has_uncorrectable, "Device-Status uncorrectable must surface"
+    assert d.status == "fail"                       # NOT a false PASS

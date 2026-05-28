@@ -95,6 +95,16 @@ PAGE = """<!doctype html><html><head><meta charset=utf-8>
 <div class=card style=margin-top:24px><div>Lowest-yielding tests (aim CI here)</div><table id=ytable></table></div>
 <div class=card style=margin-top:24px><div>Recent results</div><table id=recent></table></div>
 <script>
+// Escape user/DB-controlled strings before they reach .innerHTML. Without this,
+// any operator (or anyone who can write a plan config) can store HTML/JS in
+// fields like target/test_name/message/station/subsystem and have it execute on
+// every dashboard viewer's machine (stored XSS). Status/numeric fields are still
+// validated below to a fixed allowlist.
+function esc(v){
+  return String(v).replace(/[&<>"']/g, c => ({
+    '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
+  }[c]));
+}
 async function refresh(){
  const s=await (await fetch('/api/summary')).json();
  const r=await (await fetch('/api/results?limit=40')).json();
@@ -103,11 +113,14 @@ async function refresh(){
  document.getElementById('yield').className='big '+(sm.yield>=0.99?'pass':'fail');
  document.getElementById('counts').textContent=`${sm.passed} pass / ${sm.failed} fail / ${sm.total} total`;
  document.getElementById('stations').innerHTML=s.stations.map(x=>
-   `<div><span class=dot style="background:${x.age_s<15?'#3fb950':'#f85149'}"></span>${x.station} — ${x.status} (${x.age_s}s ago)</div>`).join('')||'(none)';
+   `<div><span class=dot style="background:${x.age_s<15?'#3fb950':'#f85149'}"></span>${esc(x.station)} — ${esc(x.status)} (${Number(x.age_s)}s ago)</div>`).join('')||'(none)';
  document.getElementById('ytable').innerHTML='<tr><th>subsystem</th><th>test</th><th>yield</th><th>n</th></tr>'+
-   s.yield_by_test.map(y=>`<tr><td>${y.subsystem}</td><td>${y.test}</td><td>${(y.yield*100).toFixed(0)}%</td><td>${y.n}</td></tr>`).join('');
+   s.yield_by_test.map(y=>`<tr><td>${esc(y.subsystem)}</td><td>${esc(y.test)}</td><td>${(y.yield*100).toFixed(0)}%</td><td>${Number(y.n)}</td></tr>`).join('');
+ // status is one of {pass, fail, skip}; allowlist before using as a CSS class to
+ // prevent CSS-injection if a future record carries a hostile status string.
+ const cls = v => (v==='pass'||v==='fail') ? v : '';
  document.getElementById('recent').innerHTML='<tr><th>subsystem</th><th>target</th><th>test</th><th>status</th><th>msg</th></tr>'+
-   r.results.map(x=>`<tr><td>${x.subsystem}</td><td>${x.target}</td><td>${x.test_name}</td><td class=${x.status=='pass'?'pass':'fail'}>${x.status}</td><td>${x.message||''}</td></tr>`).join('');
+   r.results.map(x=>`<tr><td>${esc(x.subsystem)}</td><td>${esc(x.target)}</td><td>${esc(x.test_name)}</td><td class=${cls(x.status)}>${esc(x.status)}</td><td>${esc(x.message||'')}</td></tr>`).join('');
 }
 refresh(); setInterval(refresh,5000);
 </script></body></html>"""

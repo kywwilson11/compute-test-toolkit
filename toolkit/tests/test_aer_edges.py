@@ -99,3 +99,28 @@ def test_clear_errors_devstatus_path_clears_device_status():
 def test_clear_errors_none_source_is_noop():
     be = MockBackend([_no_aer(has_pcie_cap=False)])
     aer.clear_errors(be, "0000:01:00.0", "none")         # must not raise
+
+
+# --- snapshot fallback to Device Status (audit Critical fix) ---------------- #
+def test_snapshot_without_aer_but_with_devstatus_uncorrectable_is_flagged():
+    """Audit Critical: a no-AER device with a NonFatal/Fatal Device Status bit must
+    still surface via aer.snapshot(); the original snapshot() only read the AER cap
+    and returned (None, 0, 0), false-PASSing a real uncorrectable when --no-bert was
+    used. snapshot() now falls back to Device Status."""
+    be = MockBackend([_no_aer()])                        # has PCIe cap (Device Status), no AER
+    be.inject_uncorrectable("0000:01:00.0", 4)           # DLP error (uncorrectable bit 4)
+    be.read_device_status("0000:01:00.0")                # latch
+    snap = aer.snapshot(be, "0000:01:00.0")
+    # aer_base is still None (data came from Device Status, not the AER cap), but the
+    # uncorrectable signal makes it through.
+    assert snap.aer_base is None
+    assert snap.has_uncorrectable, (
+        "snapshot must fall back to Device Status when AER is absent, "
+        "or --no-bert false-PASSes a real uncorrectable")
+
+
+def test_snapshot_without_aer_or_devstatus_remains_clean():
+    """The other half of the fallback contract: neither AER nor Device Status -> 0/0."""
+    be = MockBackend([_no_aer(has_pcie_cap=False)])
+    snap = aer.snapshot(be, "0000:01:00.0")
+    assert snap.aer_base is None and not snap.has_uncorrectable and not snap.has_correctable

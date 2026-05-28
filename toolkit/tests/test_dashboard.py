@@ -48,3 +48,22 @@ def test_summary_api_has_no_warning_for_file_db(monkeypatch):
     monkeypatch.setattr(dash, "_DB_IN_MEMORY", False)
     out = dash.summary()
     assert "db_warning" not in out
+
+
+# --- audit Critical: dashboard escapes DB-controlled fields (no stored XSS) -- #
+def test_dashboard_html_escapes_db_fields():
+    """The PAGE JS used to interpolate user/DB-controlled fields (target, test_name,
+    message, station, subsystem) into `.innerHTML` -- a stored XSS where any operator
+    or plan-file author could inject script into every viewer's session. We now wrap
+    every interpolation in an `esc()` helper. Verify both the helper and that no
+    direct `${x.field}` slips through without going through it."""
+    page = dash.PAGE
+    # The helper must exist.
+    assert "function esc(" in page
+    assert "&amp;" in page and "&lt;" in page and "&gt;" in page   # the escape table
+    # No raw `${x.<field>}` for the DB-controlled string fields should remain --
+    # they MUST go through esc() (numeric fields like age_s/n go through Number()).
+    import re
+    UNSAFE = r"\$\{(x|y)\.(station|subsystem|target|test_name|status|message|test)\}"
+    leaks = re.findall(UNSAFE, page)
+    assert not leaks, f"DB-controlled fields used without esc(): {leaks}"

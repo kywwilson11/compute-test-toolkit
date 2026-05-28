@@ -33,10 +33,11 @@ class PcieDiagnostic:
             return "fail"
         if self.margin and self.margin.lanes and not self.margin.ok:
             return "fail"
-        # No fail signal — but a device never error-tested has NOT passed. If the
-        # endpoint BERT was skipped (no AER / Device-Status source), the verdict is
-        # "skip", not "pass" (we never claim PASS from a measurement we couldn't make).
-        if self.bert and self.bert.status == "skip":
+        # No fail signal — but a device never error-tested has NOT passed. We never
+        # claim PASS from a measurement we couldn't (or didn't) make:
+        #   * BERT ran but skipped (no AER / Device Status source) -> skip
+        #   * BERT was explicitly opted out (`--no-bert`, bert is None) -> skip
+        if self.bert is None or self.bert.status == "skip":
             return "skip"
         return "pass"
 
@@ -54,6 +55,8 @@ class PcieDiagnostic:
             r.append(f"BERT fail (BER<= {self.bert.verdict.ber_upper:.2e})")
         if self.bert and self.bert.status == "skip":
             r.append(f"BERT skipped: {self.bert.note or 'no PCIe error source'}")
+        elif self.bert is None:
+            r.append("BERT skipped: --no-bert (no error-rate measurement performed)")
         if self.margin and self.margin.lanes and not self.margin.ok:
             w = self.margin.worst_lane
             assert w is not None    # `self.margin.lanes` is truthy -> worst_lane returns one

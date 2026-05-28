@@ -39,10 +39,14 @@ def test_bert_command_fails_marginal_device(capsys):
 
 # --- diagnose command ------------------------------------------------------- #
 def test_diagnose_single_device_json(capsys):
+    # --no-bert opts out of the BER measurement entirely. Per the audit fix, that's
+    # "couldn't/didn't measure" -> EXIT_UNAVAIL (5), NOT EXIT_PASS -- we never claim
+    # PASS from a measurement we didn't make.
     rc = cli.main(["--backend", "mock", "diagnose", "-d", "0000:03:00.0", "--json",
                    "--no-bert", "--no-margin"])
     data = json.loads(capsys.readouterr().out)
-    assert rc == cli.EXIT_PASS and isinstance(data, list) and data[0]["bdf"] == "0000:03:00.0"
+    assert rc == cli.EXIT_UNAVAIL and isinstance(data, list)
+    assert data[0]["bdf"] == "0000:03:00.0" and data[0]["status"] == "skip"
 
 
 def test_diagnose_all_fails_on_sample_board(capsys):
@@ -186,3 +190,16 @@ def test_keyboard_interrupt_maps_to_exit_130(monkeypatch, capsys):
     rc = cli.main(["--backend", "mock", "nvme", "/dev/nvme0"])
     assert rc == 130
     assert "interrupted" in capsys.readouterr().err
+
+
+def test_sqlite_error_maps_to_exit_io(capsys):
+    """Audit Major: a bad --db path (or a disk-full / permission failure) used to
+    blow up the operator console with a raw sqlite3.OperationalError traceback. CLI
+    now catches sqlite3.Error and maps it to the documented EXIT_IO (4)."""
+    bad = os.path.join("/nonexistent", "dir", "results.db")
+    rc = cli.main(["--backend", "mock", "plan", os.path.join(CONFIGS, "example_plan.json"),
+                   "--db", bad])
+    assert rc == cli.EXIT_IO
+    err = capsys.readouterr().err
+    assert "error: results DB" in err
+    assert "Traceback" not in err                # the whole point: no Python TB

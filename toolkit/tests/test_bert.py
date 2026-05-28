@@ -91,3 +91,24 @@ def test_persistent_uncorrectable_counted_once():
     be.inject_uncorrectable("0000:05:00.0", 14)  # re-latches every poll
     r = bert.run_bert(be, "0000:05:00.0", target_ber=1e-9, max_seconds=1.5)
     assert r.status == "fail" and r.uncorrectable == 1  # not inflated by re-latching
+
+
+def test_zero_bps_skips_immediately_not_busy_loop():
+    """Audit Minor: a sysfs enumeration failure (speed=0 or width=0 -> bps=0) used to
+    spin the BERT loop for the full max_seconds accumulating 0 bits, wasting fleet
+    minutes. Now skips immediately with a 'link rate unknown' note."""
+    be = MockBackend([MockDevice("0000:09:00.0", 0x10DE, 0x2204, 0x030000,
+                                 link_speed=0, link_width=16,        # speed=0 -> bps=0
+                                 max_link_speed=0, max_link_width=16)])
+    r = bert.run_bert(be, "0000:09:00.0", target_ber=1e-9, max_seconds=30)
+    assert r.status == "skip" and r.aer_available is False
+    assert "link rate unknown" in r.note
+    assert r.seconds == 0.0                                          # no busy-loop
+
+
+def test_zero_width_also_skips_immediately():
+    be = MockBackend([MockDevice("0000:09:00.0", 0x10DE, 0x2204, 0x030000,
+                                 link_speed=4, link_width=0,
+                                 max_link_speed=4, max_link_width=0)])
+    r = bert.run_bert(be, "0000:09:00.0", target_ber=1e-9, max_seconds=30)
+    assert r.status == "skip" and "link rate unknown" in r.note

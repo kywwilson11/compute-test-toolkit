@@ -17,6 +17,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import sqlite3
 import sys
 from typing import Any
 
@@ -230,6 +231,11 @@ def main(argv: list[str] | None = None) -> int:
         return EXIT_NOTFOUND
     except (FileNotFoundError, json.JSONDecodeError) as e:
         print(f"error: config/IO: {e}", file=sys.stderr)
+        return EXIT_IO
+    except sqlite3.Error as e:
+        # ResultStore failures (bad --db path, disk full, perms): map to EXIT_IO so
+        # the operator console sees the documented exit code, not a Python traceback.
+        print(f"error: results DB: {e}", file=sys.stderr)
         return EXIT_IO
     except NotImplementedError as e:
         print(f"error: not available on this backend/hardware: {e}", file=sys.stderr)

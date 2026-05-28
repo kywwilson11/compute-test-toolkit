@@ -96,10 +96,19 @@ def aer_base(backend: Backend, bdf: str) -> int | None:
 
 
 def snapshot(backend: Backend, bdf: str) -> AerSnapshot:
-    """Read the AER correctable + uncorrectable status registers (no clearing)."""
+    """Read the AER correctable + uncorrectable status registers (no clearing).
+
+    When the device has no AER capability, fall back to Device Status (the universal
+    coarse error source) so a NonFatal/Fatal bit there is still reported. Without
+    this fallback, a `--no-bert` quick check on a no-AER device would false-PASS a
+    real uncorrectable fault.
+    """
     base = aer_base(backend, bdf)
     if base is None:
-        return AerSnapshot(bdf, None, 0, 0)
+        # Fall back to Device Status; read_errors handles the (aer|devstatus|none)
+        # chain. base stays None to signal the source wasn't the AER cap directly.
+        r = read_errors(backend, bdf)
+        return AerSnapshot(bdf, None, r.correctable_raw, r.uncorrectable_raw)
     cor = backend.read_config(bdf, base + AER_CORR_STATUS, 4)
     unc = backend.read_config(bdf, base + AER_UNCORR_STATUS, 4)
     return AerSnapshot(bdf, base, cor, unc)
