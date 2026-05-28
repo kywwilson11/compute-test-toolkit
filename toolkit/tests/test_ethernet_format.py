@@ -1,5 +1,7 @@
 """EthHealth summary()/to_dict() incl. cable-test formatting, and the _stat parser
 (pure). Complements test_ethernet_can.py (the pass/fail + speed-parse cases)."""
+import pytest
+
 from computetest import ethernet
 
 
@@ -51,9 +53,6 @@ def test_can_bus_off_summary_fails():
 
 
 # --- iface validation: blocks hostile iface names from flowing into argv ----- #
-import pytest
-
-
 @pytest.mark.parametrize("evil", [
     "../etc/passwd",     # path traversal attempt
     "--help",            # an argv-option attempt
