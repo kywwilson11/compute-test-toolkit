@@ -15,7 +15,8 @@ def test_find_ext_cap_and_link_status():
     bdf = be.list_devices()[0]
     assert be.find_ext_cap(bdf, ECAP_AER) == 0x100
     ls = be.read_link_status(bdf)
-    assert ls.speed == 4 and ls.width == 16 and ls.training is False
+    # sample_board's first GPU is Gen5 (the Zoox compute target); 32 GT/s @ x16.
+    assert ls.speed == 5 and ls.width == 16 and ls.training is False
 
 
 def test_decode_correctable_bits():

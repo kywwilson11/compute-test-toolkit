@@ -47,7 +47,8 @@ def test_list_json_includes_derived_properties(capsys):
     first = data[0]
     assert "vendor_name" in first and "speed_str" in first   # the alignment fix
     assert first["bdf"] == "0000:03:00.0" and first["vendor_name"] == "NVIDIA"
-    assert first["current_link_speed"] == 4 and "GT/s" in first["speed_str"]
+    # sample_board's first GPU is Gen5 (the Zoox compute target).
+    assert first["current_link_speed"] == 5 and "GT/s" in first["speed_str"]
 
 
 def test_chain_command_runs(capsys):

@@ -129,7 +129,7 @@ def _run(args) -> int:
             n = ber.bits_for_confidence(args.target_ber, args.confidence, args.errors)
             human = (f"To prove BER <= {args.target_ber:.1e} at {args.confidence:.0%} "
                      f"with {args.errors} errors: {n:.4e} bits "
-                     f"(~{n / ber.GEN4_X16_BPS:.1f}s at Gen4 x16)")
+                     f"{ber.time_estimate(n)}")
             obj = {"target_ber": args.target_ber, "confidence": args.confidence,
                    "errors": args.errors, "bits_needed": n}
         else:

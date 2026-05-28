@@ -40,13 +40,13 @@ pcie_devices:
   - name: GPU
     match: {vendor_id: 0x10DE, class_code: 0x030000}   # hex literals are fine in YAML
     count: 2
-    expected_speed: 4        # Gen4
+    expected_speed: 5        # Gen5 (the Zoox compute-platform target; 32 GT/s NRZ)
     expected_width: 16
     min_margin_ui: 0.25
   - name: NVMe
     match: {class_code: 0x010802}
     count: 2
-    expected_speed: 4
+    expected_speed: 4        # NVMe SSDs commonly stay at Gen4 even on a Gen5 host
     expected_width: 4
     min_margin_ui: 0.25
   - name: CustomCard

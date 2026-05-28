@@ -26,9 +26,24 @@ from dataclasses import dataclass
 
 from .backend import link_bits_per_second
 
-# One source of truth for the "how long at Gen4 x16" time estimate (payload bits/s),
-# shared by the CLI so the estimate is computed in exactly one place.
-GEN4_X16_BPS = link_bits_per_second(4, 16)
+# Single source of truth for per-Gen x16 payload bits/sec, shared by the CLI so the
+# human-readable time-estimate is computed in exactly one place. The toolkit supports
+# the whole Gen1-Gen6 spectrum; Zoox compute is currently Gen5, so Gen5 leads the
+# table and Gen4 stays alongside (back-compat and a common reference rate).
+GEN3_X16_BPS = link_bits_per_second(3, 16)   # ~126 Gb/s payload (8 GT/s,  128b/130b)
+GEN4_X16_BPS = link_bits_per_second(4, 16)   # ~252 Gb/s payload (16 GT/s, 128b/130b)
+GEN5_X16_BPS = link_bits_per_second(5, 16)   # ~504 Gb/s payload (32 GT/s, 128b/130b) -- Zoox
+GEN6_X16_BPS = link_bits_per_second(6, 16)   # ~968 Gb/s nominal (64 GT/s, PAM4 + FLIT/FEC)
+
+
+def time_estimate(bits: float) -> str:
+    """Render an at-a-glance "this many seconds at GenN x16" line covering Gen3-Gen6,
+    so the same BER target's wall-clock cost is visible across the link spectrum the
+    tool can drive. Used by the `ber` CLI estimate."""
+    pairs = [("Gen5", GEN5_X16_BPS), ("Gen4", GEN4_X16_BPS),
+             ("Gen3", GEN3_X16_BPS), ("Gen6", GEN6_X16_BPS)]
+    parts = [f"{bits / bps:.1f}s @ {label} x16" for label, bps in pairs]
+    return "(~" + "; ".join(parts) + ")"
 
 # --- Fast path: scipy if available ------------------------------------------- #
 try:  # pragma: no cover - exercised only where scipy is installed
@@ -277,6 +292,6 @@ if __name__ == "__main__":  # quick sanity demo: `python -m computetest.ber`
     for cl in (0.90, 0.95, 0.99):
         n = bits_for_confidence(1e-12, cl, 0)
         print(f"zero-error, target 1e-12 @ {cl:.0%} confidence -> {n:.3e} bits "
-              f"(~{n / GEN4_X16_BPS:.1f}s at Gen4 x16)")
+              f"{time_estimate(n)}")
     print(assess(errors=0, bits=3.0e12, target_ber=1e-12).summary())
     print(assess(errors=5, bits=3.0e12, target_ber=1e-12).summary())

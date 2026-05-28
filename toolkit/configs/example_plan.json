@@ -6,9 +6,11 @@
   "watch_retrains_s": 0.3,
   "pcie_devices": [
     {"name": "GPU", "match": {"vendor_id": 4318, "class_code": 196608},
-     "count": 2, "expected_speed": 4, "expected_width": 16, "min_margin_ui": 0.25},
+     "count": 2, "expected_speed": 5, "expected_width": 16, "min_margin_ui": 0.25,
+     "_speed_note": "Gen5 (32 GT/s NRZ) -- the Zoox compute-platform target"},
     {"name": "NVMe", "match": {"class_code": 67586},
-     "count": 2, "expected_speed": 4, "expected_width": 4, "min_margin_ui": 0.25},
+     "count": 2, "expected_speed": 4, "expected_width": 4, "min_margin_ui": 0.25,
+     "_speed_note": "Gen4 -- NVMe SSDs stay at Gen4 even on a Gen5 host"},
     {"name": "CustomCard", "match": {"vendor_id": 6966},
      "count": 1, "expected_speed": 4, "expected_width": 8}
   ],

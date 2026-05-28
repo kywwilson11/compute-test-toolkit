@@ -45,6 +45,32 @@ def test_link_bits_per_second_known_and_unknown_speed():
     assert link_bits_per_second(0, 16) == 0.0          # unknown speed code -> 0 GT/s
 
 
+# --- PCIe spec rate table: pin Gen1-Gen6 x16 payload to canonical spec values ----- #
+# These pin both the GT/s table AND the encoding-efficiency table for every Gen the
+# tool claims to support, so any mutation to either drifts a known number.
+@pytest.mark.parametrize("gen, gbps_x16, encoding", [
+    (1, 32.0,  "8b/10b"),     # 2.5  GT/s * 16 * 0.8     =  32.0  Gb/s
+    (2, 64.0,  "8b/10b"),     # 5.0  GT/s * 16 * 0.8     =  64.0  Gb/s
+    (3, 126.03, "128b/130b"), # 8.0  GT/s * 16 * 128/130 = ~126.03
+    (4, 252.06, "128b/130b"), # 16.0 GT/s * 16 * 128/130 = ~252.06
+    (5, 504.12, "128b/130b"), # 32.0 GT/s * 16 * 128/130 = ~504.12   <- Zoox Gen5
+    (6, 968.0,  "PAM4+FLIT"), # 64.0 GT/s * 16 * 242/256 = ~968.00   <- nominal
+])
+def test_link_bits_per_second_matches_spec(gen, gbps_x16, encoding):
+    """Pin per-Gen x16 payload rate against PCIe 1.0-6.0 specs (encoded in `encoding`).
+    Mutations to LINK_SPEED_GTPS, _encoding_efficiency thresholds, or the multiplication
+    in link_bits_per_second all surface here."""
+    assert link_bits_per_second(gen, 16) / 1e9 == pytest.approx(gbps_x16, rel=1e-3)
+
+
+@pytest.mark.parametrize("gen, width",
+                         [(g, w) for g in (1, 2, 3, 4, 5, 6) for w in (1, 2, 4, 8, 16)])
+def test_link_bits_per_second_scales_linearly_with_width(gen, width):
+    # 16-lane payload divided by 16, scaled by `width` must equal the per-width rate.
+    per_lane = link_bits_per_second(gen, 1)
+    assert link_bits_per_second(gen, width) == pytest.approx(per_lane * width, rel=1e-9)
+
+
 # --- PciDevice properties --------------------------------------------------- #
 def test_pcidevice_speed_str_known_and_unknown():
     d = PciDevice("0000:03:00.0", 0x10DE, 0x2204, 0x030000, 4, 16, 4, 16)

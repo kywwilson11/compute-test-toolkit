@@ -12,7 +12,8 @@ from dataclasses import dataclass
 from .backend import LINK_SPEED_GTPS, Backend, link_bits_per_second
 
 # Re-exported so callers needing the link payload rate have one obvious home
-# (the rate is a link property). `link_bits_per_second(4, 16)` = Gen4 x16 bytes-ish/s.
+# (the rate is a link property). E.g. `link_bits_per_second(5, 16)` = Gen5 x16 (the
+# Zoox compute-platform target, ~504 Gb/s payload); the helper covers Gen1-Gen6.
 __all__ = ["LinkHealth", "check_link", "link_bits_per_second"]
 
 

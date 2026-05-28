@@ -26,6 +26,20 @@ from typing import Any
 from . import aer, ber
 from .backend import Backend, link_bits_per_second
 
+# Generation caveat: Gen1-Gen5 are NRZ with 128b/130b (Gen3-5) or 8b/10b (Gen1-2) encoding
+# and report bit errors as Bad TLP / Replay timer events the AER bit-counting model captures
+# faithfully. Gen6 (and beyond) introduces PAM4 + 256B FLIT framing + forward error
+# correction: many physical-layer symbol errors are FEC-corrected and never surface as AER
+# events, so the AER-based BER count under-measures real BER. Use FEC/symbol counters there.
+_GEN6_AER_UNDERCOUNT_NOTE = ("Gen6+ FLIT/FEC: AER LCRC-retry counting under-measures BER; "
+                             "use FEC/symbol statistics")
+
+
+def _gen_note(link_speed: int) -> str:
+    """Return the per-generation note for the BERT result. Empty for Gen1-Gen5 (the
+    AER count is faithful); set for Gen6+ where FEC hides errors from AER."""
+    return _GEN6_AER_UNDERCOUNT_NOTE if link_speed >= 6 else ""
+
 
 @dataclass
 class BertResult:
@@ -108,11 +122,7 @@ def run_bert(backend: Backend, bdf: str, *, target_ber: float = 1e-12,
 
     dev = backend.get_device(bdf)
     bps = link_bits_per_second(dev.current_link_speed, dev.current_link_width)
-    # Gen6+ uses PAM4 + FLIT + forward error correction: many symbol errors are
-    # FEC-corrected and never become Bad-TLP/replay events, so AER-based BER counting
-    # under-measures. Flag it (Gen1-5 NRZ links are measured faithfully).
-    gen_note = ("Gen6+ FLIT/FEC: AER LCRC-retry counting under-measures BER; "
-                "use FEC/symbol statistics") if dev.current_link_speed >= 6 else ""
+    gen_note = _gen_note(dev.current_link_speed)
 
     source = aer.error_source(backend, bdf)   # "aer" (rich) | "devstatus" (coarse) | "none"
     if source == "none":
@@ -249,8 +259,7 @@ def run_conductor(backend: Backend, bdf: str, *, target_ber: float = 1e-12,
     runner = c_runner or default_c_runner
     dev = backend.get_device(bdf)
     bps = link_bits_per_second(dev.current_link_speed, dev.current_link_width)
-    gen_note = ("Gen6+ FLIT/FEC: AER LCRC-retry counting under-measures BER; "
-                "use FEC/symbol statistics") if dev.current_link_speed >= 6 else ""
+    gen_note = _gen_note(dev.current_link_speed)
 
     source = aer.error_source(backend, bdf)
     if source == "none":

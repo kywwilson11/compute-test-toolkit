@@ -1,11 +1,14 @@
 """
-Receiver Lane Margining (PCIe Gen4+) and TX-preset equalization characterization.
+Receiver Lane Margining (PCIe Gen4+, mandatory on downstream ports at Gen5) and
+TX-preset equalization characterization.
 
 Lane margining is the spec-standard, scope-free way to measure the eye margin of
 each lane on-die: command the receiver to step its sampling point in time (and
 voltage, if supported) until errors appear. It turns "the link trained" into a
 per-lane margin number you can set a data-driven limit on — the modern successor to
-the X-ES pre-emphasis sweep.
+the X-ES pre-emphasis sweep. The spec made margining REQUIRED at Gen5 for downstream
+ports (root + switch-down) because the Gen5 32 GT/s eye is too tight to rely on
+"the link came up" as a quality signal alone.
 
 Two backends, as everywhere:
   * Mock: derives a believable per-lane margin from the device's injected_ber, with

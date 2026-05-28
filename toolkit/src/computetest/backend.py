@@ -442,11 +442,16 @@ class MockBackend(Backend):
 
     @staticmethod
     def sample_board() -> list[MockDevice]:
-        """A representative compute board: 2 GPUs, 2 NVMe, a custom card."""
+        """A representative compute board: 2 Gen5 GPUs, 2 Gen4 NVMe, a custom card.
+
+        Mirrors the Zoox compute-platform shape: SoCs/GPUs are Gen5 (32 GT/s), NVMe
+        SSDs commonly stay at Gen4 (16 GT/s) since few consumer NVMe parts hit Gen5
+        train rate today. The custom card is intentionally Gen3 x8 to exercise the
+        degrade/downtrain path on a Gen4-capable slot."""
         return [
-            MockDevice("0000:03:00.0", 0x10DE, 0x2204, 0x030000, 4, 16, 4, 16, "nvidia"),
-            MockDevice("0000:04:00.0", 0x10DE, 0x2204, 0x030000, 4, 16, 4, 16, "nvidia",
-                       injected_ber=5e-9),  # one marginal GPU link (fails the BERT in demos)
+            MockDevice("0000:03:00.0", 0x10DE, 0x2204, 0x030000, 5, 16, 5, 16, "nvidia"),
+            MockDevice("0000:04:00.0", 0x10DE, 0x2204, 0x030000, 5, 16, 5, 16, "nvidia",
+                       injected_ber=5e-9),  # one marginal Gen5 GPU link (fails the BERT in demos)
             MockDevice("0000:05:00.0", 0x144D, 0xA80A, 0x010802, 4, 4, 4, 4, "nvme"),
             MockDevice("0000:06:00.0", 0x144D, 0xA80A, 0x010802, 4, 4, 4, 4, "nvme"),
             MockDevice("0000:07:00.0", 0x1B36, 0x0010, 0x088000, 3, 8, 4, 8, "zoox_custom"),

@@ -98,6 +98,40 @@ def test_gen4_x16_distinguished_from_neighbours():
     assert ber.GEN4_X16_BPS != link_bits_per_second(4, 17)
 
 
+def test_gen5_x16_bps_pinned():
+    """Pin the Gen5 x16 BPS constant -- the Zoox compute-platform target. Gen5 = 32 GT/s
+    NRZ with 128b/130b encoding -> ~504.12 Gb/s payload at x16."""
+    from computetest.backend import link_bits_per_second
+    assert ber.GEN5_X16_BPS == link_bits_per_second(5, 16)
+    assert ber.GEN5_X16_BPS == pytest.approx(504_123_076_923.07697, rel=1e-9)
+    # Gen5 is exactly 2x Gen4 (same encoding, double GT/s).
+    assert ber.GEN5_X16_BPS == pytest.approx(2 * ber.GEN4_X16_BPS, rel=1e-12)
+
+
+def test_gen3_gen6_constants_match_spec():
+    """Pin Gen3 + Gen6 constants too -- the toolkit supports the full Gen1-Gen6 spectrum."""
+    assert ber.GEN3_X16_BPS == pytest.approx(126_030_769_230.77, rel=1e-3)
+    # Gen6 is nominal at 64 GT/s PAM4 with 242/256 FLIT efficiency.
+    assert ber.GEN6_X16_BPS == pytest.approx(968_000_000_000.0, rel=1e-3)
+
+
+def test_time_estimate_covers_gen3_to_gen6():
+    """The CLI ber-time estimate must show all four reference rates the tool supports,
+    not just Gen4. Drift to 'Gen4 only' or missing a Gen number would silently regress
+    the human-readable output for a Zoox (Gen5) user."""
+    s = ber.time_estimate(1e12)
+    for label in ("Gen3", "Gen4", "Gen5", "Gen6"):
+        assert label in s, f"time_estimate dropped {label}: {s!r}"
+    # And the actual seconds must be ordered (faster gen -> fewer seconds).
+    import re
+    secs = [float(m) for m in re.findall(r"~?(\d+\.\d+)s", s)]
+    # The presentation order is Gen5, Gen4, Gen3, Gen6 -- Gen5 fastest of NRZ; Gen6 is
+    # nominally faster again. The asserts are just on each pair we know is ordered:
+    g5, g4, g3, g6 = secs
+    assert g5 < g4 < g3, "NRZ ordering wrong: Gen5 must be fastest, Gen3 slowest"
+    assert g6 < g5, "Gen6 nominal payload (PAM4) is higher than Gen5 -> fewer seconds"
+
+
 # --- Fallback-path validation (force _HAVE_SCIPY=False so the fallback branches run) -- #
 def _force_fallback(monkeypatch):
     monkeypatch.setattr(ber, "_HAVE_SCIPY", False)
