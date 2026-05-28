@@ -30,6 +30,8 @@ pcie.0
 | `run_guest.sh` | `start` / `stop` / `status` / `ssh` the guest with the topology above. |
 | `inject.py`    | QMP client + AER injection (`pcie_aer_inject_error`). Pure Python; unit‑tested off‑hardware. |
 | `aer_test.sh`  | Host‑driven end‑to‑end: build the engine in the guest, inject N from the host, assert the count. |
+| `vdev_setup.sh`| **Phase 3** — in‑guest bring‑up of real kernel virtual devices (nvme‑loop, vcan). Idempotent. |
+| `vdev_test.sh` | **Phase 3** — host‑driven: stand up the vdevs, run the toolkit's real backend, assert the parse. |
 
 `.work/` (all generated assets, including the ~600 MB cloud image) is git‑ignored.
 
@@ -38,7 +40,8 @@ pcie.0
 ```bash
 cd toolkit/sim/qemu
 ./run_guest.sh start      # downloads the cloud image on first run, boots, waits until ready
-./aer_test.sh 40          # build-in-guest + inject 40 + assert -> "PASS: ... 40 correctable"
+./aer_test.sh 40          # Phase 2: build-in-guest + inject 40 + assert -> "PASS: ... 40 correctable"
+./vdev_test.sh            # Phase 3: nvme-loop/vcan + toolkit real backend -> "PASS: all ... bound"
 ./run_guest.sh stop
 ```
 
@@ -59,6 +62,29 @@ Injected 40 correctable **Bad TLP** (status bit 6 = `0x40`) into `rp0` while
 
 Exactly 40, decoded onto the right bit — the engine's real read/decode/clear path, end to end.
 
+## Phase 3 — other real‑kernel‑path interfaces
+
+`vdev_test.sh` extends the binding proof to the non‑PCIe modules by standing up real kernel
+virtual devices in the guest and asserting the *unmodified* `computetest` real backend parses
+real kernel output. Proven (2026‑05‑27, aarch64 / HVF), all 8 checks green:
+
+| Interface | Real device | What the real path proves |
+|-----------|-------------|---------------------------|
+| **NVMe** | `/dev/nvme0` (emulated QEMU nvme) | real `nvme smart-log -o json` → Kelvin→°C (`323`→`50`) and the abbreviated‑SMART‑key normalization (`avail_spare`→`available_spare`) — the exact drift bug class Phase 0/1 pin |
+| **NVMe** | `/dev/nvme1` (nvmet **nvme‑loop**) | a real NVMe‑over‑fabrics round‑trip (`nvme connect -t loop`); `id-ctrl` model `Linux` |
+| **Ethernet** | the guest's real virtio NIC | `link_up` + `rx/tx_errors` parsed from real `ethtool`/`ethtool -S` |
+| **CAN** | `vcan0` | state parsed from real `ip -details -statistics link show` |
+
+**Why the real NIC and not `netdevsim`:** the design doc suggested `netdevsim`, but on the 6.8
+cloud kernel it exposes neither a `Speed:` line nor `ethtool -S` stats, so it's a poor
+demonstrator. The guest's real virtio NIC is a genuine kernel netdev with real `ethtool`
+output, so the Ethernet binding is proven there instead.
+
+**Honest limits:** `vcan` has no CAN error states (no bus‑off / berr‑counter), and virtio
+reports no link speed — so `speed_ok` and the CAN error‑state branches aren't exercised here;
+those are covered by the Phase 0/1 parser tests and ultimately the bench. Phase 3 proves the
+*binding* (real subprocess → real kernel output → real parse → verdict).
+
 ## macOS (local) vs CI
 
 * **macOS / Apple Silicon** runs `qemu-system-aarch64` on the `virt` machine accelerated by
@@ -74,3 +100,6 @@ Exactly 40, decoded onto the right bit — the engine's real read/decode/clear p
 * QEMU's `pcie_aer_inject_error` echoes `OK id: …` on success; `inject.py` treats any other
   non‑empty output as an error.
 * Inject into `rp0` (the root port), **not** the nvme endpoint — the endpoint has no AER cap.
+* `vcan` and `nvme_loop` live in `linux-modules-extra-$(uname -r)`; `vdev_setup.sh` installs it.
+* The toolkit CLI exits non‑zero on a **FAIL verdict** (e.g. QEMU's `avail_spare=0`); that's a
+  real verdict, so `vdev_test.sh` asserts on the parsed JSON and ignores the exit code.

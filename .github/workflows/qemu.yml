@@ -53,9 +53,12 @@ jobs:
       - name: Boot guest
         working-directory: toolkit/sim/qemu
         run: ./run_guest.sh start
-      - name: Inject + assert
+      - name: Phase 2 — inject AER + assert
         working-directory: toolkit/sim/qemu
         run: ./aer_test.sh 40
+      - name: Phase 3 — real-kernel-path interfaces (nvme-loop / vcan / NIC)
+        working-directory: toolkit/sim/qemu
+        run: ./vdev_test.sh
       - name: Serial log on failure
         if: failure()
         working-directory: toolkit/sim/qemu
