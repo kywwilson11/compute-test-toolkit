@@ -175,3 +175,14 @@ def test_backend_flag_after_subcommand_sets_env(capsys, monkeypatch):
     assert rc == cli.EXIT_PASS
     assert os.environ.get("COMPUTETEST_BACKEND") == "mock"   # the override was applied
     assert "backend: MOCK" in capsys.readouterr().err
+
+
+def test_keyboard_interrupt_maps_to_exit_130(monkeypatch, capsys):
+    """Ctrl-C during a long BERT must exit cleanly with 130 (the bash/autoconf
+    convention 128 + SIGINT(2)), not dump a Python traceback into the station log."""
+    def boom(*a, **k):
+        raise KeyboardInterrupt
+    monkeypatch.setattr(cli.nvme, "check_nvme", boom)
+    rc = cli.main(["--backend", "mock", "nvme", "/dev/nvme0"])
+    assert rc == 130
+    assert "interrupted" in capsys.readouterr().err

@@ -14,9 +14,10 @@ from dataclasses import dataclass, field
 from .backend import mock_mode
 
 _SPEED_RE = re.compile(r"Speed:\s*(\d+(?:\.\d+)?)\s*([MG])b?", re.I)
-# Linux IFNAMSIZ-1 (15) characters, the alphabet `ip`/`ethtool` accept. Rejects shell
-# metacharacters and option-like values (`--help`) — the iface flows into argv positions.
-_IFACE_RE = re.compile(r"^[A-Za-z0-9._-]{1,15}$")
+# Linux IFNAMSIZ-1 (15) characters, the alphabet `ip`/`ethtool` accept. The leading
+# char is constrained to alnum/_ so a value like `--help` can't slip through and flow
+# into argv as an option (real Linux iface names never start with `-` or `.`).
+_IFACE_RE = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9._-]{0,14}$")
 
 
 def _validate_iface(iface: str) -> None:

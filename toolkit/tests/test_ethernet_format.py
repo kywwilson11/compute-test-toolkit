@@ -48,3 +48,30 @@ def test_can_to_dict_and_summary():
 def test_can_bus_off_summary_fails():
     s = ethernet.check_can("canBAD").summary()
     assert "BUS-OFF" in s and "-> FAIL" in s
+
+
+# --- iface validation: blocks hostile iface names from flowing into argv ----- #
+import pytest
+
+
+@pytest.mark.parametrize("evil", [
+    "../etc/passwd",     # path traversal attempt
+    "--help",            # an argv-option attempt
+    "eth 0",             # whitespace
+    "x" * 16,            # > IFNAMSIZ-1 (15)
+    "",                  # empty
+    "eth0\x00",          # null byte
+])
+def test_validate_iface_rejects_hostile_names(evil):
+    with pytest.raises(ValueError, match="invalid network interface name"):
+        ethernet.check_ethernet(evil)
+    with pytest.raises(ValueError, match="invalid network interface name"):
+        ethernet.check_can(evil)
+
+
+def test_validate_iface_accepts_canonical_names():
+    # Real-shape names that pass the regex (mock backend handles 'BAD' substring).
+    for iface in ("eth0", "ens3", "enp0s2", "vcan0", "can0fd"):
+        # Should not raise; mock yields a CanHealth/EthHealth regardless of state.
+        assert ethernet.check_ethernet(iface).iface == iface
+        assert ethernet.check_can(iface).iface == iface
