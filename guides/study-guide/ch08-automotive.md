@@ -445,6 +445,29 @@ GMSL deser 1-0029: 4/4 links locked, DESYNC -> FAIL
 Four OK links, one FAIL deserializer — because they aren't shutter-aligned. That one line is
 the whole argument for testing frame-sync as its own thing.
 
+A few **production-hardening decisions** in the toolkit's `_real_check_gmsl` worth
+calling out — each was a real audit finding, not a hypothetical:
+
+- **Every `v4l2-ctl` call has an explicit timeout.** `--get-fmt-video` uses
+  `timeout=10`; the hot path, `--stream-mmap --stream-count=N`, uses `timeout=max(30,
+  frames * 2)` (≥2 s per frame). The streaming case is the most likely hang in the
+  whole toolkit — a locked link with no frames flowing (the classic intermittent
+  FrameSync scenario this test exists to catch) wedges `v4l2-ctl` indefinitely. On
+  timeout the toolkit treats it as `captured = 0` so the existing
+  `frames_captured > 0` gate fails honestly instead of the test station wedging.
+- **`link` and `video_device` are regex-validated before they reach sysfs/argv.**
+  `_LINK_RE = r"^\d{1,4}-[0-9a-fA-F]{4}$"` matches a Linux I²C device id;
+  `_VIDEO_RE = r"^/dev/video\d+$"`. Without these, a hostile `link` from a plan file
+  (`link: "../../../proc/self/environ"`) would be interpolated into
+  `/sys/bus/i2c/devices/{link}/link_status` and read whatever the path resolved to —
+  a sysfs information-disclosure primitive.
+- **Missing `v4l2-ctl` raises, not silent-fails.** Earlier behavior was to fall
+  through to `captured = 0`, which then read as a hardware fault on the station log
+  ("0 frames captured = camera dead"); the actual cause was just an unininstalled
+  CLI. Now the toolkit raises `RuntimeError("v4l2-ctl not found ...")` which the CLI
+  maps to `EXIT_UNAVAIL` (5) — matching nvme-cli / ethtool / nvidia-smi's
+  "tool-missing is not a hardware fail" contract.
+
 ### Diagnostic flow: common GMSL failure signatures → root cause
 
 This is the table you keep open on the bench. Read the *signature* (what lock/frames/errors/
@@ -952,6 +975,27 @@ portable read; raw MDIO is the fallback.)
 deliberate design that the real TDR path treats *unsupported* as **"skipped," never a fail**,
 so a PHY that can't do TDR doesn't false-fail a good link — the same "don't punish a missing
 capability" discipline you want everywhere in MT code.
+
+Three **production-hardening** decisions in the toolkit's implementation worth knowing:
+
+- **The interface name is regex-validated before it reaches `ethtool` / `ip`.**
+  `_IFACE_RE = r"^[A-Za-z0-9_][A-Za-z0-9._-]{0,14}$"` — Linux's `IFNAMSIZ - 1` of 15
+  characters, with the **leading character constrained** to alnum/underscore so a
+  value like `--help` can't slip through into argv as an option to `ethtool`/`ip`. A
+  plan-file `ethernet: ["--help"]` would otherwise emit `ethtool --help` and parse the
+  help text as if it were the device's link state. The leading-char constraint was
+  the audit fix; the bare-char-class regex caught everything else but missed that.
+- **Every `subprocess.run` has an explicit timeout.** `ethtool`/`ethtool -S` and
+  `ip -details -statistics link show` use `timeout=10`; without it, a wedged PHY (a
+  driver bug, a flaky MDIO controller) wedges the test station indefinitely. The
+  sibling calls `_real_iperf` and `_real_cable_test` had timeouts since day one;
+  this is the audit-1 finding that closed the inconsistency.
+- **Parser hardening from Hypothesis.** `_parse_speed` was crashing on
+  `"Speed: . G"` (regex `[\d.]+` matched the bare `.` and fed `float('.')` to the
+  parser) and `_stat` was crashing on `"weird: 5²\n"` (Unicode digit, `str.isdigit()`
+  returns True, `int()` raises). Both were found by property tests in
+  `tests/test_parsers_property.py` and pinned with `@example(...)` decorators. The
+  real-world cases came from `ethtool` output captured on a marginal NIC.
 
 > **Contrast with the Networking chapter.** That chapter owns the IP/socket/`tcpdump`/iperf
 > layer and standard Ethernet. Here the *additions* are: single-pair PAM3 PHYs, the

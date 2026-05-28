@@ -1545,3 +1545,57 @@ LnkCap/Ctl/Sta, DPC, DEVCTL2 defines) and docs (PCIe AER HOWTO, sysfs-pci); `pci
 `oxidecomputer/lmar`); `aer-inject` SPEC + kernel `aer_inject.c`; PCI-SIG/vendor material on
 equalization, the preset table, and Gen6 PAM4/FLIT/FEC. The BER confidence math is derived in
 the Math & Statistics chapter (§10).
+
+\newpage
+
+## 17. Toolkit cross-reference: how `computetest` realizes the chapter
+
+The `computetest` toolkit (`/toolkit/`) implements the chapter's diagnostic flow as a
+first-class library. The pieces and design decisions worth knowing:
+
+- **Generation support is Gen1–Gen6, anchored on Gen5.** `LINK_SPEED_GTPS` covers all six;
+  `_encoding_efficiency` returns `0.8` for Gen1/2 (8b/10b), `128/130` for Gen3–5 (NRZ),
+  and the nominal `242/256` for Gen6 (PAM4 + FLIT). `ber.GEN5_X16_BPS = 504_123_076_923
+  bps` is the Zoox compute target; `ber.time_estimate()` renders the BERT cost across
+  all four reference rates (Gen3/4/5/6 x16) in the CLI's `ber` subcommand.
+- **The W1C counting model is in C, the decision logic in Python.** `c/pcie_bert.c` is
+  the dumb-fast counter (the "hot loop" §6.3 calls for) — one config read per
+  iteration, write-1-to-clear when set, count each set bit's type. Python's
+  `bert.run_conductor` owns the sequential decision (pass/reject/extend), the idle
+  baseline subtraction (a bit set at idle is a *constant fault*, not a rate error),
+  and the takt-budget cap. The dependency-injection seam (`cfg_io` in `c/pcie_bert_core.h`)
+  lets Unity tests model true W1C semantics off-hardware (see CI/CD chapter §4.2).
+- **Poll-rate calibration is reported, not assumed.** The C engine emits
+  `poll_rate_hz` in its JSON; the conductor surfaces a calibration note when the
+  achieved rate falls below `10 × target_ber × bps` — the saturation point above which
+  the W1C bit-counting model collapses N same-type errors per window into a single
+  bit-set. On a healthy station Gen5 at 1e-12 needs ~5 polls/sec, trivial; on a loaded
+  host where polls drop to ~1 kHz, the calibration note tells you the count is a lower
+  bound, not a calibrated rate (the verdict — *fail* — is still correct).
+- **Security hardening: every BDF is validated.** `RealBackend._check_bdf` rejects
+  anything that doesn't match the canonical `DDDD:BB:DD.F` shape before interpolating
+  into a sysfs path. Without this, an attacker-controlled `bdf` from a plan file
+  (`bdf: "../../etc/passwd"`) would escape `sys_root`, and with root + `write_config`
+  it was an arbitrary-write primitive. Regression-tested by 10 invalid-shape cases.
+- **Verdicts are honest.** `diagnose --no-bert` returns `skip` (EXIT_UNAVAIL = 5),
+  not `pass`, because no BER measurement was made — you never claim PASS from a
+  measurement you didn't make. Likewise, a sysfs enumeration failure (`bps == 0`)
+  triggers `skip` immediately rather than wasting `max_seconds` accumulating zero
+  bits.
+- **AER snapshot falls back to Device Status.** `aer.snapshot()` on a no-AER device
+  reads Device Status (the universal coarse error source), so a `--no-bert` quick
+  check on a legacy endpoint still catches a NonFatal/Fatal uncorrectable bit. The
+  original snapshot ignored Device Status and would false-PASS that exact case.
+- **Lane Margining: Gen4+ capability, Gen5 mandatory on downstream ports.**
+  `margining.py` walks the spec-standard step→dwell→read sequence behind a guarded
+  `_real_margin_lane` that requires per-hardware validation; the mock backend
+  produces believable per-lane numbers driven by `injected_ber`. The Gen5 32 GT/s
+  eye is too tight to rely on "the link came up" alone, which is why the spec moved
+  margining from "optional" (Gen4) to "required on downstream ports" (Gen5).
+- **Phase 2 binding proof.** `sim/qemu/inject.py` drives QEMU's QMP socket
+  (`pcie_aer_inject_error`) to inject AER errors into an emulated nvme behind a
+  `pcie-root-port`; the unmodified `pcie_bert` running in the guest reads the
+  resulting W1C-latched bits via the real Linux kernel sysfs and reports the count.
+  That binding (the engine's read/decode/clear path against real kernel-generated
+  AER config space) is the layer a software mock structurally cannot prove —
+  documented in `toolkit/sim/qemu/README.md`.

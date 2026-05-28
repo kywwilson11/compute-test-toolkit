@@ -607,3 +607,24 @@ Two design points worth lifting from that module into any NVMe test you write:
 - **DST is polled to completion, never fire-and-forget.** `run_self_test=True` calls
   `start_self_test()` then `poll_self_test()`, and only the polled `result == 0` sets the
   `self_test_passed` check. This is the antidote to the non-blocking gotcha above.
+- **Format drift is normalized at the parse layer.** `nvme-cli` 2.10 → 2.11 renamed
+  the SMART keys (`available_spare` → `avail_spare`, `available_spare_threshold` →
+  `spare_thresh`, `percentage_used` → `percent_used`). The toolkit's
+  `_normalize_smart_keys()` aliases the abbreviated names to the canonical ones at
+  parse time, so a drive talking either dialect produces the same verdict — and the
+  full corpus of both is replayed in `tests/test_parsers_corpus.py` against captured
+  smart-log JSON from each version. A user with `nvme-cli` 2.11 on the station and the
+  guide written against 2.10 doesn't need to know about the change.
+- **Temperature units are normalized too.** Some `nvme smart-log -o json`
+  implementations report `temperature` in *Kelvin* (Samsung enterprise parts often
+  emit `323` for 50 °C), others in Celsius. `check_nvme` heuristics: if `temperature
+  > 200`, subtract 273. Verified end-to-end by Phase 3 of the QEMU lane, where the
+  emulated nvme reports Kelvin and the toolkit's parsed verdict shows the converted
+  50 °C in the guest. The signal "your unit-test mock won't catch a real-world
+  encoding the parser handled correctly" is exactly what the QEMU+nvme-loop binding
+  exists to prove.
+- **`start_self_test(device, *, extended=False)` is keyword-only on `extended`.** A
+  positional bool — `start_self_test("/dev/nvme0", True)` — is a magic-bool at the
+  call site whose meaning is invisible without grepping the signature. The API now
+  refuses by construction: callers write `start_self_test(dev, extended=True)`, and
+  the meaning is at the call site.
