@@ -50,7 +50,7 @@ users:
     ssh_authorized_keys:
       - $PUBKEY
 package_update: true
-packages: [gcc, libc6-dev, pciutils, nvme-cli]
+packages: [gcc, make, libc6-dev, pciutils, nvme-cli, ethtool]
 EOF
     # Build the ISO with whatever's available: cloud-localds / xorriso / genisoimage on
     # Linux, hdiutil on macOS. The volume label MUST be CIDATA for the NoCloud datasource.
