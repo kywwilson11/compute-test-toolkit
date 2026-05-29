@@ -1,0 +1,144 @@
+# Corpus drift refresh: catch nvme-cli / ethtool schema changes before they ship to
+# the manufacturing line. Runs on the public ubuntu-latest runner against (a)
+# nvme-loop for nvme captures and (b) the runner's primary NIC for ethtool captures
+# -- both REAL Linux kernel devices, so the JSON shape and counter names match what
+# a station will see. Values are not meaningful (an nvme-loop drive isn't a Samsung
+# part); the SHAPE is, which is what schema-drift detection needs.
+#
+# What it commits to `corpus/_drift/`:
+#   nvme-version.txt           `nvme --version` (the CLI version we captured against)
+#   ethtool-version.txt        `ethtool --version`
+#   nvme-smart-log-keys.txt    sorted top-level key list of `nvme smart-log -o json`
+#   nvme-id-ctrl-keys.txt      sorted top-level key list of `nvme id-ctrl -o json`
+#   ethtool-stat-keys.txt      sorted counter names from `ethtool -S <iface>`
+#
+# Why key-lists, not full captures: the human-curated value corpus at
+# `corpus/nvme/<ver>/<model>/...` and `corpus/ethtool/<ver>/<model>/...` should ONLY
+# change when a real engineer captures from a real device. The drift signal we want
+# automated is "the tool's output shape changed" -- that's exactly the sorted key list.
+# A diff in `_drift/` flags a schema shift; a human then decides whether to recapture
+# the value corpus from a real station and update `tests/test_parsers_corpus.py`.
+#
+# Runs weekly on Monday at 09:00 UTC + manual dispatch. Opens a PR on diff;
+# uses the default GITHUB_TOKEN with pull-requests:write.
+name: corpus-refresh
+
+on:
+  schedule:
+    - cron: '0 9 * * 1'           # Monday 09:00 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+defaults:
+  run:
+    working-directory: toolkit
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install latest nvme-cli, ethtool, and kernel-modules-extra
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq nvme-cli ethtool "linux-modules-extra-$(uname -r)"
+
+      - name: Set up nvme-loop and capture nvme outputs
+        run: |
+          set -e
+          sudo modprobe nvmet nvme_loop nvme_fabrics
+          sudo mountpoint -q /sys/kernel/config || sudo mount -t configfs none /sys/kernel/config
+          NQN=corpus-refresh-loop
+          CFG=/sys/kernel/config/nvmet
+          sudo truncate -s 64M /tmp/nvmet-backing.img
+          sudo mkdir -p "$CFG/subsystems/$NQN/namespaces/1" "$CFG/ports/1"
+          echo 1 | sudo tee "$CFG/subsystems/$NQN/attr_allow_any_host" >/dev/null
+          echo -n /tmp/nvmet-backing.img | sudo tee "$CFG/subsystems/$NQN/namespaces/1/device_path" >/dev/null
+          echo 1 | sudo tee "$CFG/subsystems/$NQN/namespaces/1/enable" >/dev/null
+          echo loop | sudo tee "$CFG/ports/1/addr_trtype" >/dev/null
+          sudo ln -sf "$CFG/subsystems/$NQN" "$CFG/ports/1/subsystems/$NQN"
+          sudo nvme connect -t loop -n "$NQN"
+          # The loop controller may be /dev/nvme0 OR a higher index depending on the
+          # runner image; find the one whose Model is "Linux" (= the nvmet target).
+          NVME_DEV=""
+          for d in /sys/class/nvme/nvme*; do
+              if grep -q "Linux" "$d/model" 2>/dev/null; then
+                  NVME_DEV="/dev/$(basename "$d")"; break
+              fi
+          done
+          [ -n "$NVME_DEV" ] || { echo "nvme-loop controller not found"; exit 1; }
+          mkdir -p corpus/_drift
+          sudo nvme --version           >  corpus/_drift/nvme-version.txt
+          # Sorted top-level keys -- the schema signature. A new key (or a removed
+          # one) is the drift signal; values don't appear.
+          sudo nvme smart-log "$NVME_DEV" -o json | python3 -c 'import json,sys; [print(k) for k in sorted(json.load(sys.stdin))]' > corpus/_drift/nvme-smart-log-keys.txt
+          sudo nvme id-ctrl   "$NVME_DEV" -o json | python3 -c 'import json,sys; [print(k) for k in sorted(json.load(sys.stdin))]' > corpus/_drift/nvme-id-ctrl-keys.txt
+          sudo nvme disconnect -n "$NQN" || true
+
+      - name: Capture ethtool outputs against the runner's primary NIC
+        run: |
+          set -e
+          # Default-route iface -- the runner's actual outbound NIC. Real kernel
+          # netdev, real ethtool driver path; gives schema-shape output even though
+          # the runner is virtualized.
+          NIC="$(ip -o -4 route get 1.1.1.1 | sed -n 's/.* dev \([^ ]*\).*/\1/p' | head -1)"
+          [ -n "$NIC" ] || { echo "no default-route NIC"; exit 1; }
+          ethtool --version > corpus/_drift/ethtool-version.txt
+          # Sorted counter names from `ethtool -S`. The lines look like "    rx_errors: 0";
+          # the schema is the set of names, not the values.
+          sudo ethtool -S "$NIC" \
+            | awk -F: '/:/{gsub(/^[[:space:]]+/, "", $1); print $1}' \
+            | sort -u > corpus/_drift/ethtool-stat-keys.txt
+
+      - name: Diff against committed _drift/ and open PR if anything changed
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -e
+          cd "$GITHUB_WORKSPACE"
+          if git diff --quiet toolkit/corpus/_drift/; then
+              echo "no corpus drift detected"
+              exit 0
+          fi
+          echo "drift detected -- opening PR"
+          git config user.name  'corpus-refresh-bot'
+          git config user.email 'corpus-refresh@noreply.github.com'
+          BR="corpus-refresh/$(date +%Y-%m-%d)"
+          git checkout -b "$BR"
+          git add toolkit/corpus/_drift/
+          git commit -m "corpus-refresh: drift detected ($(date -u +%Y-%m-%d))" \
+                     -m "$(git diff --cached --stat toolkit/corpus/_drift/)"
+          git push -u origin "$BR"
+          # Render the PR body to a file (avoids embedding multi-line markdown in
+          # the YAML, which would break the run: | block-scalar indentation).
+          {
+              echo "Automated weekly capture against the latest \`nvme-cli\` + \`ethtool\` on a"
+              echo "GHA \`ubuntu-latest\` runner found drift in \`corpus/_drift/\`."
+              echo ""
+              echo "**What changed:**"
+              echo '```'
+              git diff --stat HEAD~1 toolkit/corpus/_drift/
+              echo '```'
+              echo ""
+              echo "**Tool versions captured:**"
+              echo '```'
+              cat toolkit/corpus/_drift/nvme-version.txt
+              cat toolkit/corpus/_drift/ethtool-version.txt
+              echo '```'
+              echo ""
+              echo "This PR only updates \`corpus/_drift/\` (the schema-signature directory)."
+              echo "The human-curated value corpus at \`corpus/nvme/<ver>/<model>/...\` is"
+              echo "unchanged. A schema diff here means the tool's output shape changed --"
+              echo "usually a new key or renamed counter. Action: capture fresh value corpus"
+              echo "from a real station + update \`tests/test_parsers_corpus.py\` if the parser"
+              echo "needs a new alias. See \`toolkit/corpus/README.md\`."
+          } > /tmp/pr-body.md
+          gh pr create \
+              --base main --head "$BR" \
+              --title "corpus-refresh: schema/version drift on $(date +%Y-%m-%d)" \
+              --body-file /tmp/pr-body.md
