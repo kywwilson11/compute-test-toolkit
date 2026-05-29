@@ -155,6 +155,8 @@ def _build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--confidence", type=float, default=0.95)
     sp.add_argument("--max-seconds", type=float, default=30.0)
     sp.add_argument("--engine", choices=["python", "c"], default="python")
+    sp.add_argument("--explain", action="store_true",
+                    help="print the verdict reasoning + the Gen6 FEC caveat when relevant")
 
     sp = sub.add_parser("diagnose", parents=[common], help="full PCIe diagnostic")
     sp.add_argument("-d", "--bdf", default=None, help="one BDF (default: all)")
@@ -250,6 +252,8 @@ def _run(args) -> int:
                      confidence=args.confidence, max_seconds=args.max_seconds,
                      engine=args.engine)
         _emit(r.summary(), r.to_dict(), args.json, sink=sink)
+        if args.explain and not args.json:
+            print(r.explain(), file=sink)
         _emit_ocp(args, "bert", r, target_ber=args.target_ber)
         return _verdict_exit(r.status)
 

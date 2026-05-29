@@ -276,6 +276,20 @@ def emit_bert(em: Emitter, result, *, target_ber: float | None = None,
         em.measurement(name=f"aer.correctable.{nm}", value=int(count), unit="count")
     for nm in (result.uncorrectable_decode or []):
         em.measurement(name=f"aer.uncorrectable.{nm}", value=1, unit="count")
+    # PCIe 6.0+ FEC counters (None on Gen<=5; the real reliability signal on Gen6+).
+    if result.pre_fec_symbol_errors is not None:
+        em.measurement(name="fec.pre_fec_symbol_errors",
+                       value=int(result.pre_fec_symbol_errors), unit="count")
+        em.measurement(name="fec.post_fec_flit_errors",
+                       value=int(result.post_fec_flit_errors or 0), unit="count")
+        em.measurement(name="fec.fber_estimate",
+                       value=float(result.fber_estimate or 0.0),
+                       unit="errors_per_flit",
+                       validators=[validator(LESS_THAN_OR_EQUAL, 1e-6,
+                                              name="fber_target")])
+        for length, count in (result.burst_length_histogram or {}).items():
+            em.measurement(name=f"fec.burst_len_{length}", value=int(count),
+                           unit="count")
     if result.note:
         em.step_log("WARNING", result.note)
     if result.stuck:

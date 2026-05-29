@@ -297,6 +297,44 @@ class TestEmitBert:
             "type": "LESS_THAN_OR_EQUAL", "value": 1e-12, "name": "target_ber",
         }]
 
+    def test_gen6_emits_fec_measurements_with_fber_validator(self):
+        from computetest.backend import select_backend
+        from computetest.bert import run_bert
+        buf, em = _run()
+        backend = select_backend()
+        r = run_bert(backend, "0000:08:00.0", target_ber=1e-6, max_seconds=1.0)
+        oc.emit_bert(em, r, target_ber=1e-6)
+        em.run_end(r.status)
+        measurements = [
+            a["testStepArtifact"]["measurement"]
+            for a in _emit_lines(buf)
+            if "testStepArtifact" in a and "measurement" in a["testStepArtifact"]
+        ]
+        names = {m["name"] for m in measurements}
+        assert "fec.pre_fec_symbol_errors" in names
+        assert "fec.post_fec_flit_errors" in names
+        assert "fec.fber_estimate" in names
+        # FBER carries the 1e-6 target validator (the OCP compliance metric).
+        fber = next(m for m in measurements if m["name"] == "fec.fber_estimate")
+        assert fber["unit"] == "errors_per_flit"
+        assert fber["validators"] == [{
+            "type": "LESS_THAN_OR_EQUAL", "value": 1e-6, "name": "fber_target",
+        }]
+
+    def test_gen5_omits_fec_measurements(self):
+        from computetest.backend import select_backend
+        from computetest.bert import run_bert
+        buf, em = _run()
+        backend = select_backend()
+        r = run_bert(backend, "0000:03:00.0", target_ber=1e-12, max_seconds=1.0)
+        oc.emit_bert(em, r, target_ber=1e-12)
+        em.run_end(r.status)
+        names = {a["testStepArtifact"]["measurement"]["name"]
+                 for a in _emit_lines(buf)
+                 if "testStepArtifact" in a
+                 and "measurement" in a["testStepArtifact"]}
+        assert not any(n.startswith("fec.") for n in names), names
+
 
 class TestEmitHealth:
     def test_nvme_health_promotes_smart_scalars_to_measurements(self):

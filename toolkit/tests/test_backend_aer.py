@@ -5,7 +5,7 @@ from computetest.backend import ECAP_AER, MockBackend, MockDevice
 def test_enumerate_and_device_fields():
     be = MockBackend()
     bdfs = be.list_devices()
-    assert len(bdfs) == 5
+    assert len(bdfs) == 6                                 # 2 Gen5 + 2 Gen4 + 1 Gen3 + 1 Gen6
     d = be.get_device(bdfs[0])
     assert d.vendor_id == 0x10DE and d.current_link_width == 16
 

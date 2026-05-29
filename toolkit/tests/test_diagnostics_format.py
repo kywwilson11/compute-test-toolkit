@@ -78,10 +78,10 @@ def test_width_degraded_is_a_reason():
 
 # --- diagnose_all over the whole board -------------------------------------- #
 def test_diagnose_all_covers_every_device():
-    be = MockBackend()                                    # the sample board (5 devices)
+    be = MockBackend()                                    # the sample board (6 devices)
     results = diagnostics.diagnose_all(be, do_bert=False, do_margin=False,
                                        watch_retrains_s=0.02)
-    assert len(results) == 5
+    assert len(results) == 6
     assert {r.bdf for r in results} == set(be.list_devices())
 
 

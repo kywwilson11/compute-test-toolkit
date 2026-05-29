@@ -34,6 +34,20 @@ from .backend import Backend, link_bits_per_second
 _GEN6_AER_UNDERCOUNT_NOTE = ("Gen6+ FLIT/FEC: AER LCRC-retry counting under-measures BER; "
                              "use FEC/symbol statistics")
 
+_GEN6_FEC_EXPLANATION = (
+    "PCIe 6.0 link quality is measured differently than Gen1-5:\n"
+    "  * Raw signaling is PAM-4 at 64 GT/s; a per-symbol error rate ~1e-6 is\n"
+    "    normal at the PHY before FEC.\n"
+    "  * The link uses 3-way-interleaved Reed-Solomon over GF(2^8) FEC: bursts up\n"
+    "    to 16 bits affect at most one byte per ECC group, so the post-FEC FLIT\n"
+    "    error rate is the actual reliability signal (FBER target ~1e-6).\n"
+    "  * AER LCRC-retry events surface only the rare FEC-uncorrectable FLITs, so\n"
+    "    an AER-derived BER undercounts the true raw error rate. A Gen6 'correctable'\n"
+    "    count cannot be compared apples-to-apples with a Gen5 'correctable' count.\n"
+    "  * Report (pre_fec_symbol_errors, post_fec_flit_errors, fber_estimate) for the\n"
+    "    real reliability picture; AER stays as a secondary fault signal.\n"
+    "Sources: Synopsys PCIe 6 Verification: FEC and CRC; PCIe 6.0 base spec §3.5.")
+
 
 def _gen_note(link_speed: int) -> str:
     """Return the per-generation note for the BERT result. Empty for Gen1-Gen5 (the
@@ -57,6 +71,13 @@ class BertResult:
     aer_available: bool = True   # False only if neither AER nor Device Status is present
     aer_source: str = "aer"      # "aer" (rich) | "devstatus" (coarse fallback) | "none"
     note: str = ""
+    # Gen6+ FEC counters. Populated on PCIe 6.0+ links when the backend can read
+    # vendor-specific FEC registers; None on Gen1-5 (FEC is not in the spec).
+    # See _GEN6_FEC_EXPLANATION for the why.
+    pre_fec_symbol_errors: int | None = None       # PAM-4 symbol errors BEFORE FEC
+    post_fec_flit_errors: int | None = None         # FLIT errors AFTER FEC
+    fber_estimate: float | None = None              # post-FEC FLIT BER
+    burst_length_histogram: dict[int, int] | None = None  # symbols -> burst count
 
     @property
     def status(self) -> str:
@@ -67,8 +88,49 @@ class BertResult:
     def ok(self) -> bool:
         return self.status == "pass"
 
+    @property
+    def is_gen6_or_later(self) -> bool:
+        return self.link_speed_code >= 6
+
+    def explain(self) -> str:
+        """Multi-line human explanation of the BERT verdict — what was measured,
+        how confident, and (for Gen6+) why pre/post-FEC are reported separately."""
+        lines = [
+            f"  Link:        Gen{self.link_speed_code} x{self.link_width}",
+            f"  Window:      {self.seconds:.2f} s ({self.bits:.2e} bits transferred)",
+            f"  AER source:  {self.aer_source} "
+            + ("(rich AER)" if self.aer_source == "aer"
+               else "(coarse Device Status fallback)" if self.aer_source == "devstatus"
+               else "(no PCIe error source)"),
+            f"  Correctable: {self.correctable}"
+            + (f"  details={self.per_correctable}" if self.per_correctable else ""),
+            f"  Uncorrectable: {self.uncorrectable}"
+            + (f"  ({','.join(self.uncorrectable_decode)})"
+               if self.uncorrectable_decode else ""),
+            f"  Confidence:  {self.verdict.confidence_reached:.4f} "
+            f"(target {self.verdict.confidence_target:.2f})",
+            f"  BER bound:   {self.verdict.ber_upper:.2e} "
+            f"(target {self.verdict.target_ber:.1e})",
+        ]
+        if self.pre_fec_symbol_errors is not None:
+            lines += [
+                "",
+                "  PCIe 6.0+ FEC counters:",
+                f"    pre-FEC symbol errors:  {self.pre_fec_symbol_errors}",
+                f"    post-FEC FLIT errors:   {self.post_fec_flit_errors}",
+                f"    FBER (post-FEC):        "
+                f"{(self.fber_estimate or 0.0):.2e}",
+                f"    burst-length hist:      {self.burst_length_histogram}",
+            ]
+        if self.note:
+            lines += ["", f"  Note: {self.note}"]
+        if self.is_gen6_or_later:
+            lines += ["", _GEN6_FEC_EXPLANATION]
+        verdict = "PASS" if self.status == "pass" else self.status.upper()
+        return f"BERT verdict: {verdict}\n" + "\n".join(lines)
+
     def to_dict(self) -> dict:
-        return {
+        d = {
             "bdf": self.bdf, "seconds": round(self.seconds, 3), "bits": self.bits,
             "correctable": self.correctable, "uncorrectable": self.uncorrectable,
             "per_correctable": self.per_correctable,
@@ -80,6 +142,12 @@ class BertResult:
             "aer_available": self.aer_available, "note": self.note,
             "status": self.status,
         }
+        if self.pre_fec_symbol_errors is not None:
+            d["pre_fec_symbol_errors"] = self.pre_fec_symbol_errors
+            d["post_fec_flit_errors"] = self.post_fec_flit_errors
+            d["fber_estimate"] = self.fber_estimate
+            d["burst_length_histogram"] = self.burst_length_histogram
+        return d
 
     def summary(self) -> str:
         extra = ""
@@ -87,6 +155,10 @@ class BertResult:
             extra = f" UNCORR:{','.join(self.uncorrectable_decode)}"
         elif self.correctable:
             extra = " cor:" + ",".join(f"{k}={v}" for k, v in self.per_correctable.items())
+        if self.pre_fec_symbol_errors is not None:
+            extra += (f"  FEC: pre={self.pre_fec_symbol_errors} "
+                      f"post={self.post_fec_flit_errors} "
+                      f"FBER={(self.fber_estimate or 0.0):.2e}")
         return (f"{self.bdf} Gen{self.link_speed_code}x{self.link_width} "
                 f"{self.seconds:.1f}s n={self.bits:.2e} {self.verdict.summary()}{extra}")
 
@@ -203,6 +275,7 @@ def run_bert(backend: Backend, bdf: str, *, target_ber: float = 1e-12,
 
     verdict = ber.assess(cor_total, bits, target_ber, confidence, unc_total)
     verdict.status = status
+    fec = backend.read_fec_stats(bdf, elapsed)          # Gen6+ FEC counters; None otherwise
 
     # --- Idle baseline (end): errors still present with no traffic = a real fault.
     backend.set_exercising(bdf, False)
@@ -227,7 +300,11 @@ def run_bert(backend: Backend, bdf: str, *, target_ber: float = 1e-12,
     return BertResult(bdf, elapsed, verdict.bits, cor_total, unc_total, per,
                       dev.current_link_speed, dev.current_link_width, verdict,
                       stuck=idle_fault, uncorrectable_decode=unc_decode,
-                      aer_source=source, note=note)
+                      aer_source=source, note=note,
+                      pre_fec_symbol_errors=fec.pre_fec_symbol_errors if fec else None,
+                      post_fec_flit_errors=fec.post_fec_flit_errors if fec else None,
+                      fber_estimate=fec.fber_estimate if fec else None,
+                      burst_length_histogram=fec.burst_length_histogram if fec else None)
 
 
 def default_c_runner(bdf: str, seconds: float, binary: str = "c/pcie_bert") -> dict:
@@ -377,13 +454,18 @@ def run_conductor(backend: Backend, bdf: str, *, target_ber: float = 1e-12,
 
     verdict = ber.assess(cor_total, max(n, 1.0), target_ber, confidence, unc_total)
     verdict.status = status
+    fec = backend.read_fec_stats(bdf, elapsed)          # Gen6+ FEC counters; None otherwise
     unc_decode = [nm for _, nm, _ in
                   aer.ErrorReading(0, unc_bits_seen | idle_unc, source).uncorrectable]
     return BertResult(bdf, elapsed, n, cor_total, unc_total, per,
                       out.get("link_speed_code", dev.current_link_speed),
                       out.get("link_width", dev.current_link_width), verdict,
                       stuck=idle_fault, uncorrectable_decode=unc_decode,
-                      aer_source=source, note=note)
+                      aer_source=source, note=note,
+                      pre_fec_symbol_errors=fec.pre_fec_symbol_errors if fec else None,
+                      post_fec_flit_errors=fec.post_fec_flit_errors if fec else None,
+                      fber_estimate=fec.fber_estimate if fec else None,
+                      burst_length_histogram=fec.burst_length_histogram if fec else None)
 
 
 def run_many(backend: Backend, bdfs: list[str], **kw) -> list[BertResult]:

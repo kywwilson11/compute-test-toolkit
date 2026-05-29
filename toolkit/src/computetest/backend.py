@@ -150,6 +150,21 @@ class PciDevice:
         }
 
 
+@dataclass
+class FecStats:
+    """PCIe 6.0+ FEC counters read from a Gen6-aware backend.
+
+    Returned by ``Backend.read_fec_stats`` on links where the vendor exposes
+    per-symbol / per-FLIT counters via implementation-specific registers (none
+    are in the PCIe base spec). ``None`` from ``read_fec_stats`` means either
+    the link is Gen5-or-earlier or the backend can't reach the counters.
+    """
+    pre_fec_symbol_errors: int          # PAM-4 symbol errors BEFORE FEC correction
+    post_fec_flit_errors: int           # FLIT errors AFTER FEC correction
+    fber_estimate: float                # post-FEC FLIT BER estimate
+    burst_length_histogram: dict[int, int]   # symbols -> count of bursts of that length
+
+
 class Backend(abc.ABC):
     """Abstract hardware access. Higher layers depend only on this."""
 
@@ -207,6 +222,17 @@ class Backend(abc.ABC):
         Determines which link a BDF's AER reports and which ports own a link's downgrade
         state. Base default: endpoint."""
         return PORT_ENDPOINT
+
+    def read_fec_stats(self, bdf: str, elapsed_s: float) -> FecStats | None:
+        """Return PCIe 6.0+ FEC counters for the link at ``bdf`` accrued over
+        the last ``elapsed_s`` seconds, or ``None`` if unavailable.
+
+        Always ``None`` for Gen1-5 links (FEC isn't in the spec). On Gen6+, the
+        underlying registers are vendor-specific (Synopsys/Cadence/Marvell each
+        have their own counter set), so a base-class default returns ``None``;
+        a vendor-specific backend overrides this to surface the real counters.
+        """
+        return None
 
     def is_mock(self) -> bool:
         return isinstance(self, MockBackend)
@@ -396,6 +422,12 @@ class MockDevice:
     inject_stuck_cor: int = 0    # correctable bit mask that's ALWAYS set, even at idle (a fault)
     inject_retrains_per_sec: float = 0.0   # >0 = link keeps re-entering Recovery
     inject_downtrain_per_sec: float = 0.0  # >0 = link transiently downgrades speed under load
+    # Gen6+ FEC injection: PAM-4 raw symbol error rate (per-symbol probability) and
+    # the rate at which FEC FAILS to correct (post-FEC FLIT error rate). Together
+    # they model the two reliability signals a Gen6 BERT actually measures. Both
+    # ignored on Gen<=5 devices since FEC isn't part of the spec there.
+    injected_pre_fec_symbol_rate: float = 0.0   # per-symbol probability (~1e-6 typical)
+    injected_post_fec_flit_rate: float = 0.0    # per-FLIT probability (~1e-6 FBER target)
     has_pcie_cap: bool = True    # False simulates a (legacy) device with no PCIe capability
     parent: str | None = None    # BDF of the upstream port (for chain/topology modeling)
     port_type: int = PORT_ENDPOINT  # PCIe Device/Port Type (root/switch-up/switch-down/endpoint)
@@ -451,12 +483,14 @@ class MockBackend(Backend):
 
     @staticmethod
     def sample_board() -> list[MockDevice]:
-        """A representative compute board: 2 Gen5 GPUs, 2 Gen4 NVMe, a custom card.
+        """A representative compute board: 2 Gen5 GPUs, 2 Gen4 NVMe, a custom card,
+        and one forward-looking Gen6 accelerator.
 
         Mirrors the Zoox compute-platform shape: SoCs/GPUs are Gen5 (32 GT/s), NVMe
         SSDs commonly stay at Gen4 (16 GT/s) since few consumer NVMe parts hit Gen5
         train rate today. The custom card is intentionally Gen3 x8 to exercise the
-        degrade/downtrain path on a Gen4-capable slot."""
+        degrade/downtrain path on a Gen4-capable slot. The Gen6 accelerator
+        exercises the FEC-aware reporting path (pre/post-FEC counters)."""
         return [
             MockDevice("0000:03:00.0", 0x10DE, 0x2204, 0x030000, 5, 16, 5, 16, "nvidia"),
             MockDevice("0000:04:00.0", 0x10DE, 0x2204, 0x030000, 5, 16, 5, 16, "nvidia",
@@ -464,6 +498,12 @@ class MockBackend(Backend):
             MockDevice("0000:05:00.0", 0x144D, 0xA80A, 0x010802, 4, 4, 4, 4, "nvme"),
             MockDevice("0000:06:00.0", 0x144D, 0xA80A, 0x010802, 4, 4, 4, 4, "nvme"),
             MockDevice("0000:07:00.0", 0x1B36, 0x0010, 0x088000, 3, 8, 4, 8, "zoox_custom"),
+            # Gen6 x8 forward-looking accelerator (an HBM-fronted GPU, class 0x030000
+            # so existing GPU-class expectations match it): pre-FEC ~1e-6 (typical
+            # PAM-4), post-FEC ~1e-12 (well below the 1e-6 FBER target — healthy link).
+            MockDevice("0000:08:00.0", 0x10DE, 0x2330, 0x030000, 6, 8, 6, 8,
+                       "nvidia", injected_pre_fec_symbol_rate=1e-6,
+                       injected_post_fec_flit_rate=1e-12),
         ]
 
     def _dev(self, bdf: str) -> MockDevice:
@@ -581,6 +621,44 @@ class MockBackend(Backend):
 
     def read_port_type(self, bdf: str) -> int:
         return self._dev(bdf).port_type
+
+    def read_fec_stats(self, bdf: str, elapsed_s: float) -> FecStats | None:
+        """Mock Gen6 FEC counters: deterministic Poisson means from the device's
+        injected pre/post-FEC rates and the link's symbol/FLIT throughput.
+
+        Returns ``None`` for Gen1-5 devices (FEC is not in those specs).
+        """
+        d = self._dev(bdf)
+        if d.link_speed < 6 or elapsed_s <= 0:
+            return None
+        # Each lane carries 64 Gb/s @ Gen6 = 32 Gsymbol/s (PAM-4, 2 bits/symbol).
+        symbols = 32e9 * d.link_width * elapsed_s
+        # A FLIT is 256 B = 2048 b. The link transports symbols / FLIT_bits/2 FLITs.
+        flits = symbols / (2048 / 2)
+        with self._lock:
+            pre_lam = symbols * d.injected_pre_fec_symbol_rate
+            post_lam = flits * d.injected_post_fec_flit_rate
+            pre = _poisson(self._rng, pre_lam)
+            post = _poisson(self._rng, post_lam)
+            # Burst-length histogram: bursts of length 1 dominate; longer bursts decay
+            # geometrically. This is a model — real silicon would surface a vendor
+            # burst counter. Buckets [1,2,3,4,5,...,>=8] symbols.
+            buckets = [1, 2, 3, 4, 5, 6, 7, 8]
+            hist: dict[int, int] = {}
+            remaining = pre
+            for b in buckets:
+                share = (0.6 if b == 1 else 0.25 if b == 2 else 0.10 if b == 3 else
+                          0.04 if b == 4 else 0.008 if b == 5 else 0.002)
+                hist[b] = int(round(remaining * share))
+            # Anything left over goes to the >=8 bucket.
+            counted = sum(hist.values())
+            if pre > counted:
+                hist[8] = hist.get(8, 0) + (pre - counted)
+            fber = post / flits if flits > 0 else 0.0
+            return FecStats(pre_fec_symbol_errors=pre,
+                             post_fec_flit_errors=post,
+                             fber_estimate=fber,
+                             burst_length_histogram=hist)
 
     # Test helpers (not part of the Backend interface) --------------------------
     def true_error_count(self, bdf: str) -> int:
