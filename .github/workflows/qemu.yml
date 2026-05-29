@@ -107,17 +107,13 @@ jobs:
       - name: Boot guest
         working-directory: toolkit/sim/qemu
         run: ./run_guest.sh start
-      # Phase 2 (AER injection) is best-effort on the x86_64/TCG runner: even with
-      # pci=noaer in the guest kernel cmdline (which IS verified in /proc/cmdline) and
-      # `pcieport` unbound from the root port, QEMU's HMP `pcie_aer_inject_error` echoes
-      # "OK" but the device's AER Correctable Error Status register stays at 0 -- a
-      # deeper QEMU-TCG-vs-HVF difference in how injected errors latch (aarch64/HVF
-      # latches them; x86/TCG doesn't, despite the same QEMU version and topology).
-      # Until reproduced on a real x86 box, Phase 2 stays continue-on-error here; the
-      # aarch64/HVF local proof remains the binding signal for Phase 2.
+      # Phase 2 was non-gating on x86_64/TCG until QEMU 9.2 unblocked it: noble's
+      # apt-installed 8.2.2 had a broken `pcie_aer_inject_error` on the TCG x86 root
+      # port (echoed OK but never wrote the AER Correctable Error Status register).
+      # We now source-build 9.2 above, and aer_test.sh tolerates +/-1 at the
+      # inject/poll boundary (the documented W1C bit-counting race). Blocking.
       - name: Phase 2 — inject AER + assert
         working-directory: toolkit/sim/qemu
-        continue-on-error: true
         run: ./aer_test.sh 40
       # Phase 3 (nvme-loop / vcan / real virtio NIC) passes 8/8 on x86_64/TCG -- it
       # doesn't depend on QEMU AER injection, just real kernel virtual devices + the

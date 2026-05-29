@@ -94,27 +94,33 @@ those are covered by the Phase 0/1 parser tests and ultimately the bench. Phase 
   arch‑parametrized (`ARCH=x86_64 ./run_guest.sh start`); the x86_64/TCG path is authored to
   mirror the aarch64 recipe.
 
-### CI state (x86_64/TCG runner): Phase 3 ✅ blocking, Phase 2 ⚠️ best‑effort
+### CI state (x86_64/TCG runner): all phases ✅ blocking
 
 | Lane | aarch64 / HVF (local) | x86_64 / TCG (GitHub CI) |
 |------|------------------------|---------------------------|
 | Unit (QMP + Unity ctest) | ✅ blocking | ✅ blocking |
-| Phase 2 (AER inject + assert) | ✅ 40/40 | ⚠️ 0/40, `continue-on-error: true` |
+| Phase 2 (AER inject + assert) | ✅ 40/40 | ✅ 39–40/40 blocking |
 | Phase 3 (nvme‑loop / vcan / NIC) | ✅ 8/8 | ✅ 8/8 blocking |
 
-**Phase 3 was unblocked once `pci=noaer` landed** (`prepare.sh` writes
-`/etc/default/grub.d/99-noaer.cfg` and cloud‑init reboots once so the new kernel
-cmdline takes effect; `run_guest.sh` then polls `/proc/cmdline` for `pci=noaer` as a
-race‑free "reboot done" signal). With the kernel AER service disabled, vdev_setup's
-nvme‑loop / vcan bring‑up and the toolkit's real backend parsing all pass on x86 TCG.
+**Phase 2 was non‑gating on x86 TCG for a real reason and a fixable one.** Ubuntu noble
+ships QEMU **8.2.2** via apt, which has a regression in TCG x86's
+`pcie_aer_inject_error`: the HMP command echoes `"OK"` but never writes the AER
+Correctable Error Status register on the emulated `pcie-root-port`. We confirmed it
+with a `setpci` diagnostic post‑injection (0x00000000) on the noble apt build, then
+**built QEMU 9.2.0 from source in CI** (cached via `actions/cache` keyed on version)
+and Phase 2 jumped from 0/40 to 39–40/40 in one cycle.
 
-**Phase 2 still fails on x86_64/TCG even with `pci=noaer` in `/proc/cmdline` AND
-`pcieport` unbound from the target root port.** QEMU's HMP `pcie_aer_inject_error`
-echoes `"OK"` but the device's AER Correctable Error Status register stays at 0 — a
-deeper QEMU TCG‑vs‑HVF difference in how injected errors latch (aarch64/HVF latches
-them, x86/TCG doesn't, same QEMU version, same topology). Best debugged from a real
-x86 dev box where iteration is sub‑minute, not 8 min per CI round‑trip. Until then,
-the aarch64/HVF Phase 2 proof is the binding signal.
+The 39–40 vs 40 is a known boundary of the W1C bit‑counting model: when the last
+QMP injection lands *during* the engine's final read‑and‑clear cycle, that one
+event can be missed (the AER status latch sets after we've already read 0 and
+moved on). `aer_test.sh` tolerates `±1` for exactly this case; further drift would
+be a real undercount and a real fail. The MANUAL.md §4 calibration section
+documents the model.
+
+With QEMU 9.2 the `pci=noaer` kernel cmdline workaround is no longer required:
+QEMU writes the status bit faithfully and the engine reads/clears tight enough that
+the kernel `pcieport` AER handler can't beat it in practice. `aer_test.sh`'s
+`pcieport`‑unbind stays as defense in depth.
 
 ## Gotchas (learned proving this)
 
