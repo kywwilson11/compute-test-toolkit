@@ -20,9 +20,15 @@ Files committed here (created on the first workflow run):
 |------|------|
 | `nvme-version.txt` | `nvme --version` from the runner's apt-latest |
 | `ethtool-version.txt` | `ethtool --version` from the runner's apt-latest |
-| `nvme-smart-log-keys.txt` | sorted top-level key list of `nvme smart-log -o json` |
-| `nvme-id-ctrl-keys.txt` | sorted top-level key list of `nvme id-ctrl -o json` |
-| `ethtool-stat-keys.txt` | sorted counter names from `ethtool -S <iface>` |
+| `ethtool-stat-keys.txt` | sorted counter names from `ethtool -S <iface>` against the runner's real NIC |
+
+Why no `nvme-smart-log-keys.txt`: capturing nvme-cli's JSON schema would need an
+nvme device, which on the GHA runner means `nvme-loop` -- and that depends on a
+kernel + linux-modules-extra version match the public runner image doesn't reliably
+satisfy. The `nvme --version` line is the actionable drift trigger by itself: when
+nvme-cli ships a new major version, a human captures fresh value corpus from a real
+station (`nvme smart-log /dev/nvmeX -o json > corpus/nvme/<ver>/<model>/smart-log.json`)
+and updates `tests/test_parsers_corpus.py` if the new schema needs an alias.
 
 **What a drift PR means.** A diff to a `*-keys.txt` file means the tool's output
 shape changed — usually a new counter or a renamed SMART key (e.g. nvme-cli's

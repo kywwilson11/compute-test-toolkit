@@ -6,18 +6,21 @@
 # part); the SHAPE is, which is what schema-drift detection needs.
 #
 # What it commits to `corpus/_drift/`:
-#   nvme-version.txt           `nvme --version` (the CLI version we captured against)
+#   nvme-version.txt           `nvme --version` (the apt-latest nvme-cli on the runner)
 #   ethtool-version.txt        `ethtool --version`
-#   nvme-smart-log-keys.txt    sorted top-level key list of `nvme smart-log -o json`
-#   nvme-id-ctrl-keys.txt      sorted top-level key list of `nvme id-ctrl -o json`
-#   ethtool-stat-keys.txt      sorted counter names from `ethtool -S <iface>`
+#   ethtool-stat-keys.txt      sorted counter names from `ethtool -S <iface>` against
+#                              the runner's real NIC (a real kernel netdev, real
+#                              ethtool driver path -- valid schema signature even
+#                              though the values aren't manufacturing-test data)
 #
-# Why key-lists, not full captures: the human-curated value corpus at
-# `corpus/nvme/<ver>/<model>/...` and `corpus/ethtool/<ver>/<model>/...` should ONLY
-# change when a real engineer captures from a real device. The drift signal we want
-# automated is "the tool's output shape changed" -- that's exactly the sorted key list.
-# A diff in `_drift/` flags a schema shift; a human then decides whether to recapture
-# the value corpus from a real station and update `tests/test_parsers_corpus.py`.
+# Why these three and not nvme JSON-key captures: capturing nvme-cli's JSON schema
+# would need nvme-loop set up on the runner, which depends on a kernel + modules-extra
+# version match the GHA `ubuntu-latest` runner doesn't always satisfy
+# (`ln /sys/kernel/config/nvmet/ports/1/subsystems/<NQN>` returned EINVAL in initial
+# testing). The version line is sufficient as the drift trigger: when nvme-cli ships
+# a new major version, a human follows up on real silicon with `nvme smart-log
+# /dev/nvmeX -o json > corpus/nvme/<ver>/<model>/smart-log.json` and updates
+# `tests/test_parsers_corpus.py` if the new schema needs a normalization alias.
 #
 # Runs weekly on Monday at 09:00 UTC + manual dispatch. Opens a PR on diff;
 # uses the default GITHUB_TOKEN with pull-requests:write.
@@ -43,44 +46,26 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install latest nvme-cli, ethtool, and kernel-modules-extra
+      - name: Install latest nvme-cli + ethtool
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y -qq nvme-cli ethtool "linux-modules-extra-$(uname -r)"
+          sudo apt-get install -y -qq nvme-cli ethtool
 
-      - name: Set up nvme-loop and capture nvme outputs
+      - name: Capture nvme-cli / ethtool versions
         run: |
           set -e
-          sudo modprobe nvmet nvme_loop nvme_fabrics
-          sudo mountpoint -q /sys/kernel/config || sudo mount -t configfs none /sys/kernel/config
-          NQN=corpus-refresh-loop
-          CFG=/sys/kernel/config/nvmet
-          sudo truncate -s 64M /tmp/nvmet-backing.img
-          sudo mkdir -p "$CFG/subsystems/$NQN/namespaces/1" "$CFG/ports/1"
-          echo 1 | sudo tee "$CFG/subsystems/$NQN/attr_allow_any_host" >/dev/null
-          echo -n /tmp/nvmet-backing.img | sudo tee "$CFG/subsystems/$NQN/namespaces/1/device_path" >/dev/null
-          echo 1 | sudo tee "$CFG/subsystems/$NQN/namespaces/1/enable" >/dev/null
-          echo loop | sudo tee "$CFG/ports/1/addr_trtype" >/dev/null
-          sudo ln -sf "$CFG/subsystems/$NQN" "$CFG/ports/1/subsystems/$NQN"
-          sudo nvme connect -t loop -n "$NQN"
-          # The loop controller may be /dev/nvme0 OR a higher index depending on the
-          # runner image; find the one whose Model is "Linux" (= the nvmet target).
-          NVME_DEV=""
-          for d in /sys/class/nvme/nvme*; do
-              if grep -q "Linux" "$d/model" 2>/dev/null; then
-                  NVME_DEV="/dev/$(basename "$d")"; break
-              fi
-          done
-          [ -n "$NVME_DEV" ] || { echo "nvme-loop controller not found"; exit 1; }
           mkdir -p corpus/_drift
-          sudo nvme --version           >  corpus/_drift/nvme-version.txt
-          # Sorted top-level keys -- the schema signature. A new key (or a removed
-          # one) is the drift signal; values don't appear.
-          sudo nvme smart-log "$NVME_DEV" -o json | python3 -c 'import json,sys; [print(k) for k in sorted(json.load(sys.stdin))]' > corpus/_drift/nvme-smart-log-keys.txt
-          sudo nvme id-ctrl   "$NVME_DEV" -o json | python3 -c 'import json,sys; [print(k) for k in sorted(json.load(sys.stdin))]' > corpus/_drift/nvme-id-ctrl-keys.txt
-          sudo nvme disconnect -n "$NQN" || true
+          # Versions are the cheap, always-works drift trigger: when nvme-cli or
+          # ethtool ship a major version, schemas often change and a human should
+          # capture fresh value corpus from a real station. The actual JSON-key
+          # schema capture would need nvme-loop on the runner -- which is gated by
+          # a kernel/modules-extra version match the GHA runner doesn't always
+          # satisfy. The version line is sufficient as the trigger; the human
+          # follows up with `nvme smart-log /dev/nvmeX -o json` on real silicon.
+          nvme --version    > corpus/_drift/nvme-version.txt
+          ethtool --version > corpus/_drift/ethtool-version.txt
 
-      - name: Capture ethtool outputs against the runner's primary NIC
+      - name: Capture ethtool -S counter schema against the runner's primary NIC
         run: |
           set -e
           # Default-route iface -- the runner's actual outbound NIC. Real kernel
@@ -88,7 +73,6 @@ jobs:
           # the runner is virtualized.
           NIC="$(ip -o -4 route get 1.1.1.1 | sed -n 's/.* dev \([^ ]*\).*/\1/p' | head -1)"
           [ -n "$NIC" ] || { echo "no default-route NIC"; exit 1; }
-          ethtool --version > corpus/_drift/ethtool-version.txt
           # Sorted counter names from `ethtool -S`. The lines look like "    rx_errors: 0";
           # the schema is the set of names, not the values.
           sudo ethtool -S "$NIC" \
