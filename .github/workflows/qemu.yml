@@ -54,6 +54,8 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y qemu-system-x86 qemu-utils ovmf cloud-image-utils
+          echo "==> qemu-system-x86_64 version (apt-noble baseline):"
+          qemu-system-x86_64 --version
       - name: Boot guest
         working-directory: toolkit/sim/qemu
         run: ./run_guest.sh start
