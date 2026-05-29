@@ -21,7 +21,7 @@ import sqlite3
 import sys
 from typing import Any
 
-from . import ber, diagnostics, ethernet, gmsl, gpu, nvme
+from . import ber, diagnostics, ethernet, gmsl, gpu, lmt_adapter, margining, nvme
 from .backend import select_backend
 from .bert import run_bert
 from .harness import run_test_plan
@@ -92,6 +92,20 @@ def _emit_ocp(args, kind: str, result, **kw) -> None:
                 em.measurement(name=k, value=v)
         em.diagnosis(verdict="ber.math.pass", type_="PASS")
         em.step_end("pass", step_id=sid)
+    elif kind == "lmt":
+        bdf = result[0].bdf if result else "?"
+        sid = em.step_start(f"pcie.lmt {bdf}")
+        # One measurement per record-field per lane-row keeps the lmt schema
+        # surfaceable via ocp-diag's measurement API.
+        for r in result:
+            for col, val in r.__dict__.items():
+                if isinstance(val, (bool, int, float, str)):
+                    em.measurement(
+                        name=f"lmt.{r.margin_type.lower()}.lane{r.lane}.{col}",
+                        value=val)
+        em.diagnosis(verdict="pcie.lmt.pass" if result else "pcie.lmt.skip",
+                     type_="PASS" if result else "UNKNOWN")
+        em.step_end("pass" if result else "skip", step_id=sid)
 
 
 def _verdict_exit(status: str) -> int:
@@ -175,6 +189,25 @@ def _build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--confidence", type=float, default=0.95)
     sp.add_argument("--errors", type=int, default=0)
     sp.add_argument("--bits", type=float, default=None)
+
+    sp = sub.add_parser("lmt", parents=[common],
+                        help="PCIe Lane Margining (pci_lmt-compatible output)")
+    sp.add_argument("-d", "--bdf", required=True)
+    sp.add_argument("--limit-ui", type=float, default=margining.DEFAULT_MIN_TIMING_UI,
+                    help="per-lane minimum timing margin (UI); default 0.25")
+    sp.add_argument("--error-count-limit", type=int,
+                    default=lmt_adapter.DEFAULT_ERROR_COUNT_LIMIT,
+                    help="OCP pci_lmt -e: stop a lane at this many errors (default 63)")
+    sp.add_argument("--dwell-time", type=int,
+                    default=lmt_adapter.DEFAULT_DWELL_TIME_S,
+                    help="OCP pci_lmt -d: seconds per margining step (default 5)")
+    sp.add_argument("--receiver-number", type=int, default=1,
+                    help="PCIe LMT receiver number (1..6); default 1")
+    sp.add_argument("--format", choices=["json", "csv"], default="json",
+                    help="pci_lmt -o: output format (default json)")
+    sp.add_argument("--via-pci-lmt", metavar="CONFIG", default=None,
+                    help="shell out to the OCP pci_lmt binary with this YAML config "
+                         "(requires `pip install ocptv-pci_lmt`)")
     return p
 
 
@@ -251,6 +284,34 @@ def _run(args) -> int:
         _emit(h.summary(), h.to_dict(), args.json, sink=sink)
         _emit_ocp(args, "health", h, label=args.cmd)
         return EXIT_PASS if h.ok else EXIT_FAIL
+
+    if args.cmd == "lmt":
+        # Drop-in to the OCP reference if the user pointed us at a YAML config.
+        if args.via_pci_lmt:
+            payload = lmt_adapter.call_pci_lmt(
+                args.via_pci_lmt, output_format=args.format,
+                error_count_limit=args.error_count_limit,
+                dwell_time_s=args.dwell_time)
+            print(payload, end="" if payload.endswith("\n") else "\n", file=sink)
+            return EXIT_PASS                                # the reference tool owns the verdict
+        # Native margining path: re-emit in the pci_lmt schema.
+        result = margining.margin_link(backend, args.bdf, limit_ui=args.limit_ui)
+        records = lmt_adapter.from_margin_result(
+            result, backend=backend, receiver_number=args.receiver_number,
+            error_count_limit=args.error_count_limit)
+        # --json forces JSON over the user's chosen --format (json is the pipe-friendly
+        # default and the only sensible choice for piping into `jq`). The lmt records
+        # are their own schema, not the toolkit's human/JSON shape, so we bypass
+        # ``_emit``'s human/json dichotomy and write the payload directly.
+        fmt = "json" if args.json else args.format
+        payload = (lmt_adapter.to_csv if fmt == "csv"
+                   else lmt_adapter.to_json)(records)
+        print(payload, end="" if payload.endswith("\n") else "\n", file=sink)
+        _emit_ocp(args, "lmt", records)
+        # Same verdict semantics as `diagnose`: unavailable -> skip, else margining.ok.
+        if not result.available:
+            return EXIT_UNAVAIL
+        return EXIT_PASS if result.ok else EXIT_FAIL
 
     if args.cmd == "plan":
         plan = _load_plan(args.config)
