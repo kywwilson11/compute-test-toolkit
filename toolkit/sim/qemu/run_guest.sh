@@ -64,31 +64,9 @@ start() {
     }
     wait_ssh "initial boot"
 
-    # Block until cloud-init has finished so the toolchain (gcc, pciutils) is present
-    # AND so it has written /etc/default/grub.d/99-noaer.cfg + run update-grub. The
-    # `power_state: reboot` directive then triggers a reboot; SSH drops; we re-wait.
-    echo "==> waiting for cloud-init to finish (installing packages, configuring grub)"
+    # Block until cloud-init has finished so the toolchain (gcc, pciutils) is present.
+    echo "==> waiting for cloud-init to finish (installing packages)"
     "${SSH[@]}" "sudo cloud-init status --wait" || true
-
-    # Cloud-init writes /etc/default/grub.d/99-noaer.cfg then triggers a reboot so the
-    # new kernel cmdline takes effect. Use /proc/cmdline as a reliable "done" signal:
-    # while pci=noaer is NOT in /proc/cmdline, we're either pre-reboot or mid-reboot --
-    # poll SSH + cmdline. Once it shows up, the post-reboot kernel is the live one.
-    # (No-op on subsequent boots: cloud-init only runs once per instance-id, and the
-    # already-rebooted kernel keeps pci=noaer.)
-    echo -n "==> waiting for pci=noaer in /proc/cmdline (post-cloud-init reboot) "
-    for _ in $(seq 1 "${BOOT_TRIES:-90}"); do
-        if "${SSH[@]}" "grep -q pci=noaer /proc/cmdline" 2>/dev/null; then
-            echo " ok"
-            break
-        fi
-        echo -n .; sleep 2
-    done
-    if ! "${SSH[@]}" "grep -q pci=noaer /proc/cmdline" 2>/dev/null; then
-        # Don't fail: an older `.work/` without the cloud-init noaer fragment is still
-        # usable for everything except the x86 TCG AER race. Just warn.
-        echo; echo "==> WARNING: pci=noaer NOT in /proc/cmdline; AER race may bite on TCG" >&2
-    fi
     echo "==> guest ready (pid $(guest_pid)); QMP at $QMP_ADDR, target $TARGET_BDF (id $ROOT_PORT_ID)"
 }
 

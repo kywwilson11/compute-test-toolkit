@@ -51,25 +51,13 @@ users:
       - $PUBKEY
 package_update: true
 packages: [gcc, make, libc6-dev, pciutils, nvme-cli, ethtool]
-# Write a grub fragment that disables the kernel AER service ON BOOT (\`pci=noaer\`)
-# so QMP-injected AER status bits stay latched in the W1C register until our engine
-# polls them. Without this, the kernel's pcieport AER IRQ handler clears the bits
-# immediately on injection (visible on x86 TCG; aarch64 won the race by chance), so
-# the engine sees 0 errors despite 40 successful injections.
-write_files:
-  - path: /etc/default/grub.d/99-noaer.cfg
-    permissions: '0644'
-    content: |
-      GRUB_CMDLINE_LINUX_DEFAULT="\$GRUB_CMDLINE_LINUX_DEFAULT pci=noaer"
-runcmd:
-  - update-grub
-# Reboot once after first-boot cloud-init so the new kernel cmdline takes effect.
-# Cloud-init only runs once per instance-id (zoox-phase2-01), so subsequent boots
-# do NOT trigger another reboot.
-power_state:
-  mode: reboot
-  condition: True
-  message: "rebooting so pci=noaer takes effect"
+# (Earlier versions wrote a grub fragment with \`pci=noaer\` and rebooted via
+# cloud-init \`power_state\`. That was a workaround for QEMU 8.2's broken x86 TCG
+# \`pcie_aer_inject_error\` -- the kernel's pcieport AER handler clearing the W1C
+# bits was a follow-on symptom, not the root cause. QEMU 9.2's TCG actually
+# writes the AER Correctable Error Status register, and our engine reads it
+# faster than the kernel clears it in practice. No more reboot; boot is single-
+# stage; aer_test.sh's pcieport-unbind is sufficient defense-in-depth.)
 EOF
     # Build the ISO with whatever's available: cloud-localds / xorriso / genisoimage on
     # Linux, hdiutil on macOS. The volume label MUST be CIDATA for the NoCloud datasource.
