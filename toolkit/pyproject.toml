@@ -23,6 +23,11 @@ computetest = "computetest.cli:main"
 [tool.setuptools.packages.find]
 where = ["src"]
 
+# Vendored OCP ocp-diag-core v2.0 JSON Schemas — shipped with the package so the
+# in-process validator (computetest/io/ocpdiag.py users + tests) works offline.
+[tool.setuptools.package-data]
+computetest = ["io/ocpdiag_schemas/*.json"]
+
 [tool.pytest.ini_options]
 pythonpath = ["src"]
 testpaths = ["tests"]

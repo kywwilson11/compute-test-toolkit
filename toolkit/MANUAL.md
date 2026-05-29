@@ -487,6 +487,27 @@ computetest ber    --target-ber ... # pure BER math, no hardware (planning tool)
 All commands accept `--json` for machine output and `--backend mock|real` to force the
 backend. See `USAGE.md` for every flag.
 
+### OCP ocp-diag-core JSONL output
+
+Add `--ocpdiag PATH` (after the subcommand) to emit a portable
+[OCP ocp-diag-core](https://github.com/opencomputeproject/ocp-diag-core) JSONL stream
+alongside the human/`--json` output. Pass `-` to write the stream to stdout (in
+which case the human output is rerouted to stderr so the stream stays pipeable).
+Tag the DUT with `--ocpdiag-serial` and `--ocpdiag-station` for the
+`testRunStart.dutInfo`. Example:
+
+```bash
+computetest bert -d 0000:03:00.0 --target-ber 1e-12 \
+    --ocpdiag - --ocpdiag-serial SN-1234 | jq .
+```
+
+The stream is one JSON object per line: `schemaVersion`, then `testRunStart`,
+then per-step `testStepStart` / `measurement` / `diagnosis` / `testStepEnd`,
+then `testRunEnd`. Every measurement value is a scalar (string/bool/number);
+BERT's `ber_upper_bound` carries a `LESS_THAN_OR_EQUAL` validator against
+`--target-ber`. The emitter lives in `computetest/io/ocpdiag.py`; the schema
+spec it tracks is OCP v2.0.
+
 ---
 
 *Last revised: this manual tracks the audit-2/audit-3 round (Gen5 first-class, the

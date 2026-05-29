@@ -25,6 +25,7 @@ from . import ber, diagnostics, ethernet, gmsl, gpu, nvme
 from .backend import select_backend
 from .bert import run_bert
 from .harness import run_test_plan
+from .io import ocpdiag
 from .results import ResultStore
 
 EXIT_PASS, EXIT_FAIL, EXIT_USAGE, EXIT_NOTFOUND, EXIT_IO, EXIT_UNAVAIL = 0, 1, 2, 3, 4, 5
@@ -41,9 +42,56 @@ examples:
 """
 
 
-def _emit(human: str, obj, as_json: bool) -> None:
-    """Human text to stdout, OR (with --json) only the JSON object to stdout."""
-    print(json.dumps(obj, indent=2, default=str) if as_json else human)
+def _emit(human: str, obj, as_json: bool, *, sink=None) -> None:
+    """Human text to ``sink`` (default stdout), OR (with --json) only the JSON object.
+
+    ``sink`` is parameterized so ``--ocpdiag -`` can route the ocp-diag JSONL
+    stream to stdout while the human output goes to stderr — keeping stdout pure
+    for downstream OCP consumers.
+    """
+    print(json.dumps(obj, indent=2, default=str) if as_json else human,
+          file=sink or sys.stdout)
+
+
+def _emit_ocp(args, kind: str, result, **kw) -> None:
+    """Dispatch a command's result(s) to the right ocp-diag-core adapter.
+
+    No-op when ``--ocpdiag`` was not passed (``args._ocp`` is None). The status
+    of the run is decided in ``main`` from the final exit code, not here.
+    """
+    em = getattr(args, "_ocp", None)
+    if em is None:
+        return
+    if kind == "bert":
+        ocpdiag.emit_bert(em, result, target_ber=kw.get("target_ber"))
+    elif kind == "diagnose":
+        for d in result:
+            ocpdiag.emit_pcie_diagnostic(em, d)
+    elif kind == "chain":
+        ocpdiag.emit_chain(em, result)
+    elif kind == "health":
+        ocpdiag.emit_health(em, result, label=kw["label"])
+    elif kind == "plan":
+        for r in result:
+            ocpdiag.emit_test_record(em, r)
+    elif kind == "list":
+        sid = em.step_start("pcie.list")
+        for d in result:
+            em.measurement(name=f"device.{d.bdf}.speed_gen",
+                           value=d.current_link_speed, unit="gen")
+            em.measurement(name=f"device.{d.bdf}.width",
+                           value=d.current_link_width, unit="lane")
+            em.measurement(name=f"device.{d.bdf}.vendor",
+                           value=d.vendor_name)
+        em.diagnosis(verdict="pcie.list.pass", type_="PASS")
+        em.step_end("pass", step_id=sid)
+    elif kind == "ber":
+        sid = em.step_start("ber.math")
+        for k, v in result.items():
+            if isinstance(v, (bool, int, float, str)):
+                em.measurement(name=k, value=v)
+        em.diagnosis(verdict="ber.math.pass", type_="PASS")
+        em.step_end("pass", step_id=sid)
 
 
 def _verdict_exit(status: str) -> int:
@@ -72,6 +120,13 @@ def _build_parser() -> argparse.ArgumentParser:
     common.add_argument("--json", action="store_true", help="emit JSON to stdout (pipeable)")
     common.add_argument("--backend", choices=["auto", "mock", "real"], default="auto",
                         help="force the hardware backend (default: auto)")
+    common.add_argument("--ocpdiag", metavar="PATH", default=None,
+                        help="also emit OCP ocp-diag-core JSONL to PATH ('-' for stdout, "
+                             "in which case human output goes to stderr)")
+    common.add_argument("--ocpdiag-serial", metavar="DUT", default="UNKNOWN",
+                        help="DUT serial for the ocp-diag testRunStart.dutInfo")
+    common.add_argument("--ocpdiag-station", metavar="STATION", default="station-1",
+                        help="test station name for the ocp-diag testRunStart.dutInfo")
 
     p = argparse.ArgumentParser(prog="computetest", parents=[common],
                                 description=__doc__, epilog=_EXAMPLES,
@@ -124,6 +179,8 @@ def _build_parser() -> argparse.ArgumentParser:
 
 
 def _run(args) -> int:
+    sink = getattr(args, "_human", sys.stdout)
+
     # 'ber' is pure math — no backend needed.
     if args.cmd == "ber":
         if args.bits is None:
@@ -136,7 +193,8 @@ def _run(args) -> int:
         else:
             v = ber.assess(args.errors, args.bits, args.target_ber, args.confidence)
             human, obj = v.summary(), vars(v)
-        _emit(human, obj, args.json)
+        _emit(human, obj, args.json, sink=sink)
+        _emit_ocp(args, "ber", obj)
         return EXIT_PASS
 
     if args.backend != "auto":
@@ -150,14 +208,16 @@ def _run(args) -> int:
         human = "\n".join(
             f"{d.bdf}  {d.vendor_name:18} Gen{d.current_link_speed}x{d.current_link_width}"
             f"  class={d.class_code:#08x} drv={d.driver}" for d in devs)
-        _emit(human, [d.to_dict() for d in devs], args.json)
+        _emit(human, [d.to_dict() for d in devs], args.json, sink=sink)
+        _emit_ocp(args, "list", devs)
         return EXIT_PASS
 
     if args.cmd == "bert":
         r = run_bert(backend, args.bdf, target_ber=args.target_ber,
                      confidence=args.confidence, max_seconds=args.max_seconds,
                      engine=args.engine)
-        _emit(r.summary(), r.to_dict(), args.json)
+        _emit(r.summary(), r.to_dict(), args.json, sink=sink)
+        _emit_ocp(args, "bert", r, target_ber=args.target_ber)
         return _verdict_exit(r.status)
 
     if args.cmd == "diagnose":
@@ -166,7 +226,8 @@ def _run(args) -> int:
             backend, bdfs, do_bert=not args.no_bert, do_margin=not args.no_margin,
             target_ber=args.target_ber, bert_max_s=args.max_seconds)
         human = "\n".join(d.summary() for d in results)
-        _emit(human, [d.to_dict() for d in results], args.json)
+        _emit(human, [d.to_dict() for d in results], args.json, sink=sink)
+        _emit_ocp(args, "diagnose", results)
         return _verdict_exit_any(d.status for d in results)
 
     if args.cmd == "chain":
@@ -174,7 +235,8 @@ def _run(args) -> int:
             backend, args.endpoint, target_ber=args.target_ber, confidence=args.confidence,
             max_seconds=args.max_seconds, expected_speed=args.expected_speed,
             expected_width=args.expected_width)
-        _emit(d.summary(), d.to_dict(), args.json)
+        _emit(d.summary(), d.to_dict(), args.json, sink=sink)
+        _emit_ocp(args, "chain", d)
         return _verdict_exit(d.status)
 
     if args.cmd in ("nvme", "gpu", "gmsl", "eth", "can"):
@@ -186,7 +248,8 @@ def _run(args) -> int:
                   "gmsl": lambda: gmsl.check_gmsl(args.target),
                   "eth": lambda: ethernet.check_ethernet(args.target),
                   "can": lambda: ethernet.check_can(args.target)}[args.cmd]()
-        _emit(h.summary(), h.to_dict(), args.json)
+        _emit(h.summary(), h.to_dict(), args.json, sink=sink)
+        _emit_ocp(args, "health", h, label=args.cmd)
         return EXIT_PASS if h.ok else EXIT_FAIL
 
     if args.cmd == "plan":
@@ -194,7 +257,8 @@ def _run(args) -> int:
         with ResultStore(args.db, dut_serial=args.serial, station=args.station) as store:
             report = run_test_plan(backend, plan, store=store)
             obj = {"report": [vars(r) for r in report.records], "summary": store.summary()}
-        _emit(report.summary(), obj, args.json)
+        _emit(report.summary(), obj, args.json, sink=sink)
+        _emit_ocp(args, "plan", report.records)
         # Consistent with single-command verdicts: a real fail -> 1, an unmeasured/skip
         # record -> 5 (incomplete coverage), else 0. (plan previously returned 0 on skip.)
         return _verdict_exit_any(r.status for r in report.records)
@@ -217,35 +281,104 @@ def _load_plan(path: str) -> dict:
         return json.load(fh)
 
 
+_EXIT_TO_OCP_STATUS = {EXIT_PASS: "pass", EXIT_FAIL: "fail", EXIT_UNAVAIL: "skip"}
+
+
+def _open_ocpdiag(args, argv: list[str] | None):
+    """If ``--ocpdiag`` is set, attach an Emitter and a closeable stream to ``args``.
+
+    Sets:
+      * ``args._human``      — sink for human/--json output (stderr when --ocpdiag -)
+      * ``args._ocp``        — the ocp-diag Emitter (None if --ocpdiag was not passed)
+      * ``args._ocp_stream`` — the underlying stream (sys.stdout or an open file)
+    """
+    args._human = sys.stdout
+    args._ocp = None
+    args._ocp_stream = None
+    if not args.ocpdiag:
+        return
+    if args.ocpdiag == "-":
+        args._human = sys.stderr
+        args._ocp_stream = sys.stdout
+    else:
+        args._ocp_stream = open(args.ocpdiag, "w")
+    # `plan` carries its own --serial/--station for the ResultStore; prefer those
+    # over the ocp-diag-specific defaults so a single source-of-truth wins.
+    dut = getattr(args, "serial", None) or args.ocpdiag_serial
+    station = getattr(args, "station", None) or args.ocpdiag_station
+    cmdline = " ".join(argv) if argv is not None else " ".join(sys.argv)
+    params = {k: v for k, v in vars(args).items() if not k.startswith("_")}
+    args._ocp = ocpdiag.open_run(
+        args._ocp_stream, program_version="0.1.0", command_line=cmdline,
+        parameters=params, dut_serial=dut, station=station)
+
+
+def _close_ocpdiag(args, rc: int) -> None:
+    em = getattr(args, "_ocp", None)
+    if em is None:
+        return
+    status = _EXIT_TO_OCP_STATUS.get(rc, "fail")
+    try:
+        em.run_end(status)
+    finally:
+        stream = args._ocp_stream
+        if stream is not None and stream is not sys.stdout:
+            stream.close()
+
+
 def main(argv: list[str] | None = None) -> int:
     args = _build_parser().parse_args(argv)
+    _open_ocpdiag(args, argv)
+    rc = EXIT_USAGE
     try:
-        return _run(args)
+        rc = _run(args)
+        return rc
     except KeyboardInterrupt:
         # Convention from Bash / autoconf: 128 + SIGINT(2) = 130. Without this, Ctrl-C
         # during a long BERT prints a Python traceback into the station log.
         print("interrupted", file=sys.stderr)
-        return 130
+        rc = 130
+        return rc
     except KeyError as e:
         print(f"error: device/target not found: {e}", file=sys.stderr)
-        return EXIT_NOTFOUND
+        if args._ocp:
+            args._ocp.run_error("device-not-found", str(e))
+        rc = EXIT_NOTFOUND
+        return rc
     except (FileNotFoundError, json.JSONDecodeError) as e:
         print(f"error: config/IO: {e}", file=sys.stderr)
-        return EXIT_IO
+        if args._ocp:
+            args._ocp.run_error("config-io-error", str(e))
+        rc = EXIT_IO
+        return rc
     except sqlite3.Error as e:
         # ResultStore failures (bad --db path, disk full, perms): map to EXIT_IO so
         # the operator console sees the documented exit code, not a Python traceback.
         print(f"error: results DB: {e}", file=sys.stderr)
-        return EXIT_IO
+        if args._ocp:
+            args._ocp.run_error("results-db-error", str(e))
+        rc = EXIT_IO
+        return rc
     except NotImplementedError as e:
         print(f"error: not available on this backend/hardware: {e}", file=sys.stderr)
-        return EXIT_UNAVAIL
+        if args._ocp:
+            args._ocp.run_error("unavailable", str(e))
+        rc = EXIT_UNAVAIL
+        return rc
     except ValueError as e:
         print(f"error: {e}", file=sys.stderr)
-        return EXIT_USAGE
+        if args._ocp:
+            args._ocp.run_error("usage-error", str(e))
+        rc = EXIT_USAGE
+        return rc
     except RuntimeError as e:
         print(f"error: {e}", file=sys.stderr)
-        return EXIT_IO
+        if args._ocp:
+            args._ocp.run_error("runtime-error", str(e))
+        rc = EXIT_IO
+        return rc
+    finally:
+        _close_ocpdiag(args, rc)
 
 
 if __name__ == "__main__":
