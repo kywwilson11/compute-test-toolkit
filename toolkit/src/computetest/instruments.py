@@ -587,3 +587,227 @@ class Scope(SCPIInstrument):
     def measure_frequency(self, channel: int) -> Reading:
         """Frequency on a channel (MEAS:FREQ? CHAN<n>)."""
         return self.measure(channel, "freq")
+
+
+# ----------------------------------------------------------------------------- #
+# Source-Measure Unit (SMU)
+# ----------------------------------------------------------------------------- #
+# What an SMU sources / what it measures back. Used to validate set_source +
+# measure pairs at runtime so e.g. ``smu.measure("VOLT")`` is rejected when the
+# unit is configured to FIMV (force I, measure V) — that mode reads current.
+_SMU_FUNCS = {"VOLT", "CURR"}
+
+
+class SMU(SCPIInstrument):
+    """A four-quadrant source-measure unit (Keysight B2902 family, Keithley 24xx etc.).
+
+    An SMU *sources* one of voltage/current AND *measures* the other (or both)
+    simultaneously to high precision. The two main MT modes:
+
+    * **Force-V / Measure-I (FVMI)** — sweep V across a device, read I (typical
+      diode IV curve, gate-leakage test).
+    * **Force-I / Measure-V (FIMV)** — push a known I, read V drop (cable IR drop
+      check, contact-resistance audit).
+
+    Beyond MT, it's the standard cal-lab gage for power-rail droop and leakage —
+    named ``power_smu`` in ``configs/calibration_registry.example.yaml``.
+
+    SCPI shape (manufacturer-specific in detail; common SCPI 1999 channel-style
+    here is what Keysight B2900-series accepts and what the Mock simulates):
+    ``SOUR:FUNC VOLT|CURR`` to pick the source kind, ``SOUR:VOLT|CURR <v>`` to
+    program it, ``SENS:FUNC "VOLT,CURR"`` to enable both sense readbacks,
+    ``OUTP ON|OFF`` to enable, ``MEAS:VOLT?`` / ``MEAS:CURR?`` to read.
+    """
+
+    def set_source(self, kind: str) -> None:
+        """Configure what the SMU sources: ``VOLT`` or ``CURR``."""
+        key = kind.upper()
+        if key not in _SMU_FUNCS:
+            raise InstrumentError(
+                f"unknown SMU source {kind!r} (expected one of {sorted(_SMU_FUNCS)})")
+        self.write(f"SOUR:FUNC {key}")
+
+    def set_voltage(self, volts: float) -> None:
+        """Program the sourced voltage (``SOUR:VOLT <v>``)."""
+        self.write(f"SOUR:VOLT {volts:g}")
+
+    def set_current(self, amps: float) -> None:
+        """Program the sourced current (``SOUR:CURR <a>``)."""
+        self.write(f"SOUR:CURR {amps:g}")
+
+    def set_compliance(self, value: float, kind: str = "CURR") -> None:
+        """Set the compliance (output limit) on the OTHER channel — the SMU will
+        regulate the source so the measured channel never crosses this. Forces
+        FIMV → ``CURR`` compliance on the V side; FVMI → ``VOLT`` compliance.
+        """
+        key = kind.upper()
+        if key not in _SMU_FUNCS:
+            raise InstrumentError(
+                f"unknown compliance kind {kind!r} (expected one of {sorted(_SMU_FUNCS)})")
+        self.write(f"SENS:{key}:PROT {value:g}")
+
+    def enable(self, on: bool = True) -> None:
+        """Turn the SMU output on or off (``OUTP ON|OFF``)."""
+        self.write(f"OUTP {'ON' if on else 'OFF'}")
+
+    def disable(self) -> None:
+        self.enable(False)
+
+    def measure_voltage(self) -> Reading:
+        """Read the measured voltage (``MEAS:VOLT?``)."""
+        raw = self.query("MEAS:VOLT?")
+        return Reading(parse_scpi_float(raw), "V", raw)
+
+    def measure_current(self) -> Reading:
+        """Read the measured current (``MEAS:CURR?``)."""
+        raw = self.query("MEAS:CURR?")
+        return Reading(parse_scpi_float(raw), "A", raw)
+
+    def measure_resistance(self) -> Reading:
+        """Derived resistance V/I, computed from the two MEAS reads. Returns
+        ``+inf`` when the current reads at-or-near the overflow sentinel."""
+        v = self.measure_voltage()
+        i = self.measure_current()
+        if i.overflow or i.value == 0.0:
+            return Reading(float("inf"), "Ohm", f"{v.raw};{i.raw}")
+        return Reading(v.value / i.value, "Ohm", f"{v.raw};{i.raw}")
+
+    def sweep_voltage(self, start: float, stop: float, points: int) -> list[Reading]:
+        """Discrete linear V sweep with one MEAS:CURR? read per point. Returns
+        a list of current readings (length ``points``). For Keysight LXI sweep
+        triggering call the channel-specific SCPI directly; this helper is the
+        common-case go/no-go shape.
+        """
+        if points < 2:
+            raise InstrumentError("sweep needs >=2 points")
+        step = (stop - start) / (points - 1)
+        out: list[Reading] = []
+        self.set_source("VOLT")
+        for i in range(points):
+            v = start + step * i
+            self.set_voltage(v)
+            out.append(self.measure_current())
+        return out
+
+
+# ----------------------------------------------------------------------------- #
+# External hardware BERT
+# ----------------------------------------------------------------------------- #
+_BERT_PATTERNS = {"PRBS7", "PRBS9", "PRBS15", "PRBS23", "PRBS31", "USER"}
+
+
+@dataclass
+class BertReading:
+    """A BERT measurement window: error count, bits transferred, ratio."""
+    errors: int
+    bits: float
+    ber: float                       # errors / bits (0.0 when bits <= 0)
+    elapsed_s: float = 0.0
+    raw: str = ""
+
+
+class ExternalBERT(SCPIInstrument):
+    """A bench-top BERT (Keysight M8040, Anritsu MP1900, Tektronix BSAVx40 family).
+
+    Where the in-toolkit `bert.run_bert` proves a PCIe link's AER count, an
+    external BERT proves the **PHY itself** — symbol-error rates at the SerDes
+    level, jitter tolerance, eye opening. This is the instrument you reach for
+    when retimer/PHY characterization beyond AER is needed (Sprint 2.2 retimer
+    abstraction reads these results, doesn't replace them).
+
+    Shape modeled here: a pattern generator (set pattern + rate + amplitude),
+    an arm-then-run window with a deterministic duration, and a poll-result
+    returning ``(errors, bits, BER)``. Real BERTs expose much more (jitter
+    decomposition, eye contour, BIST stop conditions); this is the
+    common-denominator surface that fits SCPI/MT use.
+
+    SCPI: ``:PGEN:PATT PRBS31`` / ``:PGEN:RATE 64e9`` / ``:ARM`` / ``:RUN`` /
+    ``:READ:ERR?`` / ``:READ:BITS?``.
+    """
+
+    def set_pattern(self, pattern: str = "PRBS31") -> None:
+        """Set the pattern: PRBS7/9/15/23/31 or USER."""
+        key = pattern.upper()
+        if key not in _BERT_PATTERNS:
+            raise InstrumentError(
+                f"unknown BERT pattern {pattern!r} (expected one of {sorted(_BERT_PATTERNS)})")
+        self.write(f":PGEN:PATT {key}")
+
+    def set_rate(self, gbps: float) -> None:
+        """Set the line rate in Gbps (``:PGEN:RATE``). Common values: 8.0, 16.0,
+        32.0, 64.0 (PCIe Gen3/4/5/6 NRZ-equivalent / PAM-4 rates)."""
+        if gbps <= 0:
+            raise InstrumentError(f"line rate must be > 0; got {gbps}")
+        self.write(f":PGEN:RATE {gbps * 1e9:g}")
+
+    def set_amplitude(self, mv: float) -> None:
+        """Set the differential output amplitude in mV."""
+        self.write(f":PGEN:AMPL {mv:g}")
+
+    def arm(self) -> None:
+        """Arm the BERT to begin counting on the next ``:RUN``."""
+        self.write(":ARM")
+
+    def run_window(self, seconds: float) -> None:
+        """Run for ``seconds`` then halt (``:RUN <s>``). Polling completion is
+        the caller's responsibility — typically ``wait_complete()``.
+        """
+        if seconds <= 0:
+            raise InstrumentError(f"window must be > 0 s; got {seconds}")
+        self.write(f":RUN {seconds:g}")
+
+    def stop(self) -> None:
+        self.write(":STOP")
+
+    def read_result(self) -> BertReading:
+        """Read the most recent ``(errors, bits, elapsed)`` window — the BERT
+        derives BER itself."""
+        err = self.query(":READ:ERR?")
+        bits = self.query(":READ:BITS?")
+        elapsed = self.query(":READ:TIME?")
+        n_err = int(parse_scpi_float(err))
+        n_bits = parse_scpi_float(bits)
+        elapsed_s = parse_scpi_float(elapsed)
+        ber = (n_err / n_bits) if n_bits > 0 else 0.0
+        return BertReading(errors=n_err, bits=n_bits, ber=ber,
+                            elapsed_s=elapsed_s,
+                            raw=f"err={err!r};bits={bits!r};elapsed={elapsed!r}")
+
+
+# ----------------------------------------------------------------------------- #
+# Switch matrix
+# ----------------------------------------------------------------------------- #
+class SwitchMatrix(SCPIInstrument):
+    """A relay/SCPI-controlled matrix that routes a DUT pin to one of several
+    instruments (or grounds it).
+
+    Why it exists: a single station drives N DUTs without paralleling every
+    instrument cable; the matrix swaps the active path between fixtures. The
+    canonical SCPI surface is ``:ROUT:CLOS (@<channels>)`` to connect and
+    ``:ROUT:OPEN (@<channels>)`` to disconnect; ``:ROUT:CLOS:STAT?`` reads
+    the currently-closed channel list.
+    """
+
+    def close_channel(self, channels: list[int] | str) -> None:
+        """Close (connect) a channel or comma-separated list (``:ROUT:CLOS``).
+
+        ``close_channel`` (not ``close``) so the relay-close API doesn't shadow
+        the inherited ``SCPIInstrument.close()`` connection-close.
+        """
+        spec = (channels if isinstance(channels, str)
+                else ",".join(str(c) for c in channels))
+        self.write(f":ROUT:CLOS (@{spec})")
+
+    def open_channel(self, channels: list[int] | str) -> None:
+        """Open (disconnect) a channel or list (``:ROUT:OPEN``)."""
+        spec = (channels if isinstance(channels, str)
+                else ",".join(str(c) for c in channels))
+        self.write(f":ROUT:OPEN (@{spec})")
+
+    def open_all(self) -> None:
+        """Open every relay in the matrix (``:ROUT:OPEN:ALL``)."""
+        self.write(":ROUT:OPEN:ALL")
+
+    def closed_channels(self) -> str:
+        """Return the SCPI string describing which channels are currently closed."""
+        return self.query(":ROUT:CLOS:STAT?")

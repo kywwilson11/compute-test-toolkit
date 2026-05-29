@@ -1,0 +1,51 @@
+# Example fixture map — copy to `fixture_map.yaml` per station.
+#
+# Test sequences reference instruments by ROLE (`rx_eye_scope`, `power_smu`)
+# and never by physical resource string. Swap a Tektronix scope for a Keysight
+# scope by updating `resource` here — no test-code change required.
+#
+# `idn` is asserted on open: the connected instrument's *IDN? response must
+# start with the prefix you stored. Catches the perennial bug of an operator
+# wiring the wrong instrument to the wrong cable.
+
+station: bay-3
+
+instruments:
+  - role: rx_eye_scope
+    kind: Scope
+    resource: TCPIP::192.168.0.5::INSTR
+    idn: 'Tektronix,MSO64'
+    timeout_ms: 10000
+    options:
+      read_termination: "\n"
+
+  - role: power_smu
+    kind: SMU
+    resource: GPIB0::24::INSTR
+    idn: 'Keysight Technologies,B2902B'
+
+  - role: rail_supply
+    kind: PowerSupply
+    resource: TCPIP::192.168.0.6::INSTR
+    idn: 'Keysight Technologies,E36312A'
+
+  - role: audit_dmm
+    kind: DMM
+    resource: USB0::0x0957::0x1234::SN54321::INSTR
+    idn: 'Keysight Technologies,34465A'
+
+  - role: dc_load
+    kind: ElectronicLoad
+    resource: TCPIP::192.168.0.7::INSTR
+    idn: 'BK Precision,8500'
+
+  - role: external_bert
+    kind: ExternalBERT
+    resource: TCPIP::192.168.0.10::INSTR
+    idn: 'Keysight,M8040A'
+    timeout_ms: 30000           # BERT armed-run windows are long
+
+  - role: dut_matrix
+    kind: SwitchMatrix
+    resource: GPIB0::25::INSTR
+    idn: 'Keysight Technologies,34980A'
