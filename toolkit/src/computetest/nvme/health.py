@@ -17,7 +17,7 @@ import subprocess
 import time
 from dataclasses import dataclass, field
 
-from .backend import mock_mode
+from ..backend import mock_mode
 
 
 @dataclass

@@ -1,0 +1,11 @@
+{
+  "logId": 201,
+  "strings": {
+    "model": "MockSSD-1TB",
+    "firmware": "MK1.0",
+    "boot_count": "42",
+    "last_fatal_error": "",
+    "build_signature": "0xDEADBEEF",
+    "sled_id": "rack-7-bay-3"
+  }
+}

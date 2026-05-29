@@ -1,0 +1,15 @@
+{
+  "telemetry": {
+    "log_id": 7,
+    "version": 1,
+    "total_blocks": 48,
+    "data_areas": {"1": 32, "2": 16, "3": 0, "4": 0}
+  },
+  "strings": {
+    "log_id": 201,
+    "model": "MockSSD-1TB",
+    "firmware": "MK1.0",
+    "boot_count": "42",
+    "build_signature": "0xDEADBEEF"
+  }
+}

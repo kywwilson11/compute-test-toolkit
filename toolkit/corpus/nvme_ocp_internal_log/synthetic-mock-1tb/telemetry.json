@@ -1,0 +1,14 @@
+{
+  "logId": 7,
+  "header": {
+    "version": 1,
+    "host_initiated_data_generation_number": 12,
+    "controller_initiated_data_available": false
+  },
+  "dataAreas": {
+    "1": {"sizeBlocks": 32},
+    "2": {"sizeBlocks": 16},
+    "3": {"sizeBlocks": 0},
+    "4": {"sizeBlocks": 0}
+  }
+}
