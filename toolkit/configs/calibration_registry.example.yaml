@@ -1,0 +1,41 @@
+# Example calibration registry — copy to `calibration_registry.yaml` per station.
+#
+# A station's roster of calibrated instruments, keyed by abstract `role` so the
+# station configuration stays stable across hardware swaps. The CI gate
+# `CalibrationRegistry.require(today, roles)` returns non-empty if any required
+# role is missing or its certificate has expired.
+
+entries:
+  - role: rx_eye_scope
+    manufacturer: Tektronix
+    model: MSO64
+    serial: C012345
+    last_calibrated: 2026-01-15
+    next_due: 2027-01-15
+    certificate: NIST-12-345
+    notes: A2LA-accredited lab; turnaround ~3 weeks
+
+  - role: power_smu
+    manufacturer: Keysight
+    model: B2902B
+    serial: MY54321001
+    last_calibrated: 2025-11-02
+    next_due: 2026-11-02
+    certificate: KEY-2025-11-02-7741
+
+  - role: temperature_chamber
+    manufacturer: Espec
+    model: SH-262
+    serial: SH262-7788
+    last_calibrated: 2026-02-20
+    next_due: 2026-08-20
+    certificate: TM-FY26-217
+    notes: 6-month interval due to drift after the 2025 PID retune
+
+  - role: torque_wrench
+    manufacturer: Snap-on
+    model: ATECH3FR250
+    serial: TW-001
+    last_calibrated: 2025-12-08
+    next_due: 2026-12-08
+    certificate: SO-2025-XX-1019
