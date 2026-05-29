@@ -15,13 +15,18 @@ control**.
   develop, demo, and run the entire test suite on macOS. Force it with
   `COMPUTETEST_BACKEND=mock|real`; otherwise it auto-selects (real if Linux sysfs is present).
 
-> **First time?**
-> - **[`MANUAL.md`](MANUAL.md)** — the **in-depth user manual** (~20 min read): mental
->   model, verdict semantics, BERT explained, troubleshooting cookbook, workflows.
->   Start here.
-> - **[`USAGE.md`](USAGE.md)** — per-command **reference** (every flag, every exit code,
->   real captured output, the `--json` shapes). Refer here once you know what you're
->   trying to do.
+> **First time?** Documentation is organized by [Diataxis](https://diataxis.fr/):
+> - **[`docs/tutorials/01-first-bert.md`](docs/tutorials/01-first-bert.md)** —
+>   10-minute guided walk-through to a green PCIe BERT verdict, no hardware required.
+> - **[`docs/howto/`](docs/howto/)** — task-oriented recipes (run on real hardware,
+>   emit OCP ocp-diag-core, run Gage R&R, triage a BERT fail, write a test plan).
+> - **[`docs/reference/`](docs/reference/)** — authoritative CLI + result-shape
+>   reference. Every flag, every exit code, every dataclass field.
+> - **[`docs/explanation/`](docs/explanation/)** — *why* the toolkit measures the
+>   way it does (BERT confidence math, PCIe 6.0 FEC).
+>
+> The legacy single-page **[`MANUAL.md`](MANUAL.md)** + **[`USAGE.md`](USAGE.md)**
+> remain authoritative for content not yet split into the Diataxis tree.
 
 ## What it checks
 
