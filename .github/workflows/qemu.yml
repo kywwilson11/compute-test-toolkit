@@ -66,7 +66,10 @@ jobs:
             /usr/local/bin/qemu-img
             /usr/local/share/qemu/
             /usr/local/libexec/
-          key: qemu-${{ env.QEMU_VER }}-x86_64-softmmu-noble
+          # Bumping the suffix invalidates a stale cache; bumped to v2 after the
+          # first build went out without libslirp-dev -> "network backend 'user' is
+          # not compiled into this binary" at boot.
+          key: qemu-${{ env.QEMU_VER }}-x86_64-softmmu-noble-v2
       - name: Install apt deps (UEFI firmware + cloud-init image tools)
         run: |
           sudo apt-get update
@@ -81,7 +84,8 @@ jobs:
           set -e
           sudo apt-get install -y --no-install-recommends \
               build-essential ninja-build pkg-config meson \
-              libglib2.0-dev libpixman-1-dev python3-venv
+              libglib2.0-dev libpixman-1-dev python3-venv \
+              libslirp-dev   # required for QEMU's user-mode networking (-netdev user)
           cd /tmp
           curl -fLO "https://download.qemu.org/qemu-${QEMU_VER}.tar.xz"
           tar -xf "qemu-${QEMU_VER}.tar.xz"
