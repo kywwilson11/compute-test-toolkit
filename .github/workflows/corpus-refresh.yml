@@ -85,18 +85,21 @@ jobs:
         run: |
           set -e
           cd "$GITHUB_WORKSPACE"
-          if git diff --quiet toolkit/corpus/_drift/; then
+          # `git diff` ignores untracked files (the first-ever run produces NEW
+          # files in _drift/, not modifications), so we stage first and check
+          # `git diff --cached --quiet`. That picks up new files AND modifications.
+          git config user.name  'corpus-refresh-bot'
+          git config user.email 'corpus-refresh@noreply.github.com'
+          git add toolkit/corpus/_drift/
+          if git diff --cached --quiet -- toolkit/corpus/_drift/; then
               echo "no corpus drift detected"
               exit 0
           fi
           echo "drift detected -- opening PR"
-          git config user.name  'corpus-refresh-bot'
-          git config user.email 'corpus-refresh@noreply.github.com'
           BR="corpus-refresh/$(date +%Y-%m-%d)"
           git checkout -b "$BR"
-          git add toolkit/corpus/_drift/
           git commit -m "corpus-refresh: drift detected ($(date -u +%Y-%m-%d))" \
-                     -m "$(git diff --cached --stat toolkit/corpus/_drift/)"
+                     -m "$(git diff --cached --stat -- toolkit/corpus/_drift/)"
           git push -u origin "$BR"
           # Render the PR body to a file (avoids embedding multi-line markdown in
           # the YAML, which would break the run: | block-scalar indentation).
