@@ -46,13 +46,13 @@ Mandatory row's `pytest_node` column is empty.
 | 5     | 5.2     | MI Message Processing — MIC (CRC-32C) verify     | Mandatory | tests/test_nvme_mi.py::TestMiCRC::test_crc_round_trip_detects_corruption    |
 | 6     | 6.1     | Control Primitive — Pause                        | Mandatory | tests/test_nvme_mi.py::TestControlPrimitive::test_pause_opcode               |
 | 6     | 6.2     | Control Primitive — Resume                       | Mandatory | tests/test_nvme_mi.py::TestControlPrimitive::test_resume_opcode              |
-| 7     | 7.5     | NVM Subsystem Health Status Poll                 | Mandatory | _scheduled_ (Sprint 3)                                                       |
+| 7     | 7.5     | NVM Subsystem Health Status Poll                 | Mandatory | tests/test_nvme_mi_extras.py::TestNvmSubsystemHealth::test_mock_poll_returns_healthy_subsystem |
 | 7     | 7.6     | Controller Health Status Poll                    | Mandatory | tests/test_nvme_mi.py::TestControllerHealthPoll::test_mock_poll_is_healthy   |
 | 9     | 9.1     | Management Enhancement — Async Event Subscribe   | Mandatory | tests/test_nvme_mi.py::TestAemSubscription::test_subscribe_requires_event_set |
 | 9     | 9.2     | Management Enhancement — AEM delivery coalesce   | Mandatory | tests/test_nvme_mi.py::TestAemSubscription::test_coalesce_within_window      |
 | 9     | 9.3     | Management Enhancement — AEM delivery rate limit | Mandatory | tests/test_nvme_mi.py::TestAemSubscription::test_rate_limit_per_second       |
-| 10    | 10.1    | VPD Read — bounds check                          | FYI       | _scheduled_                                                                  |
-| 11    | 11.1    | Management Endpoint Reset                        | Mandatory | _scheduled_ (Sprint 3 — needs real-bus path)                                 |
+| 10    | 10.1    | VPD Read — bounds check                          | FYI       | tests/test_nvme_mi_extras.py::TestVpdRead::test_request_overflowing_capacity_rejected |
+| 11    | 11.1    | Management Endpoint Reset                        | Mandatory | tests/test_nvme_mi_extras.py::TestManagementEndpointReset::test_mock_reset_default_is_nvm_subsystem_reset |
 
 ## How to extend
 

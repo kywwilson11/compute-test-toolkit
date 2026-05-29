@@ -160,7 +160,7 @@ class TestCoverageMatrixGate:
         Sprint that covers one of these rows. Never raise it: a regression in
         coverage debt is a real signal.
         """
-        EXPECTED_SCHEDULED_BUDGET = 3        # Sprint 3.3 brings this to 0
+        EXPECTED_SCHEDULED_BUDGET = 0        # Sprint 3.3 paid this off
         scheduled = [r for r in matrix_rows
                       if r["type"] == "Mandatory"
                       and any(r["pytest_node"].startswith(m)

@@ -50,6 +50,22 @@ from .messages import (
     MiMessageError,
     encode_mi_request,
 )
+from .reset import (
+    ResetFunction,
+    ResetRequest,
+    ResetResult,
+    reset_management_endpoint,
+)
+from .subsystem_health import (
+    NvmSubsystemHealth,
+    poll_nvm_subsystem_health,
+)
+from .vpd import (
+    VpdBoundsError,
+    VpdReadRequest,
+    VpdReadResult,
+    vpd_read,
+)
 
 __all__ = [
     # mctp
@@ -63,4 +79,11 @@ __all__ = [
     "EventSubscription", "Subscription",
     # controller_health
     "ControllerHealthStatus", "poll_controller_health",
+    # subsystem_health (NVMe-MI 5.1)
+    "NvmSubsystemHealth", "poll_nvm_subsystem_health",
+    # vpd (NVMe-MI 5.2)
+    "VpdBoundsError", "VpdReadRequest", "VpdReadResult", "vpd_read",
+    # reset (NVMe-MI 5.7)
+    "ResetFunction", "ResetRequest", "ResetResult",
+    "reset_management_endpoint",
 ]
