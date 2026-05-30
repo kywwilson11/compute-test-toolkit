@@ -38,6 +38,14 @@ from .phy import (  # noqa: F401
     PhyPrbsResult,
     TdrResult,
 )
+from .qbv import (  # noqa: F401
+    DEFAULT_MAX_EDGE_JITTER_NS,
+    GclEntry,
+    GclSchedule,
+    QbvHealth,
+    check_qbv_gate_timing,
+    emit_qbv,
+)
 
 __all__ = [
     # phy (Sprint 4.2)
@@ -52,4 +60,7 @@ __all__ = [
     "correction_field_ok", "rate_ratio_valid", "as_capable",
     "check_gptp_protocol", "DEFAULT_RATE_RATIO_TOL", "DEFAULT_MAX_TURNAROUND_NS",
     "DEFAULT_CORRECTION_TOL_NS",
+    # qbv (Sprint 4.2)
+    "GclEntry", "GclSchedule", "QbvHealth", "check_qbv_gate_timing", "emit_qbv",
+    "DEFAULT_MAX_EDGE_JITTER_NS",
 ]
