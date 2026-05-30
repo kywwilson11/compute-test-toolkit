@@ -7,6 +7,11 @@
 * ``serdes`` — Sprint 4.1 vendor-agnostic SerDes link abstraction: negotiated
   mode, pre/post-FEC PRBS margin, EOM eye, and safety error counters.
 """
+from .checks import (  # noqa: F401
+    DEFAULT_MAX_LOCK_MS,
+    SerDesLinkHealth,
+    check_serdes_link,
+)
 from .serdes import (  # noqa: F401
     DEFAULT_BIST_DURATION_S,
     DEFAULT_EOM_MV_MIN,
@@ -39,4 +44,6 @@ __all__ = [
     "SerDesLink", "MockSerDes", "SerDesError", "SerDesInfo", "SerDesRole",
     "GmslMode", "LinkDirection", "GmslPrbsPattern", "LinkLock", "EomReading",
     "FecStats", "PrbsResult", "ErrorCounters",
+    # checks (Sprint 4.1)
+    "SerDesLinkHealth", "check_serdes_link",
 ]
