@@ -71,6 +71,12 @@ from .ras import (  # noqa: F401
     decode_ue,
     snapshot,
 )
+from .retimer import (  # noqa: F401
+    DEFAULT_CXL_EYE_MV_MIN,
+    DEFAULT_CXL_EYE_UI_MIN,
+    CxlRetimerHealth,
+    check_cxl_retimer,
+)
 
 __all__ = [
     # mailbox (Sprint 4.4)
@@ -97,4 +103,7 @@ __all__ = [
     # maintenance / 0600h (Sprint 4.4)
     "MaintenanceClass", "MaintenanceDevice", "MaintenanceHealth",
     "check_maintenance", "PERFORM_MAINTENANCE_OPCODE",
+    # retimer (Sprint 4.4)
+    "CxlRetimerHealth", "check_cxl_retimer", "DEFAULT_CXL_EYE_UI_MIN",
+    "DEFAULT_CXL_EYE_MV_MIN",
 ]
