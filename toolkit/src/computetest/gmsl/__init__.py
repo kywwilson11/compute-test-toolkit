@@ -30,6 +30,13 @@ from .checks import (  # noqa: F401
     check_prbs_ber,
     check_serdes_link,
 )
+from .lmt import (  # noqa: F401
+    MARGIN_EYE_H,
+    MARGIN_EYE_V,
+    MARGIN_TEMP,
+    MARGIN_VOLTAGE,
+    eom_to_lmt_records,
+)
 from .serdes import (  # noqa: F401
     DEFAULT_BIST_DURATION_S,
     DEFAULT_EOM_MV_MIN,
@@ -68,4 +75,7 @@ __all__ = [
     # channel (Sprint 4.1)
     "SParamMask", "MaskKind", "ChannelComplianceResult", "apply_gmsl3_filter",
     "check_against_mask", "check_channel_compliance", "GMSL3_FILTER_HZ",
+    # lmt adapter (Sprint 4.1)
+    "eom_to_lmt_records", "MARGIN_EYE_V", "MARGIN_EYE_H", "MARGIN_VOLTAGE",
+    "MARGIN_TEMP",
 ]
