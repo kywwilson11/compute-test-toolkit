@@ -4,6 +4,11 @@
   NVMe-MI MctpTransport/MiMessage pattern.
 * ``ras`` — CXL.cachemem UE/CE error decode + write-1-to-clear (mirrors aer.py).
 """
+from .emit import (  # noqa: F401
+    emit_cxl_events,
+    emit_cxl_link,
+    emit_cxl_ras,
+)
 from .events import (  # noqa: F401
     EventClearHealth,
     EventLog,
@@ -70,4 +75,6 @@ __all__ = [
     "ContainmentHealth", "check_poison_inject_clear", "check_containment",
     # hdm (Sprint 4.4)
     "HdmDecoder", "HdmHealth", "calc_interleave_pos", "check_hdm_decoder",
+    # ocp-diag projection (Sprint 4.4)
+    "emit_cxl_link", "emit_cxl_ras", "emit_cxl_events",
 ]
