@@ -144,3 +144,50 @@ def check_prbs_ber(serdes: SerDesLink, *, link: int = 0,
         errors=r.error_count, bits=r.bits, target_ber=target_ber,
         confidence_target=confidence, confidence_reached=v.confidence_reached,
         ber_upper=v.ber_upper, status=v.status, checks=checks)
+
+
+@dataclass
+class FecHealth:
+    """Reed-Solomon FEC verdict for one link. The hard fail is any uncorrectable
+    block; the corrected-symbol count is a trend/soak signal — a rising corrected
+    rate at clean post-FEC output is the earliest degradation sign."""
+    link: int
+    corrected_symbols: int
+    corrected_codewords: int
+    uncorrectable_blocks: int
+    max_corrected: int | None
+    checks: dict[str, bool] = field(default_factory=dict)
+
+    @property
+    def ok(self) -> bool:
+        return bool(self.checks) and all(self.checks.values())
+
+    def summary(self) -> str:
+        fails = ",".join(k for k, v in self.checks.items() if not v)
+        state = "OK" if self.ok else f"FAIL({fails})"
+        return (f"GMSL FEC link{self.link} corrected={self.corrected_symbols} "
+                f"uncorrectable={self.uncorrectable_blocks} -> {state}")
+
+    def to_dict(self) -> dict:
+        return {"link": self.link, "corrected_symbols": self.corrected_symbols,
+                "corrected_codewords": self.corrected_codewords,
+                "uncorrectable_blocks": self.uncorrectable_blocks,
+                "max_corrected": self.max_corrected,
+                "checks": self.checks, "ok": self.ok}
+
+
+def check_fec(serdes: SerDesLink, *, link: int = 0,
+              max_corrected_symbols: int | None = None) -> FecHealth:
+    """Read the Reed-Solomon FEC counters for one link. Any uncorrectable block
+    is an immediate fail; if ``max_corrected_symbols`` is given, the corrected
+    count is also gated against that budget (the real path samples this over a
+    soak window to catch a rising corrected-bit rate)."""
+    f = serdes.read_fec_stats(link)
+    checks = {"no_uncorrectable": f.uncorrectable_blocks == 0}
+    if max_corrected_symbols is not None:
+        checks["corrected_within_budget"] = (
+            f.corrected_symbols <= max_corrected_symbols)
+    return FecHealth(link=link, corrected_symbols=f.corrected_symbols,
+                     corrected_codewords=f.corrected_codewords,
+                     uncorrectable_blocks=f.uncorrectable_blocks,
+                     max_corrected=max_corrected_symbols, checks=checks)

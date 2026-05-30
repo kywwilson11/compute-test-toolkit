@@ -10,8 +10,10 @@
 from .checks import (  # noqa: F401
     DEFAULT_MAX_LOCK_MS,
     DEFAULT_PRE_FEC_TARGET_BER,
+    FecHealth,
     PrbsBerHealth,
     SerDesLinkHealth,
+    check_fec,
     check_prbs_ber,
     check_serdes_link,
 )
@@ -49,4 +51,5 @@ __all__ = [
     "FecStats", "PrbsResult", "ErrorCounters",
     # checks (Sprint 4.1)
     "SerDesLinkHealth", "check_serdes_link", "PrbsBerHealth", "check_prbs_ber",
+    "FecHealth", "check_fec",
 ]
