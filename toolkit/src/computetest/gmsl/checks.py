@@ -12,7 +12,10 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from ..ber import BertVerdict, assess
+from ..pcie.retimer.base import EyeMeasurement, eye_quality_verdict
 from .serdes import (
+    DEFAULT_EOM_MV_MIN,
+    DEFAULT_EOM_UI_MIN,
     GmslMode,
     GmslPrbsPattern,
     LinkDirection,
@@ -191,3 +194,48 @@ def check_fec(serdes: SerDesLink, *, link: int = 0,
                      corrected_codewords=f.corrected_codewords,
                      uncorrectable_blocks=f.uncorrectable_blocks,
                      max_corrected=max_corrected_symbols, checks=checks)
+
+
+@dataclass
+class EomHealth:
+    """EOM eye-margin verdict for one link/direction, mapped onto the portable
+    retimer ``EyeMeasurement`` so GMSL eye data flows through the same consumers
+    (BigQuery/Looker, eye_quality_verdict) as PCIe retimer eye data."""
+    link: int
+    direction: str
+    mode: str
+    eye: EyeMeasurement
+    subeyes_mv: list[float]
+    checks: dict[str, bool] = field(default_factory=dict)
+
+    @property
+    def ok(self) -> bool:
+        return bool(self.checks) and all(self.checks.values())
+
+    def summary(self) -> str:
+        state = "OK" if self.ok else "FAIL(eye)"
+        return (f"GMSL EOM link{self.link}/{self.direction} "
+                f"eye {self.eye.eye_ui:.3f}UI/{self.eye.eye_mv:.1f}mV "
+                f"subeyes={self.subeyes_mv} -> {state}")
+
+    def to_dict(self) -> dict:
+        return {"link": self.link, "direction": self.direction, "mode": self.mode,
+                "eye": self.eye.to_dict(), "subeyes_mv": list(self.subeyes_mv),
+                "checks": self.checks, "ok": self.ok}
+
+
+def check_eom(serdes: SerDesLink, *, link: int = 0,
+              direction: LinkDirection = LinkDirection.FORWARD) -> EomHealth:
+    """Read the eye-opening monitor for one link/direction and map it onto the
+    retimer ``EyeMeasurement``. The PAM4 *worst* sub-eye becomes ``eye_mv`` (the
+    closing eye is the margin oracle); the verdict reuses the retimer's
+    ``eye_quality_verdict`` with GMSL-specific thresholds."""
+    eom = serdes.read_eom(link, direction)
+    eye = EyeMeasurement(
+        lane=link, eye_ui=eom.horizontal_ui, eye_mv=eom.worst_vertical_mv,
+        height_mv=max(eom.vertical_mv), width_ui=eom.horizontal_ui)
+    passed = eye_quality_verdict(eye, ui_min=DEFAULT_EOM_UI_MIN,
+                                 mv_min=DEFAULT_EOM_MV_MIN)
+    return EomHealth(link=link, direction=direction.value, mode=eom.mode.value,
+                     eye=eye, subeyes_mv=list(eom.vertical_mv),
+                     checks={"eye_open": passed})
