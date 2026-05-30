@@ -48,6 +48,12 @@ from .phy import (  # noqa: F401
     PhyPrbsResult,
     TdrResult,
 )
+from .pma import (  # noqa: F401
+    DEFAULT_PMA_MAX_LINKUP_MS,
+    DEFAULT_PMA_SQI_MIN,
+    PmaHealth,
+    check_pma_electrical,
+)
 from .preemption import (  # noqa: F401
     ADD_FRAG_SIZE_BYTES,
     RESPOND_WINDOW_FRACTION,
@@ -95,4 +101,7 @@ __all__ = [
     "SequenceRecovery", "FrerHealth", "check_frer",
     # hot-standby / 802.1ASdm (Sprint 4.2)
     "HotStandbyHealth", "check_hot_standby_failover", "DEFAULT_HOLDOVER_NS",
+    # pma electrical / TC8 L1 (Sprint 4.2)
+    "PmaHealth", "check_pma_electrical", "DEFAULT_PMA_MAX_LINKUP_MS",
+    "DEFAULT_PMA_SQI_MIN",
 ]
