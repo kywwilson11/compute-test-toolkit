@@ -1,0 +1,6 @@
+[
+  {"handle": 1, "record_type": "general_media", "log": 2, "fields": {"dpa": 4096, "descriptor": "uncorrectable_event"}},
+  {"handle": 2, "record_type": "dram", "log": 1, "fields": {"nibble_mask": 3, "bank_group": 1}},
+  {"handle": 3, "record_type": "memory_module", "log": 0, "fields": {"health_status": "normal"}},
+  {"handle": 4, "record_type": "memory_sparing", "log": 1, "fields": {"resource": "spared", "channel": 0}}
+]
