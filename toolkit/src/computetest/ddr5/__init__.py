@@ -14,6 +14,12 @@ from .ecs import (  # noqa: F401
     EcsHealth,
     check_ecs,
 )
+from .eye import (  # noqa: F401
+    DEFAULT_DDR5_EYE_MV_MIN,
+    DEFAULT_DDR5_EYE_UI_MIN,
+    Ddr5EyeHealth,
+    check_dq_eye,
+)
 from .lmt import (  # noqa: F401
     DqMargin,
     training_to_lmt_records,
@@ -43,4 +49,7 @@ __all__ = [
     "PprHealth", "check_ppr",
     # lmt adapter (Sprint 4.3)
     "DqMargin", "training_to_lmt_records",
+    # eye (Sprint 4.3)
+    "Ddr5EyeHealth", "check_dq_eye", "DEFAULT_DDR5_EYE_UI_MIN",
+    "DEFAULT_DDR5_EYE_MV_MIN",
 ]
