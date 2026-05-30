@@ -4,6 +4,11 @@
   sysfs) as a deterministic device, extending the memory.py EDAC CE/UE reader.
 * ``ecc`` — on-die ECC + EDAC reporting verification via EINJ (CE/UE).
 """
+from .crc import (  # noqa: F401
+    DEFAULT_MAX_CRC_RETRIES,
+    CrcHealth,
+    check_crc_parity,
+)
 from .ecc import (  # noqa: F401
     EccReportHealth,
     check_ce_reporting,
@@ -38,6 +43,8 @@ from .ras import (  # noqa: F401
 )
 
 __all__ = [
+    # crc (Sprint 4.3)
+    "CrcHealth", "check_crc_parity", "DEFAULT_MAX_CRC_RETRIES",
     # ras (Sprint 4.3)
     "MockDdr5Ras", "Ddr5RasError", "EcsConfig", "ScrubConfig", "MemRepairRequest",
     "ECS_THRESHOLDS",
