@@ -693,7 +693,7 @@ class SMU(SCPIInstrument):
 # ----------------------------------------------------------------------------- #
 # External hardware BERT
 # ----------------------------------------------------------------------------- #
-_BERT_PATTERNS = {"PRBS7", "PRBS9", "PRBS15", "PRBS23", "PRBS31", "USER"}
+_BERT_PATTERNS = {"PRBS7", "PRBS9", "PRBS15", "PRBS23", "PRBS24", "PRBS31", "USER"}
 
 
 @dataclass
@@ -726,7 +726,8 @@ class ExternalBERT(SCPIInstrument):
     """
 
     def set_pattern(self, pattern: str = "PRBS31") -> None:
-        """Set the pattern: PRBS7/9/15/23/31 or USER."""
+        """Set the pattern: PRBS7/9/15/23/24/31 or USER (PRBS24 added so a bench
+        BERT can correlate against the GMSL3 on-die PRBS generator)."""
         key = pattern.upper()
         if key not in _BERT_PATTERNS:
             raise InstrumentError(
@@ -811,3 +812,173 @@ class SwitchMatrix(SCPIInstrument):
     def closed_channels(self) -> str:
         """Return the SCPI string describing which channels are currently closed."""
         return self.query(":ROUT:CLOS:STAT?")
+
+
+# ----------------------------------------------------------------------------- #
+# Vector network analyzer (4-port, differential S-parameters)
+# ----------------------------------------------------------------------------- #
+# Mixed-mode S-parameters a differential-channel compliance run reads: Sdd =
+# differential-in/out (insertion/return loss), Scd/Sdc = mode conversion.
+# Validated so a typo can't silently sweep the wrong parameter.
+_VNA_PARAMS = {"SDD11", "SDD21", "SDD12", "SDD22", "SCD21", "SDC21", "SCC11"}
+
+
+@dataclass
+class SParamSweep:
+    """A magnitude(dB)-vs-frequency sweep of one mixed-mode S-parameter.
+
+    ``freqs_hz`` and ``magnitudes_db`` are parallel arrays (one dB value per
+    frequency point) — the shape a channel-compliance mask is checked against.
+    """
+
+    param: str
+    freqs_hz: list[float]
+    magnitudes_db: list[float]
+
+    def points(self) -> list[tuple[float, float]]:
+        return list(zip(self.freqs_hz, self.magnitudes_db, strict=True))
+
+    def to_dict(self) -> dict:
+        return {"param": self.param, "freqs_hz": list(self.freqs_hz),
+                "magnitudes_db": list(self.magnitudes_db),
+                "points": len(self.freqs_hz)}
+
+
+class Vna(SCPIInstrument):
+    """A 4-port vector network analyzer for differential channel compliance —
+    the instrument that qualifies a GMSL3 (or automotive-Ethernet) channel's
+    insertion/return loss and mode conversion against a spec mask.
+
+    SCPI: ``SENS:FREQ:STAR`` / ``SENS:FREQ:STOP`` / ``SENS:SWE:POIN`` set the
+    sweep; ``CALC:PAR:DEF '<param>'`` selects a mixed-mode trace; ``CALC:DATA?
+    FDATA`` returns the formatted (dB) trace and ``SENS:FREQ:DATA?`` the
+    frequency axis (both comma-separated). The two traces zip into an
+    ``SParamSweep``.
+    """
+
+    def set_sweep(self, start_hz: float, stop_hz: float, points: int = 201) -> None:
+        """Program the frequency sweep (start/stop in Hz, number of points)."""
+        if stop_hz <= start_hz:
+            raise InstrumentError(
+                f"sweep stop ({stop_hz:g}) must exceed start ({start_hz:g})")
+        if points < 2:
+            raise InstrumentError(f"sweep needs >= 2 points; got {points}")
+        self.write(f"SENS:FREQ:STAR {start_hz:g}")
+        self.write(f"SENS:FREQ:STOP {stop_hz:g}")
+        self.write(f"SENS:SWE:POIN {points:d}")
+
+    def measure_sparam(self, param: str) -> SParamSweep:
+        """Select a mixed-mode parameter and read its dB trace + frequency axis."""
+        key = param.upper()
+        if key not in _VNA_PARAMS:
+            raise InstrumentError(
+                f"unknown S-parameter {param!r} (expected one of {sorted(_VNA_PARAMS)})")
+        self.write(f"CALC:PAR:DEF '{key}'")
+        freqs = self._parse_trace(self.query("SENS:FREQ:DATA?"))
+        mags = self._parse_trace(self.query("CALC:DATA? FDATA"))
+        if len(freqs) != len(mags):
+            raise InstrumentError(
+                f"{key}: freq axis ({len(freqs)}) and trace ({len(mags)}) length mismatch")
+        return SParamSweep(param=key, freqs_hz=freqs, magnitudes_db=mags)
+
+    @staticmethod
+    def _parse_trace(raw: str) -> list[float]:
+        """Parse a comma-separated SCPI trace into floats (overflow -> +/-inf)."""
+        return [parse_scpi_float(field) for field in raw.split(",") if field.strip()]
+
+
+# ----------------------------------------------------------------------------- #
+# Thermal chamber / thermostream
+# ----------------------------------------------------------------------------- #
+class ThermalChamber(SCPIInstrument):
+    """A thermal chamber or thermostream: program a temperature setpoint and read
+    the actual chamber temperature. Drives the temperature axis of a V/T
+    margining shmoo — AEC-Q100 Grade-2 -40..+105 C for automotive parts.
+
+    SCPI: ``SOUR:TEMP <c>`` programs the setpoint; ``MEAS:TEMP?`` reads the
+    actual and ``SOUR:TEMP?`` the setpoint. ``settled()`` checks the actual is
+    within tolerance of the setpoint before a measurement at a new corner is
+    trusted.
+    """
+
+    def set_temperature(self, celsius: float) -> None:
+        """Program the temperature setpoint (SOUR:TEMP <c>)."""
+        self.write(f"SOUR:TEMP {celsius:g}")
+
+    def measure_temperature(self) -> Reading:
+        """Read the actual chamber temperature (MEAS:TEMP?)."""
+        raw = self.query("MEAS:TEMP?")
+        return Reading(parse_scpi_float(raw), "C", raw)
+
+    def setpoint(self) -> Reading:
+        """Read back the programmed setpoint (SOUR:TEMP?)."""
+        raw = self.query("SOUR:TEMP?")
+        return Reading(parse_scpi_float(raw), "C", raw)
+
+    def settled(self, *, tolerance_c: float = 2.0) -> bool:
+        """True iff the actual temperature is within ``tolerance_c`` of the
+        setpoint (poll before trusting a measurement at a new corner)."""
+        return abs(self.measure_temperature().value - self.setpoint().value) <= tolerance_c
+
+
+# ----------------------------------------------------------------------------- #
+# Time-interval analyzer (TSN gPTP Max|TE|)
+# ----------------------------------------------------------------------------- #
+class TimeIntervalAnalyzer(SCPIInstrument):
+    """A time-interval analyzer / counter (Keysight 53230A class) measuring the
+    phase of a recovered 1PPS against a reference 1PPS — the Max|TE| (maximum
+    time error) metric an 802.1AS gPTP slave must hold (Avnu's 1PPS method).
+
+    SCPI: ``MEAS:TINT? (@1),(@2)`` returns the time interval (seconds) between
+    the reference (ch 1) and DUT (ch 2) 1PPS edges; helpers convert to ns.
+    """
+
+    def measure_time_interval(self) -> Reading:
+        """Time interval between the reference and DUT 1PPS edges (seconds)."""
+        raw = self.query("MEAS:TINT? (@1),(@2)")
+        return Reading(parse_scpi_float(raw), "s", raw)
+
+    def measure_time_error_ns(self) -> float:
+        """Absolute time error |TE| in nanoseconds (the gPTP slave metric)."""
+        return abs(self.measure_time_interval().value) * 1e9
+
+
+# ----------------------------------------------------------------------------- #
+# TSN traffic generator / analyzer (scheduled traffic, preemption, FRER)
+# ----------------------------------------------------------------------------- #
+class TSNTrafficGenerator(SCPIInstrument):
+    """A TSN traffic generator/analyzer facade (VIAVI TTworkbench+M1, Spirent,
+    Keysight) for scheduled-traffic (Qbv), frame-preemption (Clause 99), and
+    FRER tests. Configures per-stream priority/rate, runs traffic, reads
+    per-stream counters, and applies link impairments.
+
+    Modeled as a SCPI facade so it unit-tests on macOS behind the same
+    _MockSCPI/_PyVisaTransport split; a real backend swaps in unchanged.
+    """
+
+    def configure_stream(self, stream_id: int, *, priority: int,
+                         rate_mbps: float) -> None:
+        """Configure a stream's 802.1Q priority and offered rate."""
+        self.write(f":STREAM{stream_id:d}:PRIO {priority:d}")
+        self.write(f":STREAM{stream_id:d}:RATE {rate_mbps:g}")
+
+    def start(self) -> None:
+        """Start offering traffic on all configured streams (:TRAF:STAR)."""
+        self.write(":TRAF:STAR")
+
+    def stop(self) -> None:
+        """Stop traffic (:TRAF:STOP)."""
+        self.write(":TRAF:STOP")
+
+    def read_counters(self, stream_id: int) -> dict[str, int]:
+        """Read tx/rx/dropped frame counters for one stream."""
+        tx = int(self.query_float(f":STREAM{stream_id:d}:TX:COUN?"))
+        rx = int(self.query_float(f":STREAM{stream_id:d}:RX:COUN?"))
+        dropped = int(self.query_float(f":STREAM{stream_id:d}:DROP:COUN?"))
+        return {"tx": tx, "rx": rx, "dropped": dropped}
+
+    def set_impairment(self, *, loss_pct: float = 0.0,
+                       reorder: bool = False) -> None:
+        """Apply a link impairment (frame loss %, reordering) for FRER tests."""
+        self.write(f":IMP:LOSS {loss_pct:g}")
+        self.write(f":IMP:REOR {'ON' if reorder else 'OFF'}")

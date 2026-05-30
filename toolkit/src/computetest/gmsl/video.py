@@ -12,7 +12,7 @@ import shutil
 import subprocess
 from dataclasses import dataclass, field
 
-from .backend import mock_mode
+from ..backend import mock_mode
 
 # Linux I2C device id: `<bus>-<7-bit-hex-addr>` (e.g. "1-0029"). Validating here
 # stops a hostile `link` value (path traversal / argv-option) from reaching sysfs/v4l2-ctl.

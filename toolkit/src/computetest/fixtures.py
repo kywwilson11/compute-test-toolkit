@@ -49,6 +49,10 @@ from .instruments import (
     Scope,
     SCPIInstrument,
     SwitchMatrix,
+    ThermalChamber,
+    TimeIntervalAnalyzer,
+    TSNTrafficGenerator,
+    Vna,
 )
 
 # Symbolic kinds the YAML accepts -> concrete instrument class.
@@ -60,6 +64,10 @@ _KIND_REGISTRY: dict[str, type[SCPIInstrument]] = {
     "SMU": SMU,
     "ExternalBERT": ExternalBERT,
     "SwitchMatrix": SwitchMatrix,
+    "Vna": Vna,
+    "ThermalChamber": ThermalChamber,
+    "TimeIntervalAnalyzer": TimeIntervalAnalyzer,
+    "TSNTrafficGenerator": TSNTrafficGenerator,
 }
 
 
