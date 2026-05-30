@@ -38,6 +38,19 @@ from .phy import (  # noqa: F401
     PhyPrbsResult,
     TdrResult,
 )
+from .preemption import (  # noqa: F401
+    ADD_FRAG_SIZE_BYTES,
+    RESPOND_WINDOW_FRACTION,
+    VERIFY_TIME_MAX_MS,
+    VERIFY_TIME_MIN_MS,
+    Fragment,
+    PreemptionHealth,
+    check_fragmentation,
+    check_preemption,
+    min_fragment_bytes,
+    run_verify_respond,
+    verify_time_valid,
+)
 from .qbv import (  # noqa: F401
     DEFAULT_MAX_EDGE_JITTER_NS,
     GclEntry,
@@ -63,4 +76,9 @@ __all__ = [
     # qbv (Sprint 4.2)
     "GclEntry", "GclSchedule", "QbvHealth", "check_qbv_gate_timing", "emit_qbv",
     "DEFAULT_MAX_EDGE_JITTER_NS",
+    # preemption / Clause 99 (Sprint 4.2)
+    "Fragment", "PreemptionHealth", "min_fragment_bytes", "verify_time_valid",
+    "run_verify_respond", "check_fragmentation", "check_preemption",
+    "ADD_FRAG_SIZE_BYTES", "VERIFY_TIME_MIN_MS", "VERIFY_TIME_MAX_MS",
+    "RESPOND_WINDOW_FRACTION",
 ]
