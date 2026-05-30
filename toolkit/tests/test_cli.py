@@ -57,3 +57,18 @@ def test_chain_command_runs(capsys):
                    "--target-ber", "1e-9", "--max-seconds", "2"])
     out = capsys.readouterr().out
     assert rc == cli.EXIT_PASS and "chain to 0000:03:00.0" in out
+
+
+def test_tegra_command_json(capsys):
+    rc = cli.main(["--backend", "mock", "tegra", "--json"])
+    data = json.loads(capsys.readouterr().out)
+    assert rc == cli.EXIT_PASS and data["ok"] is True
+    assert data["model"] == "Tegra (mock Jetson)"
+
+
+def test_gpu_on_tegra_prints_hint(capsys, monkeypatch):
+    # On a Jetson the discrete-GPU path can't work; `gpu` should nudge the user to `tegra`.
+    monkeypatch.setattr(cli.tegra, "is_tegra", lambda: True)
+    rc = cli.main(["--backend", "mock", "gpu", "0"])
+    err = capsys.readouterr().err
+    assert rc == cli.EXIT_PASS and "computetest tegra" in err

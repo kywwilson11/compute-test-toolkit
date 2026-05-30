@@ -21,7 +21,7 @@ import sqlite3
 import sys
 from typing import Any
 
-from . import ber, diagnostics, ethernet, gmsl, gpu, lmt_adapter, margining, nvme
+from . import ber, diagnostics, ethernet, gmsl, gpu, lmt_adapter, margining, nvme, tegra
 from .backend import select_backend
 from .bert import run_bert
 from .harness import run_test_plan
@@ -180,6 +180,18 @@ def _build_parser() -> argparse.ArgumentParser:
         sp = sub.add_parser(name, parents=[common], help=help_)
         sp.add_argument("target", help="device / index / interface")
 
+    sp = sub.add_parser("tegra", parents=[common],
+                        help="Tegra/Jetson SoC telemetry via tegrastats (no nvidia-smi)")
+    sp.add_argument("--max-temp", type=float, default=85.0,
+                    help="max thermal-zone temp in C (default 85)")
+    sp.add_argument("--throttle-temp", type=float, default=97.0,
+                    help="zone temp (C) at/above which thermal throttling is inferred "
+                         "(default 97)")
+    sp.add_argument("--samples", type=int, default=5,
+                    help="tegrastats samples folded to a worst-case snapshot (default 5)")
+    sp.add_argument("--interval-ms", type=int, default=1000,
+                    help="tegrastats --interval in ms (default 1000)")
+
     sp = sub.add_parser("plan", parents=[common], help="run a full test plan from a config")
     sp.add_argument("config")
     sp.add_argument("--db", default=":memory:", help="SQLite results path")
@@ -276,7 +288,19 @@ def _run(args) -> int:
         _emit_ocp(args, "chain", d)
         return _verdict_exit(d.status)
 
+    if args.cmd == "tegra":
+        th = tegra.check_tegra(max_temp_c=args.max_temp, throttle_temp_c=args.throttle_temp,
+                               samples=args.samples, interval_ms=args.interval_ms)
+        _emit(th.summary(), th.to_dict(), args.json, sink=sink)
+        _emit_ocp(args, "health", th, label="tegra")
+        return EXIT_PASS if th.ok else EXIT_FAIL
+
     if args.cmd in ("nvme", "gpu", "gmsl", "eth", "can"):
+        # On a Jetson the discrete-GPU path can't work (no nvidia-smi); point the
+        # operator at the SoC-native check instead of just erroring out.
+        if args.cmd == "gpu" and tegra.is_tegra():
+            print("# Tegra/Jetson SoC detected (no nvidia-smi); "
+                  "run `computetest tegra` for SoC telemetry", file=sys.stderr)
         # The dispatch returns one of five distinct Health dataclasses; they share the
         # .ok / .summary() / .to_dict() shape but not a common nominal type, so Any
         # is the honest annotation here (a Protocol would be more boilerplate than payoff).
