@@ -12,6 +12,12 @@ from .events import (  # noqa: F401
     EventRecordType,
     check_event_get_clear,
 )
+from .hdm import (  # noqa: F401
+    HdmDecoder,
+    HdmHealth,
+    calc_interleave_pos,
+    check_hdm_decoder,
+)
 from .link import (  # noqa: F401
     CxlLinkHealth,
     FlitMode,
@@ -62,4 +68,6 @@ __all__ = [
     # poison / containment (Sprint 4.4)
     "PoisonSource", "PoisonEntry", "PoisonList", "PoisonHealth",
     "ContainmentHealth", "check_poison_inject_clear", "check_containment",
+    # hdm (Sprint 4.4)
+    "HdmDecoder", "HdmHealth", "calc_interleave_pos", "check_hdm_decoder",
 ]
