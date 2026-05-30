@@ -6,6 +6,11 @@
 * ``gptp_proto`` — 802.1AS protocol conformance (Pdelay, correction field,
   neighborRateRatio, asCapable, BMCA election + failover).
 """
+from .frer import (  # noqa: F401
+    FrerHealth,
+    SequenceRecovery,
+    check_frer,
+)
 from .gptp import (  # noqa: F401
     DEFAULT_LOCK_LIMIT_S,
     DEFAULT_MAX_TE_NS,
@@ -81,4 +86,6 @@ __all__ = [
     "run_verify_respond", "check_fragmentation", "check_preemption",
     "ADD_FRAG_SIZE_BYTES", "VERIFY_TIME_MIN_MS", "VERIFY_TIME_MAX_MS",
     "RESPOND_WINDOW_FRACTION",
+    # frer / 802.1CB (Sprint 4.2)
+    "SequenceRecovery", "FrerHealth", "check_frer",
 ]
