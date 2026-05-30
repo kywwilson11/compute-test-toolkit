@@ -50,6 +50,8 @@ from .instruments import (
     SCPIInstrument,
     SwitchMatrix,
     ThermalChamber,
+    TimeIntervalAnalyzer,
+    TSNTrafficGenerator,
     Vna,
 )
 
@@ -64,6 +66,8 @@ _KIND_REGISTRY: dict[str, type[SCPIInstrument]] = {
     "SwitchMatrix": SwitchMatrix,
     "Vna": Vna,
     "ThermalChamber": ThermalChamber,
+    "TimeIntervalAnalyzer": TimeIntervalAnalyzer,
+    "TSNTrafficGenerator": TSNTrafficGenerator,
 }
 
 

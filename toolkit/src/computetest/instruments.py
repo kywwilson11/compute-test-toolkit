@@ -919,3 +919,66 @@ class ThermalChamber(SCPIInstrument):
         """True iff the actual temperature is within ``tolerance_c`` of the
         setpoint (poll before trusting a measurement at a new corner)."""
         return abs(self.measure_temperature().value - self.setpoint().value) <= tolerance_c
+
+
+# ----------------------------------------------------------------------------- #
+# Time-interval analyzer (TSN gPTP Max|TE|)
+# ----------------------------------------------------------------------------- #
+class TimeIntervalAnalyzer(SCPIInstrument):
+    """A time-interval analyzer / counter (Keysight 53230A class) measuring the
+    phase of a recovered 1PPS against a reference 1PPS — the Max|TE| (maximum
+    time error) metric an 802.1AS gPTP slave must hold (Avnu's 1PPS method).
+
+    SCPI: ``MEAS:TINT? (@1),(@2)`` returns the time interval (seconds) between
+    the reference (ch 1) and DUT (ch 2) 1PPS edges; helpers convert to ns.
+    """
+
+    def measure_time_interval(self) -> Reading:
+        """Time interval between the reference and DUT 1PPS edges (seconds)."""
+        raw = self.query("MEAS:TINT? (@1),(@2)")
+        return Reading(parse_scpi_float(raw), "s", raw)
+
+    def measure_time_error_ns(self) -> float:
+        """Absolute time error |TE| in nanoseconds (the gPTP slave metric)."""
+        return abs(self.measure_time_interval().value) * 1e9
+
+
+# ----------------------------------------------------------------------------- #
+# TSN traffic generator / analyzer (scheduled traffic, preemption, FRER)
+# ----------------------------------------------------------------------------- #
+class TSNTrafficGenerator(SCPIInstrument):
+    """A TSN traffic generator/analyzer facade (VIAVI TTworkbench+M1, Spirent,
+    Keysight) for scheduled-traffic (Qbv), frame-preemption (Clause 99), and
+    FRER tests. Configures per-stream priority/rate, runs traffic, reads
+    per-stream counters, and applies link impairments.
+
+    Modeled as a SCPI facade so it unit-tests on macOS behind the same
+    _MockSCPI/_PyVisaTransport split; a real backend swaps in unchanged.
+    """
+
+    def configure_stream(self, stream_id: int, *, priority: int,
+                         rate_mbps: float) -> None:
+        """Configure a stream's 802.1Q priority and offered rate."""
+        self.write(f":STREAM{stream_id:d}:PRIO {priority:d}")
+        self.write(f":STREAM{stream_id:d}:RATE {rate_mbps:g}")
+
+    def start(self) -> None:
+        """Start offering traffic on all configured streams (:TRAF:STAR)."""
+        self.write(":TRAF:STAR")
+
+    def stop(self) -> None:
+        """Stop traffic (:TRAF:STOP)."""
+        self.write(":TRAF:STOP")
+
+    def read_counters(self, stream_id: int) -> dict[str, int]:
+        """Read tx/rx/dropped frame counters for one stream."""
+        tx = int(self.query_float(f":STREAM{stream_id:d}:TX:COUN?"))
+        rx = int(self.query_float(f":STREAM{stream_id:d}:RX:COUN?"))
+        dropped = int(self.query_float(f":STREAM{stream_id:d}:DROP:COUN?"))
+        return {"tx": tx, "rx": rx, "dropped": dropped}
+
+    def set_impairment(self, *, loss_pct: float = 0.0,
+                       reorder: bool = False) -> None:
+        """Apply a link impairment (frame loss %, reordering) for FRER tests."""
+        self.write(f":IMP:LOSS {loss_pct:g}")
+        self.write(f":IMP:REOR {'ON' if reorder else 'OFF'}")
