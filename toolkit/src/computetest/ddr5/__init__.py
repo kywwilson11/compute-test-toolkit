@@ -45,6 +45,10 @@ from .rfm import (  # noqa: F401
     RfmPracHealth,
     check_rfm_prac,
 )
+from .soak import (  # noqa: F401
+    SoakSnapshot,
+    soak_snapshot,
+)
 from .spd import (  # noqa: F401
     DDR5_SPD_KEY,
     SpdHealth,
@@ -74,4 +78,6 @@ __all__ = [
     "RfmPracHealth", "check_rfm_prac",
     # spd (Sprint 4.3)
     "SpdInfo", "SpdHealth", "parse_spd", "check_spd", "DDR5_SPD_KEY",
+    # soak (Sprint 4.3)
+    "SoakSnapshot", "soak_snapshot",
 ]
