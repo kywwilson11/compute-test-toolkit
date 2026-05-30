@@ -6,6 +6,10 @@
 * ``gptp_proto`` — 802.1AS protocol conformance (Pdelay, correction field,
   neighborRateRatio, asCapable, BMCA election + failover).
 """
+from .cable import (  # noqa: F401
+    CableHealth,
+    check_cable_tdr,
+)
 from .frer import (  # noqa: F401
     FrerHealth,
     SequenceRecovery,
@@ -104,4 +108,6 @@ __all__ = [
     # pma electrical / TC8 L1 (Sprint 4.2)
     "PmaHealth", "check_pma_electrical", "DEFAULT_PMA_MAX_LINKUP_MS",
     "DEFAULT_PMA_SQI_MIN",
+    # cable TDR / OABR_CABLE (Sprint 4.2)
+    "CableHealth", "check_cable_tdr",
 ]
