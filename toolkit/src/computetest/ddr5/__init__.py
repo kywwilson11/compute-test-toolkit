@@ -41,6 +41,10 @@ from .ras import (  # noqa: F401
     MockDdr5Ras,
     ScrubConfig,
 )
+from .rfm import (  # noqa: F401
+    RfmPracHealth,
+    check_rfm_prac,
+)
 
 __all__ = [
     # crc (Sprint 4.3)
@@ -59,4 +63,6 @@ __all__ = [
     # eye (Sprint 4.3)
     "Ddr5EyeHealth", "check_dq_eye", "DEFAULT_DDR5_EYE_UI_MIN",
     "DEFAULT_DDR5_EYE_MV_MIN",
+    # rfm/prac (Sprint 4.3)
+    "RfmPracHealth", "check_rfm_prac",
 ]
