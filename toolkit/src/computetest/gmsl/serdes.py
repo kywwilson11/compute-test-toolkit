@@ -212,6 +212,42 @@ class ErrorCounters:
                 "any_error": self.any_error}
 
 
+@dataclass
+class VideoStats:
+    """CSI-2 video payload integrity for one link: the video-CRC error counter,
+    the virtual-channel / data-type mapping, and frames seen. A locked GMSL link
+    can still deliver corrupt or mis-mapped CSI-2, so these are checked
+    separately from lock."""
+    link: int
+    virtual_channel: int
+    data_type: int                   # CSI-2 data type code (e.g. 0x2C = RAW12)
+    video_crc_errors: int
+    frames: int
+
+    def to_dict(self) -> dict:
+        return {"link": self.link, "virtual_channel": self.virtual_channel,
+                "data_type": self.data_type,
+                "video_crc_errors": self.video_crc_errors, "frames": self.frames}
+
+
+@dataclass
+class ControlChannelStats:
+    """Tunneled control-channel (I2C/UART/SPI/GPIO) integrity: the 16-bit
+    control-packet CRC errors, sequence-number gaps, and ARQ retransmissions
+    (recovered errors)."""
+    crc_errors: int
+    sequence_gaps: int
+    arq_retransmits: int
+
+    @property
+    def clean(self) -> bool:
+        return self.crc_errors == 0 and self.sequence_gaps == 0
+
+    def to_dict(self) -> dict:
+        return {"crc_errors": self.crc_errors, "sequence_gaps": self.sequence_gaps,
+                "arq_retransmits": self.arq_retransmits, "clean": self.clean}
+
+
 # ---------------------------------------------------------------------------
 # SerDesLink ABC
 # ---------------------------------------------------------------------------
@@ -295,6 +331,14 @@ class SerDesLink(abc.ABC):
         """Clear the latched safety/diagnostic error counters (de-asserts ERRB)."""
 
     @abc.abstractmethod
+    def read_video_stats(self, link: int) -> VideoStats:
+        """Read CSI-2 video payload integrity for one link (video-CRC + VC/DT map)."""
+
+    @abc.abstractmethod
+    def read_control_channel_stats(self) -> ControlChannelStats:
+        """Read the tunneled control-channel integrity counters (CRC/seq#/ARQ)."""
+
+    @abc.abstractmethod
     def set_loopback(self, enable: bool, *,
                      direction: LinkDirection = LinkDirection.FORWARD) -> None:
         """Enable/disable internal loopback for fault isolation."""
@@ -340,7 +384,14 @@ class MockSerDes(SerDesLink):
                  injected_prbs_errors: int = 0,
                  injected_fec_corrected: int = 0,
                  injected_fec_uncorrectable: int = 0,
-                 injected_error_counters: ErrorCounters | None = None) -> None:
+                 injected_error_counters: ErrorCounters | None = None,
+                 injected_video_crc_errors: int = 0,
+                 injected_video_vc: int = 0,
+                 injected_video_dt: int = 0x2C,
+                 injected_frames: int = 5,
+                 injected_ctrl_crc_errors: int = 0,
+                 injected_seq_gaps: int = 0,
+                 injected_arq_retransmits: int = 0) -> None:
         super().__init__()
         self._info = SerDesInfo(vendor=vendor, part_number=part_number, role=role,
                                 serial=serial, firmware=firmware, links=links,
@@ -356,6 +407,13 @@ class MockSerDes(SerDesLink):
         self._loopback: dict[LinkDirection, bool] = {
             LinkDirection.FORWARD: False, LinkDirection.REVERSE: False}
         self._relocks = 0
+        self._video_crc = injected_video_crc_errors
+        self._video_vc = injected_video_vc
+        self._video_dt = injected_video_dt
+        self._frames = injected_frames
+        self._ctrl_crc = injected_ctrl_crc_errors
+        self._seq_gaps = injected_seq_gaps
+        self._arq = injected_arq_retransmits
 
     def info(self) -> SerDesInfo:
         return self._info
@@ -458,6 +516,17 @@ class MockSerDes(SerDesLink):
         """Test/stimulus hook (mock only): make the device report these latched
         counters, modelling a physical fault tripping the safety mechanism."""
         self._injected_counters = counters
+
+    def read_video_stats(self, link: int) -> VideoStats:
+        self._check_link(link)
+        return VideoStats(link=link, virtual_channel=self._video_vc,
+                          data_type=self._video_dt,
+                          video_crc_errors=self._video_crc, frames=self._frames)
+
+    def read_control_channel_stats(self) -> ControlChannelStats:
+        return ControlChannelStats(crc_errors=self._ctrl_crc,
+                                   sequence_gaps=self._seq_gaps,
+                                   arq_retransmits=self._arq)
 
     def set_loopback(self, enable: bool, *,
                      direction: LinkDirection = LinkDirection.FORWARD) -> None:

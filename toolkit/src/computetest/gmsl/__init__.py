@@ -19,18 +19,23 @@ from .channel import (  # noqa: F401
     check_channel_compliance,
 )
 from .checks import (  # noqa: F401
+    DEFAULT_CSI2_DATA_TYPE,
     DEFAULT_MAX_LOCK_MS,
     DEFAULT_PRE_FEC_TARGET_BER,
+    ControlHealth,
     EomHealth,
     FecHealth,
     PrbsBerHealth,
     SafetyHealth,
     SerDesLinkHealth,
+    VideoHealth,
     bench_line_fault,
+    check_control_channel,
     check_eom,
     check_fec,
     check_prbs_ber,
     check_serdes_link,
+    check_video_integrity,
     verify_safety_mechanism,
 )
 from .lmt import (  # noqa: F401
@@ -44,6 +49,7 @@ from .serdes import (  # noqa: F401
     DEFAULT_BIST_DURATION_S,
     DEFAULT_EOM_MV_MIN,
     DEFAULT_EOM_UI_MIN,
+    ControlChannelStats,
     EomReading,
     ErrorCounters,
     FecStats,
@@ -57,6 +63,7 @@ from .serdes import (  # noqa: F401
     SerDesInfo,
     SerDesLink,
     SerDesRole,
+    VideoStats,
 )
 from .video import (  # noqa: F401
     GmslDeserHealth,
@@ -71,11 +78,13 @@ __all__ = [
     # serdes (Sprint 4.1)
     "SerDesLink", "MockSerDes", "SerDesError", "SerDesInfo", "SerDesRole",
     "GmslMode", "LinkDirection", "GmslPrbsPattern", "LinkLock", "EomReading",
-    "FecStats", "PrbsResult", "ErrorCounters",
+    "FecStats", "PrbsResult", "ErrorCounters", "VideoStats", "ControlChannelStats",
     # checks (Sprint 4.1)
     "SerDesLinkHealth", "check_serdes_link", "PrbsBerHealth", "check_prbs_ber",
     "FecHealth", "check_fec", "EomHealth", "check_eom",
     "SafetyHealth", "verify_safety_mechanism", "bench_line_fault",
+    "VideoHealth", "check_video_integrity", "ControlHealth", "check_control_channel",
+    "DEFAULT_CSI2_DATA_TYPE",
     # channel (Sprint 4.1)
     "SParamMask", "MaskKind", "ChannelComplianceResult", "apply_gmsl3_filter",
     "check_against_mask", "check_channel_compliance", "GMSL3_FILTER_HZ",

@@ -316,3 +316,95 @@ def bench_line_fault(switch: SwitchMatrix, channels: list[int] | str, *,
         if psu is not None:
             psu.disable()
     return inject
+
+
+# CSI-2 RAW12 is the common automotive camera data type; a program supplies the
+# expected virtual-channel / data-type for its sensor.
+DEFAULT_CSI2_DATA_TYPE = 0x2C        # RAW12
+
+
+@dataclass
+class VideoHealth:
+    """CSI-2 video payload integrity verdict for one link."""
+    link: int
+    virtual_channel: int
+    data_type: int
+    video_crc_errors: int
+    frames: int
+    checks: dict[str, bool] = field(default_factory=dict)
+
+    @property
+    def ok(self) -> bool:
+        return bool(self.checks) and all(self.checks.values())
+
+    def summary(self) -> str:
+        fails = ",".join(k for k, v in self.checks.items() if not v)
+        state = "OK" if self.ok else f"FAIL({fails})"
+        return (f"GMSL video link{self.link} VC{self.virtual_channel} "
+                f"DT=0x{self.data_type:02X} crc_err={self.video_crc_errors} "
+                f"frames={self.frames} -> {state}")
+
+    def to_dict(self) -> dict:
+        return {"link": self.link, "virtual_channel": self.virtual_channel,
+                "data_type": self.data_type,
+                "video_crc_errors": self.video_crc_errors,
+                "frames": self.frames, "checks": self.checks, "ok": self.ok}
+
+
+def check_video_integrity(serdes: SerDesLink, *, link: int = 0,
+                          expect_vc: int = 0,
+                          expect_data_type: int = DEFAULT_CSI2_DATA_TYPE) -> VideoHealth:
+    """Verify CSI-2 payload integrity beyond lock: video-CRC counter clean, the
+    virtual-channel / data-type map matches the sensor, and frames are flowing.
+    A locked link can still carry corrupt or mis-mapped CSI-2."""
+    vs = serdes.read_video_stats(link)
+    checks = {
+        "no_video_crc_errors": vs.video_crc_errors == 0,
+        "vc_ok": vs.virtual_channel == expect_vc,
+        "data_type_ok": vs.data_type == expect_data_type,
+        "frames_flowing": vs.frames > 0,
+    }
+    return VideoHealth(link=vs.link, virtual_channel=vs.virtual_channel,
+                       data_type=vs.data_type, video_crc_errors=vs.video_crc_errors,
+                       frames=vs.frames, checks=checks)
+
+
+@dataclass
+class ControlHealth:
+    """Tunneled control-channel integrity verdict (CRC / sequence / ARQ)."""
+    crc_errors: int
+    sequence_gaps: int
+    arq_retransmits: int
+    max_arq: int
+    checks: dict[str, bool] = field(default_factory=dict)
+
+    @property
+    def ok(self) -> bool:
+        return bool(self.checks) and all(self.checks.values())
+
+    def summary(self) -> str:
+        fails = ",".join(k for k, v in self.checks.items() if not v)
+        state = "OK" if self.ok else f"FAIL({fails})"
+        return (f"GMSL control crc_err={self.crc_errors} "
+                f"seq_gaps={self.sequence_gaps} "
+                f"arq={self.arq_retransmits}/{self.max_arq} -> {state}")
+
+    def to_dict(self) -> dict:
+        return {"crc_errors": self.crc_errors, "sequence_gaps": self.sequence_gaps,
+                "arq_retransmits": self.arq_retransmits, "max_arq": self.max_arq,
+                "checks": self.checks, "ok": self.ok}
+
+
+def check_control_channel(serdes: SerDesLink, *, max_arq: int = 0) -> ControlHealth:
+    """Verify the tunneled control channel: no CRC errors, no sequence-number
+    gaps, and ARQ retransmissions within budget (retransmits recover errors, but
+    a rising count flags a marginal control link)."""
+    cs = serdes.read_control_channel_stats()
+    checks = {
+        "no_control_crc_errors": cs.crc_errors == 0,
+        "no_sequence_gaps": cs.sequence_gaps == 0,
+        "arq_within_budget": cs.arq_retransmits <= max_arq,
+    }
+    return ControlHealth(crc_errors=cs.crc_errors, sequence_gaps=cs.sequence_gaps,
+                         arq_retransmits=cs.arq_retransmits, max_arq=max_arq,
+                         checks=checks)
