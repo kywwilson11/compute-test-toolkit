@@ -45,6 +45,13 @@ from .rfm import (  # noqa: F401
     RfmPracHealth,
     check_rfm_prac,
 )
+from .spd import (  # noqa: F401
+    DDR5_SPD_KEY,
+    SpdHealth,
+    SpdInfo,
+    check_spd,
+    parse_spd,
+)
 
 __all__ = [
     # crc (Sprint 4.3)
@@ -65,4 +72,6 @@ __all__ = [
     "DEFAULT_DDR5_EYE_MV_MIN",
     # rfm/prac (Sprint 4.3)
     "RfmPracHealth", "check_rfm_prac",
+    # spd (Sprint 4.3)
+    "SpdInfo", "SpdHealth", "parse_spd", "check_spd", "DDR5_SPD_KEY",
 ]
