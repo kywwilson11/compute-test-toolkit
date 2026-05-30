@@ -69,7 +69,8 @@ class MockDdr5Ras:
 
     def __init__(self, *, dimms: tuple[str, ...] = ("DIMM_A1", "DIMM_A2"),
                  injected_ue: int = 0, injected_scrub_corrected: int = 0,
-                 injected_scrub_max_row: int = 0) -> None:
+                 injected_scrub_max_row: int = 0,
+                 injected_hppr_resources: int = 4) -> None:
         self._ecs = EcsConfig()
         self._scrub = ScrubConfig()
         self._ce: dict[str, int] = {d: 0 for d in dimms}
@@ -78,6 +79,7 @@ class MockDdr5Ras:
         self._scrub_max_row = injected_scrub_max_row
         self._repaired: set[int] = set()
         self._persisted: set[int] = set()
+        self._hppr_resources = injected_hppr_resources
 
     # --- ECS --------------------------------------------------------------
     def read_ecs(self) -> EcsConfig:
@@ -140,6 +142,10 @@ class MockDdr5Ras:
 
     def is_repaired(self, hpa: int) -> bool:
         return hpa in self._repaired
+
+    def hppr_resources_available(self) -> int:
+        """Advertised available hard-PPR resources (DDR5 MR54-57)."""
+        return self._hppr_resources
 
     def power_cycle(self) -> None:
         """Model a power cycle: sPPR repairs revert, hPPR persist, EDAC counters

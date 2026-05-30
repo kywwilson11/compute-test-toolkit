@@ -14,6 +14,10 @@ from .ecs import (  # noqa: F401
     EcsHealth,
     check_ecs,
 )
+from .ppr import (  # noqa: F401
+    PprHealth,
+    check_ppr,
+)
 from .ras import (  # noqa: F401
     ECS_THRESHOLDS,
     Ddr5RasError,
@@ -31,4 +35,6 @@ __all__ = [
     "EccReportHealth", "check_ce_reporting", "check_ue_reporting",
     # ecs (Sprint 4.3)
     "EcsHealth", "check_ecs", "DEFAULT_MAX_SCRUB_TIME_S",
+    # ppr (Sprint 4.3)
+    "PprHealth", "check_ppr",
 ]
