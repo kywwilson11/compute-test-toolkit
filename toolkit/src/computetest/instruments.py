@@ -811,3 +811,76 @@ class SwitchMatrix(SCPIInstrument):
     def closed_channels(self) -> str:
         """Return the SCPI string describing which channels are currently closed."""
         return self.query(":ROUT:CLOS:STAT?")
+
+
+# ----------------------------------------------------------------------------- #
+# Vector network analyzer (4-port, differential S-parameters)
+# ----------------------------------------------------------------------------- #
+# Mixed-mode S-parameters a differential-channel compliance run reads: Sdd =
+# differential-in/out (insertion/return loss), Scd/Sdc = mode conversion.
+# Validated so a typo can't silently sweep the wrong parameter.
+_VNA_PARAMS = {"SDD11", "SDD21", "SDD12", "SDD22", "SCD21", "SDC21", "SCC11"}
+
+
+@dataclass
+class SParamSweep:
+    """A magnitude(dB)-vs-frequency sweep of one mixed-mode S-parameter.
+
+    ``freqs_hz`` and ``magnitudes_db`` are parallel arrays (one dB value per
+    frequency point) — the shape a channel-compliance mask is checked against.
+    """
+
+    param: str
+    freqs_hz: list[float]
+    magnitudes_db: list[float]
+
+    def points(self) -> list[tuple[float, float]]:
+        return list(zip(self.freqs_hz, self.magnitudes_db, strict=True))
+
+    def to_dict(self) -> dict:
+        return {"param": self.param, "freqs_hz": list(self.freqs_hz),
+                "magnitudes_db": list(self.magnitudes_db),
+                "points": len(self.freqs_hz)}
+
+
+class Vna(SCPIInstrument):
+    """A 4-port vector network analyzer for differential channel compliance —
+    the instrument that qualifies a GMSL3 (or automotive-Ethernet) channel's
+    insertion/return loss and mode conversion against a spec mask.
+
+    SCPI: ``SENS:FREQ:STAR`` / ``SENS:FREQ:STOP`` / ``SENS:SWE:POIN`` set the
+    sweep; ``CALC:PAR:DEF '<param>'`` selects a mixed-mode trace; ``CALC:DATA?
+    FDATA`` returns the formatted (dB) trace and ``SENS:FREQ:DATA?`` the
+    frequency axis (both comma-separated). The two traces zip into an
+    ``SParamSweep``.
+    """
+
+    def set_sweep(self, start_hz: float, stop_hz: float, points: int = 201) -> None:
+        """Program the frequency sweep (start/stop in Hz, number of points)."""
+        if stop_hz <= start_hz:
+            raise InstrumentError(
+                f"sweep stop ({stop_hz:g}) must exceed start ({start_hz:g})")
+        if points < 2:
+            raise InstrumentError(f"sweep needs >= 2 points; got {points}")
+        self.write(f"SENS:FREQ:STAR {start_hz:g}")
+        self.write(f"SENS:FREQ:STOP {stop_hz:g}")
+        self.write(f"SENS:SWE:POIN {points:d}")
+
+    def measure_sparam(self, param: str) -> SParamSweep:
+        """Select a mixed-mode parameter and read its dB trace + frequency axis."""
+        key = param.upper()
+        if key not in _VNA_PARAMS:
+            raise InstrumentError(
+                f"unknown S-parameter {param!r} (expected one of {sorted(_VNA_PARAMS)})")
+        self.write(f"CALC:PAR:DEF '{key}'")
+        freqs = self._parse_trace(self.query("SENS:FREQ:DATA?"))
+        mags = self._parse_trace(self.query("CALC:DATA? FDATA"))
+        if len(freqs) != len(mags):
+            raise InstrumentError(
+                f"{key}: freq axis ({len(freqs)}) and trace ({len(mags)}) length mismatch")
+        return SParamSweep(param=key, freqs_hz=freqs, magnitudes_db=mags)
+
+    @staticmethod
+    def _parse_trace(raw: str) -> list[float]:
+        """Parse a comma-separated SCPI trace into floats (overflow -> +/-inf)."""
+        return [parse_scpi_float(field) for field in raw.split(",") if field.strip()]

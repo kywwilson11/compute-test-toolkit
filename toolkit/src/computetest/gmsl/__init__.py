@@ -6,7 +6,18 @@
   ``gmsl.check_gmsl(...)`` keep working unchanged after the package split).
 * ``serdes`` — Sprint 4.1 vendor-agnostic SerDes link abstraction: negotiated
   mode, pre/post-FEC PRBS margin, EOM eye, and safety error counters.
+* ``checks`` — verdict/health layer over ``serdes`` (lock/mode, PRBS BER, FEC, EOM).
+* ``channel`` — Sprint 4.1 GMSL3 S-parameter (VNA) channel-compliance framework.
 """
+from .channel import (  # noqa: F401
+    GMSL3_FILTER_HZ,
+    ChannelComplianceResult,
+    MaskKind,
+    SParamMask,
+    apply_gmsl3_filter,
+    check_against_mask,
+    check_channel_compliance,
+)
 from .checks import (  # noqa: F401
     DEFAULT_MAX_LOCK_MS,
     DEFAULT_PRE_FEC_TARGET_BER,
@@ -54,4 +65,7 @@ __all__ = [
     # checks (Sprint 4.1)
     "SerDesLinkHealth", "check_serdes_link", "PrbsBerHealth", "check_prbs_ber",
     "FecHealth", "check_fec", "EomHealth", "check_eom",
+    # channel (Sprint 4.1)
+    "SParamMask", "MaskKind", "ChannelComplianceResult", "apply_gmsl3_filter",
+    "check_against_mask", "check_channel_compliance", "GMSL3_FILTER_HZ",
 ]
