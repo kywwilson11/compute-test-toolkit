@@ -14,6 +14,10 @@ from .ecs import (  # noqa: F401
     EcsHealth,
     check_ecs,
 )
+from .lmt import (  # noqa: F401
+    DqMargin,
+    training_to_lmt_records,
+)
 from .ppr import (  # noqa: F401
     PprHealth,
     check_ppr,
@@ -37,4 +41,6 @@ __all__ = [
     "EcsHealth", "check_ecs", "DEFAULT_MAX_SCRUB_TIME_S",
     # ppr (Sprint 4.3)
     "PprHealth", "check_ppr",
+    # lmt adapter (Sprint 4.3)
+    "DqMargin", "training_to_lmt_records",
 ]
