@@ -9,9 +9,11 @@ legacy ``GmslHealth``.
 """
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
 
 from ..ber import BertVerdict, assess
+from ..instruments import PowerSupply, SwitchMatrix
 from ..pcie.retimer.base import EyeMeasurement, eye_quality_verdict
 from .serdes import (
     DEFAULT_EOM_MV_MIN,
@@ -239,3 +241,78 @@ def check_eom(serdes: SerDesLink, *, link: int = 0,
     return EomHealth(link=link, direction=direction.value, mode=eom.mode.value,
                      eye=eye, subeyes_mv=list(eom.vertical_mv),
                      checks={"eye_open": passed})
+
+
+# GMSL safety/diagnostic counter fields the ERRB pin NORs together — the set a
+# RAS check can assert latched after injecting the matching fault.
+_SAFETY_FIELDS = {"decoding_errors", "idle_errors", "line_fault", "video_crc_errors"}
+
+
+@dataclass
+class SafetyHealth:
+    """Diagnostic-coverage verdict for one safety mechanism: did ERRB assert on
+    the injected fault, did the expected counter latch, did clearing de-assert
+    ERRB. ASIL-B/-D-decomposition diagnostic-coverage view only — this verifies
+    the platform's OWN reporting fires; it does not weaponise a fault."""
+    fault_name: str
+    expect_field: str
+    checks: dict[str, bool] = field(default_factory=dict)
+
+    @property
+    def ok(self) -> bool:
+        return bool(self.checks) and all(self.checks.values())
+
+    def summary(self) -> str:
+        fails = ",".join(k for k, v in self.checks.items() if not v)
+        state = "OK" if self.ok else f"FAIL({fails})"
+        return f"GMSL safety [{self.fault_name}] expect={self.expect_field} -> {state}"
+
+    def to_dict(self) -> dict:
+        return {"fault_name": self.fault_name, "expect_field": self.expect_field,
+                "checks": self.checks, "ok": self.ok}
+
+
+def verify_safety_mechanism(serdes: SerDesLink, inject_fault: Callable[[], None], *,
+                            fault_name: str, expect_field: str) -> SafetyHealth:
+    """Verify a GMSL safety mechanism's diagnostic coverage end to end:
+
+    1. ERRB is clear before the fault,
+    2. ``inject_fault()`` (the bench stimulus — e.g. opening the coax on a
+       ``SwitchMatrix`` or cutting PoC power on a ``PowerSupply``) trips it,
+    3. ERRB asserts and the expected ``ErrorCounters`` field latches,
+    4. ``clear_errors()`` de-asserts ERRB.
+
+    ``expect_field`` is the ``ErrorCounters`` attribute the mechanism should
+    latch (e.g. ``line_fault``, ``video_crc_errors``)."""
+    if expect_field not in _SAFETY_FIELDS:
+        raise ValueError(
+            f"unknown safety field {expect_field!r}; "
+            f"expected one of {sorted(_SAFETY_FIELDS)}")
+    errb_clear_before = not serdes.errb_asserted()
+    inject_fault()
+    errb_asserts = serdes.errb_asserted()
+    n_links = serdes.info().links
+    latched = any(bool(getattr(serdes.read_error_counters(link), expect_field))
+                  for link in range(n_links))
+    serdes.clear_errors()
+    errb_clears_after = not serdes.errb_asserted()
+    checks = {
+        "errb_clear_before": errb_clear_before,
+        "errb_asserts_on_fault": errb_asserts,
+        f"{expect_field}_latched": latched,
+        "errb_clears_after": errb_clears_after,
+    }
+    return SafetyHealth(fault_name=fault_name, expect_field=expect_field, checks=checks)
+
+
+def bench_line_fault(switch: SwitchMatrix, channels: list[int] | str, *,
+                     psu: PowerSupply | None = None) -> Callable[[], None]:
+    """Build a bench fault-stimulus callable for ``verify_safety_mechanism``:
+    open the coax path on a switch matrix (and optionally cut PoC power) so the
+    SerDes safety mechanism trips. On real hardware the device's own counters
+    latch from the physical fault; pair this with a SerDes that reflects it."""
+    def inject() -> None:
+        switch.open_channel(channels)
+        if psu is not None:
+            psu.disable()
+    return inject

@@ -24,11 +24,14 @@ from .checks import (  # noqa: F401
     EomHealth,
     FecHealth,
     PrbsBerHealth,
+    SafetyHealth,
     SerDesLinkHealth,
+    bench_line_fault,
     check_eom,
     check_fec,
     check_prbs_ber,
     check_serdes_link,
+    verify_safety_mechanism,
 )
 from .lmt import (  # noqa: F401
     MARGIN_EYE_H,
@@ -72,6 +75,7 @@ __all__ = [
     # checks (Sprint 4.1)
     "SerDesLinkHealth", "check_serdes_link", "PrbsBerHealth", "check_prbs_ber",
     "FecHealth", "check_fec", "EomHealth", "check_eom",
+    "SafetyHealth", "verify_safety_mechanism", "bench_line_fault",
     # channel (Sprint 4.1)
     "SParamMask", "MaskKind", "ChannelComplianceResult", "apply_gmsl3_filter",
     "check_against_mask", "check_channel_compliance", "GMSL3_FILTER_HZ",

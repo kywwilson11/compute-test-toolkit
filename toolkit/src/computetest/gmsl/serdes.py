@@ -291,6 +291,10 @@ class SerDesLink(abc.ABC):
         """True iff the ERRB pin is currently asserted (any monitored fault)."""
 
     @abc.abstractmethod
+    def clear_errors(self, link: int | None = None) -> None:
+        """Clear the latched safety/diagnostic error counters (de-asserts ERRB)."""
+
+    @abc.abstractmethod
     def set_loopback(self, enable: bool, *,
                      direction: LinkDirection = LinkDirection.FORWARD) -> None:
         """Enable/disable internal loopback for fault isolation."""
@@ -444,6 +448,16 @@ class MockSerDes(SerDesLink):
         # ERRB is the NOR of the monitored faults across all links.
         return any(self.read_error_counters(link).any_error
                    for link in range(self._info.links))
+
+    def clear_errors(self, link: int | None = None) -> None:
+        if link is not None:
+            self._check_link(link)
+        self._injected_counters = None
+
+    def inject_error_counters(self, counters: ErrorCounters) -> None:
+        """Test/stimulus hook (mock only): make the device report these latched
+        counters, modelling a physical fault tripping the safety mechanism."""
+        self._injected_counters = counters
 
     def set_loopback(self, enable: bool, *,
                      direction: LinkDirection = LinkDirection.FORWARD) -> None:
