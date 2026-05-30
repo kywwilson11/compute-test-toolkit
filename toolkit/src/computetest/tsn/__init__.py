@@ -18,6 +18,11 @@ from .gptp import (  # noqa: F401
     check_gptp_time_error,
     emit_gptp_te,
 )
+from .gptp_hotstandby import (  # noqa: F401
+    DEFAULT_HOLDOVER_NS,
+    HotStandbyHealth,
+    check_hot_standby_failover,
+)
 from .gptp_proto import (  # noqa: F401
     DEFAULT_CORRECTION_TOL_NS,
     DEFAULT_MAX_TURNAROUND_NS,
@@ -88,4 +93,6 @@ __all__ = [
     "RESPOND_WINDOW_FRACTION",
     # frer / 802.1CB (Sprint 4.2)
     "SequenceRecovery", "FrerHealth", "check_frer",
+    # hot-standby / 802.1ASdm (Sprint 4.2)
+    "HotStandbyHealth", "check_hot_standby_failover", "DEFAULT_HOLDOVER_NS",
 ]
