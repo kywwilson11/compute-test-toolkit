@@ -49,6 +49,7 @@ from .instruments import (
     Scope,
     SCPIInstrument,
     SwitchMatrix,
+    ThermalChamber,
     Vna,
 )
 
@@ -62,6 +63,7 @@ _KIND_REGISTRY: dict[str, type[SCPIInstrument]] = {
     "ExternalBERT": ExternalBERT,
     "SwitchMatrix": SwitchMatrix,
     "Vna": Vna,
+    "ThermalChamber": ThermalChamber,
 }
 
 

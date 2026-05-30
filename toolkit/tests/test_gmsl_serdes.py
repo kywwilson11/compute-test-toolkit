@@ -42,8 +42,8 @@ class TestContract:
         assert LinkDirection.REVERSE.value == "reverse"
 
     def test_prbs_pattern_includes_prbs24(self):
-        # PRBS24 is the GMSL on-die pattern intentionally absent from the
-        # external-BERT set; the SerDes generator must still offer it.
+        # PRBS24 is the GMSL on-die pattern; as of Sprint 4.1.10 it is also in
+        # the external-BERT set so a bench BERT can correlate against it.
         assert GmslPrbsPattern.PRBS24.value == "PRBS24"
         assert GmslPrbsPattern.PRBS31.value == "PRBS31"
 

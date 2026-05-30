@@ -693,7 +693,7 @@ class SMU(SCPIInstrument):
 # ----------------------------------------------------------------------------- #
 # External hardware BERT
 # ----------------------------------------------------------------------------- #
-_BERT_PATTERNS = {"PRBS7", "PRBS9", "PRBS15", "PRBS23", "PRBS31", "USER"}
+_BERT_PATTERNS = {"PRBS7", "PRBS9", "PRBS15", "PRBS23", "PRBS24", "PRBS31", "USER"}
 
 
 @dataclass
@@ -726,7 +726,8 @@ class ExternalBERT(SCPIInstrument):
     """
 
     def set_pattern(self, pattern: str = "PRBS31") -> None:
-        """Set the pattern: PRBS7/9/15/23/31 or USER."""
+        """Set the pattern: PRBS7/9/15/23/24/31 or USER (PRBS24 added so a bench
+        BERT can correlate against the GMSL3 on-die PRBS generator)."""
         key = pattern.upper()
         if key not in _BERT_PATTERNS:
             raise InstrumentError(
@@ -884,3 +885,37 @@ class Vna(SCPIInstrument):
     def _parse_trace(raw: str) -> list[float]:
         """Parse a comma-separated SCPI trace into floats (overflow -> +/-inf)."""
         return [parse_scpi_float(field) for field in raw.split(",") if field.strip()]
+
+
+# ----------------------------------------------------------------------------- #
+# Thermal chamber / thermostream
+# ----------------------------------------------------------------------------- #
+class ThermalChamber(SCPIInstrument):
+    """A thermal chamber or thermostream: program a temperature setpoint and read
+    the actual chamber temperature. Drives the temperature axis of a V/T
+    margining shmoo — AEC-Q100 Grade-2 -40..+105 C for automotive parts.
+
+    SCPI: ``SOUR:TEMP <c>`` programs the setpoint; ``MEAS:TEMP?`` reads the
+    actual and ``SOUR:TEMP?`` the setpoint. ``settled()`` checks the actual is
+    within tolerance of the setpoint before a measurement at a new corner is
+    trusted.
+    """
+
+    def set_temperature(self, celsius: float) -> None:
+        """Program the temperature setpoint (SOUR:TEMP <c>)."""
+        self.write(f"SOUR:TEMP {celsius:g}")
+
+    def measure_temperature(self) -> Reading:
+        """Read the actual chamber temperature (MEAS:TEMP?)."""
+        raw = self.query("MEAS:TEMP?")
+        return Reading(parse_scpi_float(raw), "C", raw)
+
+    def setpoint(self) -> Reading:
+        """Read back the programmed setpoint (SOUR:TEMP?)."""
+        raw = self.query("SOUR:TEMP?")
+        return Reading(parse_scpi_float(raw), "C", raw)
+
+    def settled(self, *, tolerance_c: float = 2.0) -> bool:
+        """True iff the actual temperature is within ``tolerance_c`` of the
+        setpoint (poll before trusting a measurement at a new corner)."""
+        return abs(self.measure_temperature().value - self.setpoint().value) <= tolerance_c

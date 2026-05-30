@@ -70,9 +70,8 @@ class LinkDirection(str, Enum):
 class GmslPrbsPattern(str, Enum):
     """PRBS pattern for the in-system generator/checker. PRBS31 is the usual
     long-pattern stress; the GMSL on-die generator is commonly cited as PRBS24,
-    which is intentionally *not* in the external-BERT pattern set
-    (``instruments._BERT_PATTERNS``) — the correlation note lands in a later
-    Sprint-4.1 commit."""
+    which is now also in the external-BERT pattern set
+    (``instruments._BERT_PATTERNS``) so a bench BERT can correlate against it."""
     PRBS7 = "PRBS7"
     PRBS9 = "PRBS9"
     PRBS15 = "PRBS15"
@@ -339,6 +338,10 @@ class SerDesLink(abc.ABC):
         """Read the tunneled control-channel integrity counters (CRC/seq#/ARQ)."""
 
     @abc.abstractmethod
+    def read_temperature(self) -> float:
+        """Read the on-die junction temperature in degrees Celsius."""
+
+    @abc.abstractmethod
     def set_loopback(self, enable: bool, *,
                      direction: LinkDirection = LinkDirection.FORWARD) -> None:
         """Enable/disable internal loopback for fault isolation."""
@@ -391,7 +394,8 @@ class MockSerDes(SerDesLink):
                  injected_frames: int = 5,
                  injected_ctrl_crc_errors: int = 0,
                  injected_seq_gaps: int = 0,
-                 injected_arq_retransmits: int = 0) -> None:
+                 injected_arq_retransmits: int = 0,
+                 injected_temperature_c: float = 45.0) -> None:
         super().__init__()
         self._info = SerDesInfo(vendor=vendor, part_number=part_number, role=role,
                                 serial=serial, firmware=firmware, links=links,
@@ -414,6 +418,7 @@ class MockSerDes(SerDesLink):
         self._ctrl_crc = injected_ctrl_crc_errors
         self._seq_gaps = injected_seq_gaps
         self._arq = injected_arq_retransmits
+        self._temp_c = injected_temperature_c
 
     def info(self) -> SerDesInfo:
         return self._info
@@ -527,6 +532,9 @@ class MockSerDes(SerDesLink):
         return ControlChannelStats(crc_errors=self._ctrl_crc,
                                    sequence_gaps=self._seq_gaps,
                                    arq_retransmits=self._arq)
+
+    def read_temperature(self) -> float:
+        return self._temp_c
 
     def set_loopback(self, enable: bool, *,
                      direction: LinkDirection = LinkDirection.FORWARD) -> None:

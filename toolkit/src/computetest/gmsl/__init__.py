@@ -65,6 +65,11 @@ from .serdes import (  # noqa: F401
     SerDesRole,
     VideoStats,
 )
+from .shmoo import (  # noqa: F401
+    ShmooPoint,
+    ShmooResult,
+    vt_shmoo,
+)
 from .video import (  # noqa: F401
     GmslDeserHealth,
     GmslHealth,
@@ -91,4 +96,6 @@ __all__ = [
     # lmt adapter (Sprint 4.1)
     "eom_to_lmt_records", "MARGIN_EYE_V", "MARGIN_EYE_H", "MARGIN_VOLTAGE",
     "MARGIN_TEMP",
+    # shmoo (Sprint 4.1)
+    "ShmooPoint", "ShmooResult", "vt_shmoo",
 ]
