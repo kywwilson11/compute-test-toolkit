@@ -26,6 +26,15 @@ from .mailbox import (  # noqa: F401
     MailboxTransport,
     MockMailbox,
 )
+from .poison import (  # noqa: F401
+    ContainmentHealth,
+    PoisonEntry,
+    PoisonHealth,
+    PoisonList,
+    PoisonSource,
+    check_containment,
+    check_poison_inject_clear,
+)
 from .ras import (  # noqa: F401
     CXL_CE_BITS,
     CXL_UE_BITS,
@@ -50,4 +59,7 @@ __all__ = [
     # events (Sprint 4.4)
     "EventLog", "EventRecordType", "EventRecord", "EventLogStore",
     "EventClearHealth", "check_event_get_clear",
+    # poison / containment (Sprint 4.4)
+    "PoisonSource", "PoisonEntry", "PoisonList", "PoisonHealth",
+    "ContainmentHealth", "check_poison_inject_clear", "check_containment",
 ]
