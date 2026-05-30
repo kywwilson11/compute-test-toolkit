@@ -9,7 +9,10 @@
 """
 from .checks import (  # noqa: F401
     DEFAULT_MAX_LOCK_MS,
+    DEFAULT_PRE_FEC_TARGET_BER,
+    PrbsBerHealth,
     SerDesLinkHealth,
+    check_prbs_ber,
     check_serdes_link,
 )
 from .serdes import (  # noqa: F401
@@ -45,5 +48,5 @@ __all__ = [
     "GmslMode", "LinkDirection", "GmslPrbsPattern", "LinkLock", "EomReading",
     "FecStats", "PrbsResult", "ErrorCounters",
     # checks (Sprint 4.1)
-    "SerDesLinkHealth", "check_serdes_link",
+    "SerDesLinkHealth", "check_serdes_link", "PrbsBerHealth", "check_prbs_ber",
 ]

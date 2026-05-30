@@ -11,7 +11,14 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from .serdes import GmslMode, LinkLock, SerDesLink
+from ..ber import BertVerdict, assess
+from .serdes import (
+    GmslMode,
+    GmslPrbsPattern,
+    LinkDirection,
+    LinkLock,
+    SerDesLink,
+)
 
 # Default bound on lock acquisition (cold or forced relock). Real programs tune
 # this per part/channel from the AN-2585 / UG-2208 bring-up budget.
@@ -69,3 +76,71 @@ def check_serdes_link(serdes: SerDesLink, *,
               "lock_time_ok": lock_time_ok}
     return SerDesLinkHealth(part=info.part_number, expect_mode=expect_mode,
                             links=links, max_lock_ms=max_lock_ms, checks=checks)
+
+
+# Pre-FEC link-margin stop condition from the GMSL3 channel spec: a FEC-block
+# input (pre-FEC) BER above this, or any uncorrectable FEC block, ends the run.
+DEFAULT_PRE_FEC_TARGET_BER = 1e-7
+
+
+@dataclass
+class PrbsBerHealth:
+    """PRBS bit-error-rate verdict for one direction of one link."""
+    link: int
+    direction: str
+    pattern: str
+    kind: str                       # "link" or "video" PRBS generator
+    errors: int
+    bits: float
+    target_ber: float
+    confidence_target: float
+    confidence_reached: float
+    ber_upper: float
+    status: str                     # ber.assess: pass | continue | fail
+    checks: dict[str, bool] = field(default_factory=dict)
+
+    @property
+    def ok(self) -> bool:
+        return bool(self.checks) and all(self.checks.values())
+
+    def summary(self) -> str:
+        fails = ",".join(k for k, v in self.checks.items() if not v)
+        state = "OK" if self.ok else f"FAIL({fails})"
+        return (f"GMSL PRBS {self.kind}/{self.direction} link{self.link} "
+                f"E={self.errors} n={self.bits:.2e} BER<={self.ber_upper:.2e} "
+                f"(CL={self.confidence_reached:.4f}) -> {state}")
+
+    def to_dict(self) -> dict:
+        return {"link": self.link, "direction": self.direction,
+                "pattern": self.pattern, "kind": self.kind, "errors": self.errors,
+                "bits": self.bits, "target_ber": self.target_ber,
+                "confidence_target": self.confidence_target,
+                "confidence_reached": self.confidence_reached,
+                "ber_upper": self.ber_upper, "status": self.status,
+                "checks": self.checks, "ok": self.ok}
+
+
+def check_prbs_ber(serdes: SerDesLink, *, link: int = 0,
+                   direction: LinkDirection = LinkDirection.FORWARD,
+                   pattern: GmslPrbsPattern = GmslPrbsPattern.PRBS31,
+                   duration_s: float = 1.0, kind: str = "link",
+                   target_ber: float = DEFAULT_PRE_FEC_TARGET_BER,
+                   confidence: float = 0.95) -> PrbsBerHealth:
+    """Run a PRBS window in one direction and turn (errors, bits) into a
+    confidence-bounded BER verdict via ``computetest.ber``.
+
+    ``target_ber`` is the *pre-FEC* (FEC-block-input) stop condition from the
+    GMSL3 channel spec — the real link-margin oracle, since a clean post-FEC
+    output can still be living on FEC headroom. ``kind`` distinguishes the
+    link-layer PRBS from the video-pattern PRBS generator.
+    """
+    r = serdes.run_prbs_bist(direction=direction, pattern=pattern,
+                             duration_s=duration_s, link=link)
+    v: BertVerdict = assess(errors=r.error_count, bits=r.bits,
+                            target_ber=target_ber, confidence_target=confidence)
+    checks = {"prbs_locked": r.locked, "ber_proven": v.status == "pass"}
+    return PrbsBerHealth(
+        link=link, direction=direction.value, pattern=pattern.value, kind=kind,
+        errors=r.error_count, bits=r.bits, target_ber=target_ber,
+        confidence_target=confidence, confidence_reached=v.confidence_reached,
+        ber_upper=v.ber_upper, status=v.status, checks=checks)
