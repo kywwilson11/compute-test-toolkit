@@ -44,6 +44,13 @@ from .mailbox import (  # noqa: F401
     MailboxTransport,
     MockMailbox,
 )
+from .maintenance import (  # noqa: F401
+    PERFORM_MAINTENANCE_OPCODE,
+    MaintenanceClass,
+    MaintenanceDevice,
+    MaintenanceHealth,
+    check_maintenance,
+)
 from .poison import (  # noqa: F401
     ContainmentHealth,
     PoisonEntry,
@@ -87,4 +94,7 @@ __all__ = [
     # device / coherency (Sprint 4.4)
     "CxlDeviceType", "CoherencyHealth", "FwLifecycleHealth", "check_coherency",
     "check_media_ready_contract",
+    # maintenance / 0600h (Sprint 4.4)
+    "MaintenanceClass", "MaintenanceDevice", "MaintenanceHealth",
+    "check_maintenance", "PERFORM_MAINTENANCE_OPCODE",
 ]
