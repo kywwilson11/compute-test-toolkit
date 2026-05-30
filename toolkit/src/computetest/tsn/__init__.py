@@ -1,8 +1,16 @@
 """Automotive-Ethernet Time-Sensitive Networking (TSN) subpackage (Sprint 4.2).
 
-* ``phy`` — vendor-agnostic automotive-Ethernet PHY abstraction (SQI, link-up
+* ``phy``  — vendor-agnostic automotive-Ethernet PHY abstraction (SQI, link-up
   time, master/slave role, TDR, PRBS) generalized from the retimer pattern.
+* ``gptp`` — 802.1AS gPTP recovered-clock Max|TE| check (Avnu criteria).
 """
+from .gptp import (  # noqa: F401
+    DEFAULT_LOCK_LIMIT_S,
+    DEFAULT_MAX_TE_NS,
+    GptpTeHealth,
+    check_gptp_time_error,
+    emit_gptp_te,
+)
 from .phy import (  # noqa: F401
     DEFAULT_MAX_LINKUP_MS,
     DEFAULT_SQI_MIN,
@@ -17,7 +25,11 @@ from .phy import (  # noqa: F401
 )
 
 __all__ = [
+    # phy (Sprint 4.2)
     "EthPhy", "MockPhy", "PhyError", "PhyInfo", "MasterSlave",
     "PhyPrbsPattern", "PhyPrbsResult", "TdrResult",
     "DEFAULT_SQI_MIN", "DEFAULT_MAX_LINKUP_MS",
+    # gptp (Sprint 4.2)
+    "GptpTeHealth", "check_gptp_time_error", "emit_gptp_te",
+    "DEFAULT_MAX_TE_NS", "DEFAULT_LOCK_LIMIT_S",
 ]
