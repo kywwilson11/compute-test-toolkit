@@ -11,14 +11,17 @@ NVMe-MI defines three command queues sitting above MCTP message type 0x04:
 3. **NVMe Admin Command Set** — the standard NVMe admin commands tunneled
    over MI for OOB access (Identify, Get Log Page, Get Features, ...).
 
-The on-wire framing per spec §3:
+The on-wire framing this module encodes is the NVMe-MI Message body the MCTP
+transport carries (after the MCTP message-type byte, which ``mctp.py`` adds):
 
-  byte 0: Message Type (always 0x04 for NVMe-MI)
-  byte 1: NMI MJD + CSI bits + Slot ID + Reserved
-  bytes 2..5: NVMe Management Request Header (NMHDR) — request CRC, opcode,
-              command flags
-  bytes 6..n: Request data
-  bytes n+1..n+4: MIC (Message Integrity Check, CRC-32C)
+  byte 0: NMP — ROR (bit 7) | NMIMT message type (bits 5:3) | CSI (bit 0)
+  byte 1: NVMe-MI / NVMe-Admin opcode
+  bytes 2..5: NVMe Management Request Header (NMHDR)
+  bytes 6..n: Request/response data
+  bytes n+1..n+4: MIC (Message Integrity Check, CRC-32C over bytes 0..n)
+
+The NMP byte layout is verified against the NVMe-MI spec / libnvme
+(``mi.c``: ``nmp = (ROR << 7) | (NMIMT << 3) | (csi & 1)``).
 
 This module encodes/decodes that frame as ``MiMessage`` dataclasses. Real
 transport runs over ``mctp.MctpTransport``; tests can synthesize MI messages
@@ -36,8 +39,7 @@ class MiMessageError(RuntimeError):
 
 
 class MessageType(IntEnum):
-    """NVMe-MI Message Type field (NMI Message Type, 4 bits, NMP byte
-    bits 0..3)."""
+    """NVMe-MI Message Type (NMIMT), the 3-bit field at NMP byte bits 5..3."""
     CONTROL_PRIMITIVE = 0x00
     NVME_MI_COMMAND = 0x01
     NVME_ADMIN_COMMAND = 0x02
@@ -85,8 +87,8 @@ class MiMessage:
     """
     message_type: MessageType
     opcode: int                      # ControlPrimitive | NvmeMiCommandOpcode
-    csi: int = 0                     # 0 = primary, 1 = secondary slot
-    slot_id: int = 0
+    csi: int = 0                     # Command Slot Identifier (NMP bit 0): 0 or 1
+    ror: int = 0                     # Request-or-Response (NMP bit 7): 0 req, 1 resp
     nmhdr: bytes = b""               # request header (4 bytes per spec)
     data: bytes = b""
     mic: int = 0                     # CRC-32C; 0 = compute
@@ -124,13 +126,12 @@ def encode_mi_request(msg: MiMessage) -> bytes:
     """Encode an ``MiMessage`` as the on-wire byte string the MCTP transport
     will send. A zero ``msg.mic`` is replaced with the computed CRC-32C.
     """
-    # NMP byte: bits 0..3 = MT, bit 4 = CSI, bits 5..6 = SLOTID, bit 7 = 0
+    # NMP byte: ROR (bit 7) | NMIMT message type (bits 5:3) | CSI (bit 0).
     if not 0 <= msg.csi <= 1:
         raise MiMessageError("CSI must be 0 or 1")
-    if not 0 <= msg.slot_id <= 3:
-        raise MiMessageError("Slot ID must be 0..3")
-    nmp = (int(msg.message_type) & 0x0F) | ((msg.csi & 0x01) << 4) \
-        | ((msg.slot_id & 0x03) << 5)
+    if not 0 <= msg.ror <= 1:
+        raise MiMessageError("ROR must be 0 (request) or 1 (response)")
+    nmp = (msg.ror << 7) | ((int(msg.message_type) & 0x07) << 3) | (msg.csi & 0x01)
     header = bytes([nmp, msg.opcode]) + msg.nmhdr
     body = header + msg.data
     mic = msg.mic if msg.mic else _crc32c(body)
@@ -151,10 +152,10 @@ def decode_mi_response(buf: bytes) -> MiMessage:
     if mic != _crc32c(body):
         raise MiMessageError(
             f"MI MIC mismatch: expected {_crc32c(body):#010x}, got {mic:#010x}")
-    message_type = MessageType(nmp & 0x0F)
-    csi = (nmp >> 4) & 0x01
-    slot_id = (nmp >> 5) & 0x03
+    message_type = MessageType((nmp >> 3) & 0x07)
+    csi = nmp & 0x01
+    ror = (nmp >> 7) & 0x01
     return MiMessage(
-        message_type=message_type, opcode=opcode, csi=csi, slot_id=slot_id,
+        message_type=message_type, opcode=opcode, csi=csi, ror=ror,
         nmhdr=nmhdr, data=buf[6:-4], mic=mic,
     )

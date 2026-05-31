@@ -122,42 +122,64 @@ class TestMctpMessageRoundTrip:
 # MI message encode/decode — Group 5 (MI Message Processing)
 # ----------------------------------------------------------------------------
 class TestMiMessageEncode:
-    """Covers UNH-IOL v25 test 5.1 — NMP byte field decode."""
-    def test_encode_decode_round_trip(self):
-        original = MiMessage(
-            message_type=MessageType.NVME_MI_COMMAND,
-            opcode=0x02,
-            csi=1,
-            slot_id=2,
-            nmhdr=b"\x00\x00\x00\x00",
-            data=b"\xAB\xCD\xEF",
-        )
-        wire = encode_mi_request(original)
+    """UNH-IOL v25 test 5.1 — NMP byte field encode/decode, pinned to the spec
+    layout with golden byte vectors: NMP = ROR(bit7) | NMIMT(bits5:3) | CSI(bit0)
+    (verified against the NVMe-MI spec / libnvme mi.c)."""
+    def test_nmp_byte_golden_request(self):
+        # Request (ROR=0), NVMe-MI Command (NMIMT=1), CSI=1 -> (1<<3)|1 = 0x09.
+        wire = encode_mi_request(MiMessage(
+            message_type=MessageType.NVME_MI_COMMAND, opcode=0x02, csi=1,
+            nmhdr=b"\x00\x00\x00\x00", data=b"\xAB\xCD\xEF"))
+        assert wire[0] == 0x09                       # golden NMP byte
         decoded = decode_mi_response(wire)
         assert decoded.message_type == MessageType.NVME_MI_COMMAND
         assert decoded.opcode == 0x02
-        assert decoded.csi == 1
-        assert decoded.slot_id == 2
+        assert decoded.csi == 1 and decoded.ror == 0
         assert decoded.data == b"\xAB\xCD\xEF"
+
+    def test_nmp_byte_golden_admin_response(self):
+        # Response (ROR=1), NVMe Admin Command (NMIMT=2), CSI=1 ->
+        # (1<<7)|(2<<3)|1 = 0x91; proves ROR is bit 7 and the type field is 3 bits.
+        wire = encode_mi_request(MiMessage(
+            message_type=MessageType.NVME_ADMIN_COMMAND, opcode=0x06, csi=1,
+            ror=1, nmhdr=b"\x00\x00\x00\x00"))
+        assert wire[0] == 0x91
+        decoded = decode_mi_response(wire)
+        assert decoded.ror == 1 and decoded.csi == 1
+        assert decoded.message_type == MessageType.NVME_ADMIN_COMMAND
 
     def test_csi_out_of_range_rejected(self):
         msg = MiMessage(
             message_type=MessageType.NVME_MI_COMMAND, opcode=0x02,
-            csi=2, slot_id=0, nmhdr=b"\x00\x00\x00\x00")
+            csi=2, nmhdr=b"\x00\x00\x00\x00")
         with pytest.raises(MiMessageError, match="CSI"):
             encode_mi_request(msg)
 
-    def test_slot_id_out_of_range_rejected(self):
+    def test_ror_out_of_range_rejected(self):
         msg = MiMessage(
             message_type=MessageType.NVME_MI_COMMAND, opcode=0x02,
-            csi=0, slot_id=4, nmhdr=b"\x00\x00\x00\x00")
-        with pytest.raises(MiMessageError, match="Slot ID"):
+            ror=2, nmhdr=b"\x00\x00\x00\x00")
+        with pytest.raises(MiMessageError, match="ROR"):
             encode_mi_request(msg)
 
     def test_nmhdr_must_be_four_bytes(self):
         with pytest.raises(MiMessageError, match="4 bytes"):
             MiMessage(message_type=MessageType.NVME_MI_COMMAND,
                        opcode=0x02, nmhdr=b"\x00\x00")
+
+    def test_unknown_message_type_rejected(self):
+        with pytest.raises(MiMessageError, match="unknown MI message type"):
+            MiMessage(message_type=3, opcode=0x00,        # 3h is reserved/undefined
+                      nmhdr=b"\x00\x00\x00\x00")
+
+    def test_opcode_out_of_range_rejected(self):
+        with pytest.raises(MiMessageError, match="out of 0..255"):
+            MiMessage(message_type=MessageType.NVME_MI_COMMAND, opcode=300,
+                      nmhdr=b"\x00\x00\x00\x00")
+
+    def test_decode_too_short_rejected(self):
+        with pytest.raises(MiMessageError, match="too short"):
+            decode_mi_response(b"\x00" * 5)              # < NMP+opcode+NMHDR+MIC
 
 
 class TestMiCRC:

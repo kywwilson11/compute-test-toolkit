@@ -42,7 +42,7 @@ Mandatory row's `pytest_node` column is empty.
 | 1     | 1.1     | MCTP framing — EID range validation              | Mandatory | tests/test_nvme_mi.py::TestMctpEndpointId::test_eid_range_validation         |
 | 1     | 1.2     | MCTP framing — broadcast EID handling            | Mandatory | tests/test_nvme_mi.py::TestMctpEndpointId::test_broadcast_eid_is_broadcast   |
 | 2     | 2.1     | MCTP control — Get Endpoint ID                   | Mandatory | tests/test_nvme_mi.py::TestMctpMessageRoundTrip::test_get_endpoint_id_via_mock |
-| 5     | 5.1     | MI Message Processing — NMP byte field decode    | Mandatory | tests/test_nvme_mi.py::TestMiMessageEncode::test_encode_decode_round_trip    |
+| 5     | 5.1     | MI Message Processing — NMP byte field decode    | Mandatory | tests/test_nvme_mi.py::TestMiMessageEncode::test_nmp_byte_golden_request    |
 | 5     | 5.2     | MI Message Processing — MIC (CRC-32C) verify     | Mandatory | tests/test_nvme_mi.py::TestMiCRC::test_crc_round_trip_detects_corruption    |
 | 6     | 6.1     | Control Primitive — Pause                        | Mandatory | tests/test_nvme_mi.py::TestControlPrimitive::test_pause_opcode               |
 | 6     | 6.2     | Control Primitive — Resume                       | Mandatory | tests/test_nvme_mi.py::TestControlPrimitive::test_resume_opcode              |
