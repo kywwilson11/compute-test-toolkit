@@ -27,6 +27,17 @@ def test_missing_plan_clean_exit():
     assert rc == cli.EXIT_IO         # exit 4
 
 
+def test_bad_ocpdiag_path_clean_exit(capsys):
+    # A bad --ocpdiag output path (missing parent dir) used to escape _open_ocpdiag
+    # (called before main's try) as a raw traceback. It must now map to EXIT_IO with
+    # no Python traceback in the operator console.
+    rc = cli.main(["--backend", "mock", "list",
+                   "--ocpdiag", "/nonexistent/dir/out.jsonl"])
+    err = capsys.readouterr().err
+    assert rc == cli.EXIT_IO
+    assert "Traceback" not in err
+
+
 def test_bad_value_is_usage_error(capsys):
     rc = cli.main(["ber", "--target-ber", "0", "--confidence", "0.95"])
     assert rc == cli.EXIT_USAGE      # exit 2; ValueError mapped to usage

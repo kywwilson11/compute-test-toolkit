@@ -90,8 +90,13 @@ def _emit_ocp(args, kind: str, result, **kw) -> None:
         for k, v in result.items():
             if isinstance(v, (bool, int, float, str)):
                 em.measurement(name=k, value=v)
-        em.diagnosis(verdict="ber.math.pass", type_="PASS")
-        em.step_end("pass", step_id=sid)
+        # The assess branch puts a real verdict in result["status"]; the bits-needed
+        # calc has no status and is always provable -> "pass". Never hardcode PASS when
+        # the verdict is "continue"/"fail".
+        status = str(result.get("status", "pass"))
+        em.diagnosis(verdict=f"ber.math.{status}",
+                     type_={"pass": "PASS", "fail": "FAIL"}.get(status, "UNKNOWN"))
+        em.step_end(status, step_id=sid)
     elif kind == "lmt":
         bdf = result[0].bdf if result else "?"
         sid = em.step_start(f"pcie.lmt {bdf}")
@@ -110,10 +115,12 @@ def _emit_ocp(args, kind: str, result, **kw) -> None:
 
 def _verdict_exit(status: str) -> int:
     """Map a measurement verdict to an exit code, distinguishing "couldn't measure"
-    from "DUT failed":  pass -> 0,  fail -> 1,  skip/unavailable -> 5."""
+    from "DUT failed":  pass -> 0,  fail -> 1,  skip/unavailable/continue -> 5.
+    "continue" (BER undecided/underpowered -- we did not reach a verdict) is a
+    couldn't-conclude, NOT a fail."""
     if status == "pass":
         return EXIT_PASS
-    if status in ("skip", "unavailable", "incomplete"):
+    if status in ("skip", "unavailable", "incomplete", "continue"):
         return EXIT_UNAVAIL
     return EXIT_FAIL
 
@@ -242,7 +249,10 @@ def _run(args) -> int:
             human, obj = v.summary(), vars(v)
         _emit(human, obj, args.json, sink=sink)
         _emit_ocp(args, "ber", obj)
-        return EXIT_PASS
+        # The bits-needed branch is a pure calculation (always provable -> PASS); the
+        # assess branch carries a real verdict in obj["status"] (pass/continue/fail) and
+        # must NOT be hardcoded to PASS -- an UNPROVEN "continue" is EXIT_UNAVAIL.
+        return _verdict_exit(obj.get("status", "pass"))
 
     if args.backend != "auto":
         os.environ["COMPUTETEST_BACKEND"] = args.backend
@@ -274,6 +284,11 @@ def _run(args) -> int:
         results = diagnostics.diagnose_all(
             backend, bdfs, do_bert=not args.no_bert, do_margin=not args.no_margin,
             target_ber=args.target_ber, bert_max_s=args.max_seconds)
+        if not results:
+            # No devices enumerated (e.g. RealBackend.list_devices() globbed an empty
+            # /sys) is an unmeasured run, not a PASS -> EXIT_UNAVAIL, not exit 0.
+            print("# no PCIe devices to diagnose", file=sys.stderr)
+            return EXIT_UNAVAIL
         human = "\n".join(d.summary() for d in results)
         _emit(human, [d.to_dict() for d in results], args.json, sink=sink)
         _emit_ocp(args, "diagnose", results)
@@ -321,7 +336,12 @@ def _run(args) -> int:
                 error_count_limit=args.error_count_limit,
                 dwell_time_s=args.dwell_time)
             print(payload, end="" if payload.endswith("\n") else "\n", file=sink)
-            return EXIT_PASS                                # the reference tool owns the verdict
+            # pci_lmt exits 0 on a *completed* run; the per-lane verdict is implicit in
+            # its records (no explicit pass/fail column) and computetest does not
+            # reconstruct it. So we do NOT claim a gate-trustable PASS here -- EXIT_UNAVAIL
+            # means "the tool ran, but we did not compute a verdict" (records are on
+            # stdout for a consumer to judge). See docs/reference/cli.md.
+            return EXIT_UNAVAIL
         # Native margining path: re-emit in the pci_lmt schema.
         result = margining.margin_link(backend, args.bdf, limit_ui=args.limit_ui)
         records = lmt_adapter.from_margin_result(
@@ -406,7 +426,10 @@ def _close_ocpdiag(args, rc: int) -> None:
     em = getattr(args, "_ocp", None)
     if em is None:
         return
-    status = _EXIT_TO_OCP_STATUS.get(rc, "fail")
+    # Unknown/abort exit codes (usage 2, not-found 3, IO 4, interrupt 130) are
+    # test-program/environment faults, NOT a DUT failure: map to "error" so run_end
+    # records testStatus=ERROR / result=NOT_APPLICABLE, not a FAIL verdict.
+    status = _EXIT_TO_OCP_STATUS.get(rc, "error")
     try:
         em.run_end(status)
     finally:
@@ -417,9 +440,12 @@ def _close_ocpdiag(args, rc: int) -> None:
 
 def main(argv: list[str] | None = None) -> int:
     args = _build_parser().parse_args(argv)
-    _open_ocpdiag(args, argv)
     rc = EXIT_USAGE
     try:
+        # Opening the --ocpdiag file can raise OSError (bad dir, perms, path is a
+        # directory); keep it inside the try so a bad path maps to EXIT_IO instead of
+        # escaping as a traceback into the operator console.
+        _open_ocpdiag(args, argv)
         rc = _run(args)
         return rc
     except KeyboardInterrupt:
@@ -436,6 +462,14 @@ def main(argv: list[str] | None = None) -> int:
         return rc
     except (FileNotFoundError, json.JSONDecodeError) as e:
         print(f"error: config/IO: {e}", file=sys.stderr)
+        if args._ocp:
+            args._ocp.run_error("config-io-error", str(e))
+        rc = EXIT_IO
+        return rc
+    except OSError as e:
+        # A bad --ocpdiag output path (perms, path-is-a-dir, or a parent that isn't a
+        # plain FileNotFoundError) used to escape as a traceback; map it to EXIT_IO.
+        print(f"error: cannot open output file: {e}", file=sys.stderr)
         if args._ocp:
             args._ocp.run_error("config-io-error", str(e))
         rc = EXIT_IO

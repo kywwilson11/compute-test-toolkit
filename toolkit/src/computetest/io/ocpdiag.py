@@ -39,6 +39,23 @@ _STEP_STATUS = {"pass": "COMPLETE", "fail": "COMPLETE"}            # else SKIP
 # Diagnosis type: PASS/FAIL/UNKNOWN per diagnosis.type schema.
 _DIAGNOSIS_TYPE = {"pass": "PASS", "fail": "FAIL"}                 # else UNKNOWN
 
+# Verdict families shared by step_end/run_end: "couldn't conclude" -> SKIP /
+# NOT_APPLICABLE, distinct from a test-program/environment fault ("error") -> ERROR.
+# "continue" (BER undecided/underpowered) belongs here, not in the ERROR bucket.
+_SKIP_STATUSES = ("skip", "unavailable", "incomplete", "continue")
+
+# OCP log.severity enum (log.json). Validated so an out-of-enum severity raises
+# instead of silently emitting a schema-invalid artifact downstream consumers reject.
+_LOG_SEVERITIES = frozenset({"INFO", "DEBUG", "WARNING", "ERROR", "FATAL"})
+
+
+def _check_severity(severity: str) -> str:
+    sev = severity.upper()
+    if sev not in _LOG_SEVERITIES:
+        raise ValueError(f"log severity {severity!r} not in OCP enum "
+                         f"{sorted(_LOG_SEVERITIES)}")
+    return sev
+
 # Validator enum values (per validator.json) — re-exported for adapter callers.
 EQUAL, NOT_EQUAL = "EQUAL", "NOT_EQUAL"
 LESS_THAN, LESS_THAN_OR_EQUAL = "LESS_THAN", "LESS_THAN_OR_EQUAL"
@@ -117,14 +134,20 @@ class Emitter:
         }}})
 
     def run_end(self, status: str) -> int:
+        # testStatus mirrors step_end: pass/fail -> COMPLETE, a couldn't-conclude ->
+        # SKIP, a test-program/environment fault ("error") -> ERROR. testResult has no
+        # ERROR value, so an aborted run is NOT_APPLICABLE (the only non-FAIL legal
+        # result) -- a test-program fault must NOT be recorded as a DUT FAIL.
+        test_status = _STEP_STATUS.get(
+            status, "SKIP" if status in _SKIP_STATUSES else "ERROR")
         return self._write({"testRunArtifact": {"testRunEnd": {
-            "status": "COMPLETE",
+            "status": test_status,
             "result": _RUN_RESULT.get(status, "NOT_APPLICABLE"),
         }}})
 
     def run_log(self, severity: str, message: str) -> int:
         return self._write({"testRunArtifact": {"log": {
-            "severity": severity.upper(), "message": message,
+            "severity": _check_severity(severity), "message": message,
         }}})
 
     def run_error(self, symptom: str, message: str = "") -> int:
@@ -147,8 +170,7 @@ class Emitter:
             self._open_steps.remove(sid)
         except ValueError:
             pass
-        ocp = _STEP_STATUS.get(status, "SKIP" if status in ("skip", "unavailable",
-                                                              "incomplete") else "ERROR")
+        ocp = _STEP_STATUS.get(status, "SKIP" if status in _SKIP_STATUSES else "ERROR")
         return self._write({"testStepArtifact": {
             "testStepId": sid, "testStepEnd": {"status": ocp}}})
 
@@ -231,7 +253,7 @@ class Emitter:
                  step_id: str | None = None) -> int:
         return self._write({"testStepArtifact": {
             "testStepId": self._step_id(step_id),
-            "log": {"severity": severity.upper(), "message": message}}})
+            "log": {"severity": _check_severity(severity), "message": message}}})
 
     def step_error(self, symptom: str, message: str = "", *,
                    step_id: str | None = None) -> int:

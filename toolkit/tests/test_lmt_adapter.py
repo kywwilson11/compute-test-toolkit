@@ -305,7 +305,11 @@ class TestCliLmt:
                        "--via-pci-lmt", str(cfg),
                        "--error-count-limit", "42",
                        "--dwell-time", "3"])
-        assert rc == cli.EXIT_PASS
+        # Re-anchored: --via-pci-lmt must NOT emit a gate-trustable PASS. pci_lmt's
+        # records carry no explicit pass/fail column and computetest does not compute
+        # the verdict, so the honest exit code is EXIT_UNAVAIL ("the tool ran; no
+        # verdict from us"), not EXIT_PASS.
+        assert rc == cli.EXIT_UNAVAIL
         assert called["config_path"] == str(cfg)
         assert called["kw"]["error_count_limit"] == 42
         assert called["kw"]["dwell_time_s"] == 3

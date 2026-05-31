@@ -17,10 +17,42 @@ def test_ber_assess_with_bits(capsys):
     assert rc == cli.EXIT_PASS and "PASS" in out          # 5e12 bits proves 1e-12 @ 95%
 
 
+def test_diagnose_no_devices_is_unavailable(monkeypatch, capsys):
+    # An empty device enumeration (e.g. a misconfigured sysfs) is an unmeasured run,
+    # not a PASS -> EXIT_UNAVAIL, not exit 0. (Audit step 16 partial, applied in cli.py.)
+    monkeypatch.setattr(cli.diagnostics, "diagnose_all", lambda *a, **k: [])
+    rc = cli.main(["--backend", "mock", "diagnose"])
+    assert rc == cli.EXIT_UNAVAIL and "no PCIe devices" in capsys.readouterr().err
+
+
+def test_ber_assess_continue_exits_unavail_and_ocp_not_pass(tmp_path):
+    # The two-part honesty fix: a "continue" (unproven) verdict must be EXIT_UNAVAIL AND
+    # the ocp-diag stream must NOT label it PASS -- diagnosis type UNKNOWN, step SKIP,
+    # testRunEnd result NOT_APPLICABLE with testStatus SKIP.
+    path = tmp_path / "ber.jsonl"
+    rc = cli.main(["ber", "--bits", "1e12", "--errors", "0", "--ocpdiag", str(path)])
+    assert rc == cli.EXIT_UNAVAIL
+    arts = [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
+    diags = [a["testStepArtifact"]["diagnosis"] for a in arts
+             if "testStepArtifact" in a and "diagnosis" in a["testStepArtifact"]]
+    assert diags and diags[0]["verdict"] == "ber.math.continue"
+    assert diags[0]["type"] == "UNKNOWN"                  # not PASS
+    step_ends = [a["testStepArtifact"]["testStepEnd"] for a in arts
+                 if "testStepArtifact" in a and "testStepEnd" in a["testStepArtifact"]]
+    assert step_ends and step_ends[0]["status"] == "SKIP"
+    end = arts[-1]["testRunArtifact"]["testRunEnd"]
+    assert end["result"] == "NOT_APPLICABLE" and end["status"] == "SKIP"
+
+
 def test_ber_assess_json_has_verdict_fields(capsys):
-    cli.main(["ber", "--json", "--bits", "1e12", "--errors", "0"])
+    # 1e12 bits @ 0 errors only reaches CL=0.63 vs target 0.95 -> verdict "continue"
+    # (UNPROVEN). Re-anchored from the old field-only assertion: an unproven result
+    # must NOT exit PASS -- it is EXIT_UNAVAIL (couldn't conclude), never EXIT_PASS.
+    rc = cli.main(["ber", "--json", "--bits", "1e12", "--errors", "0"])
     data = json.loads(capsys.readouterr().out)
     assert "status" in data and "confidence_reached" in data and "ber_upper" in data
+    assert data["status"] == "continue"
+    assert rc == cli.EXIT_UNAVAIL
 
 
 # --- bert command ----------------------------------------------------------- #

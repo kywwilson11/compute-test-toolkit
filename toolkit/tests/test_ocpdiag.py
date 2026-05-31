@@ -140,14 +140,20 @@ class TestRunArtifactFields:
             assert key in start, f"testRunStart missing required {key!r}"
         assert start["dutInfo"]["dutInfoId"] == "SN1"
 
-    @pytest.mark.parametrize("status, expected_result", [
-        ("pass", "PASS"), ("fail", "FAIL"),
-        ("skip", "NOT_APPLICABLE"), ("unknown", "NOT_APPLICABLE"),
+    @pytest.mark.parametrize("status, expected_test_status, expected_result", [
+        ("pass", "COMPLETE", "PASS"), ("fail", "COMPLETE", "FAIL"),
+        ("skip", "SKIP", "NOT_APPLICABLE"),
+        ("unavailable", "SKIP", "NOT_APPLICABLE"),
+        ("error", "ERROR", "NOT_APPLICABLE"),
+        ("unknown", "ERROR", "NOT_APPLICABLE"),
     ])
-    def test_run_end_status_mapping(self, status, expected_result):
+    def test_run_end_status_mapping(self, status, expected_test_status, expected_result):
+        # Re-anchored to the OCP testStatus enum {COMPLETE,ERROR,SKIP} (test_status.json):
+        # run_end no longer hardcodes COMPLETE -- a test-program fault is ERROR (the old
+        # test asserted COMPLETE for every status, masking the FAIL-on-error bug).
         art = self._run_artifact(lambda em: em.run_end(status))
         end = art["testRunEnd"]
-        assert end["status"] == "COMPLETE"                 # testStatus
+        assert end["status"] == expected_test_status       # testStatus
         assert end["result"] == expected_result            # testResult
 
 
@@ -171,6 +177,7 @@ class TestStepArtifactFields:
     @pytest.mark.parametrize("status, expected_step_status", [
         ("pass", "COMPLETE"), ("fail", "COMPLETE"),
         ("skip", "SKIP"), ("unavailable", "SKIP"), ("incomplete", "SKIP"),
+        ("continue", "SKIP"),
         ("error", "ERROR"),
     ])
     def test_step_end_status_mapping(self, status, expected_step_status):
@@ -180,6 +187,22 @@ class TestStepArtifactFields:
         ends = [a["testStepEnd"]["status"] for a in self._step_lines(f)
                 if "testStepEnd" in a]
         assert ends == [expected_step_status]
+
+    def test_log_severity_validated_against_ocp_enum(self):
+        # log.json restricts severity to {INFO,DEBUG,WARNING,ERROR,FATAL}; a value
+        # outside the enum must raise, not silently emit a schema-invalid artifact.
+        buf = io.StringIO()
+        em = oc.Emitter(buf, clock=lambda: "2026-05-29T00:00:00.000Z")
+        with pytest.raises(ValueError):
+            em.run_log("critical", "bad severity")
+        sid = em.step_start("s")
+        with pytest.raises(ValueError):
+            em.step_log("warn", "bad severity", step_id=sid)
+        # A valid (lowercased) severity is accepted and normalized to upper-case.
+        em.run_log("warning", "ok")
+        logs = [json.loads(l)["testRunArtifact"]["log"] for l in buf.getvalue().splitlines()
+                if "testRunArtifact" in l and "\"log\"" in l]
+        assert logs and logs[-1]["severity"] == "WARNING"
 
     def test_measurement_validator_round_trips_correctly(self):
         def f(em):
@@ -527,8 +550,11 @@ class TestCliOcpdiagFlag:
         errs = [a["testRunArtifact"]["error"] for a in artifacts
                 if "testRunArtifact" in a and "error" in a["testRunArtifact"]]
         assert errs and errs[0]["symptom"] == "device-not-found"
-        # The run still ends cleanly with a result.
-        assert "testRunEnd" in artifacts[-1]["testRunArtifact"]
+        # Re-anchored: a never-tested DUT (device-not-found, rc=3) must NOT be recorded
+        # as a DUT FAIL. testRunEnd is an ERROR run with result NOT_APPLICABLE (the only
+        # non-FAIL spec-legal result; testResult has no ERROR value).
+        end = artifacts[-1]["testRunArtifact"]["testRunEnd"]
+        assert end["status"] == "ERROR" and end["result"] == "NOT_APPLICABLE"
 
 
 # ----------------------------------------------------------------------------
