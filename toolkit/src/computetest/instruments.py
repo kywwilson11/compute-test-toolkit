@@ -202,6 +202,11 @@ class _MockSCPI:
         stem = cmd.rstrip("?")
         if stem in self.state:
             return self.state[stem]
+        # A mock thermal chamber's actual temperature tracks its programmed setpoint,
+        # so the shmoo settle-poll (MEAS:TEMP? vs SOUR:TEMP?) converges on the first
+        # poll. An explicit set_measurement("MEAS:TEMP?", ...) override wins (above).
+        if cmd == "MEAS:TEMP?" and "SOUR:TEMP" in self.state:
+            return self.state["SOUR:TEMP"]
         return "0"
 
 
