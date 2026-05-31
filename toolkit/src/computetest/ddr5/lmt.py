@@ -36,7 +36,10 @@ def _base(part: str, channel: int, byte_lane: int) -> dict:
         "bdf": f"{part}:ch{channel}:bl{byte_lane}",
         "speed": 0, "width": 1, "lmt_capable": False,
         "ind_error_sampler": False, "sample_reporting_method": 0,
-        "ind_left_right_timing": True, "ind_up_down_voltage": True,
+        # A single combined eye-to-failure per axis is emitted (one TIMING and
+        # one VOLTAGE record per DQ), so the directional-split flags are False,
+        # matching from_margin_result / gmsl.
+        "ind_left_right_timing": False, "ind_up_down_voltage": False,
         "voltage_supported": True,
         "num_voltage_steps": DEFAULT_NUM_VOLTAGE_STEPS,
         "num_timing_steps": DEFAULT_NUM_TIMING_STEPS,

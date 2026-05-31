@@ -52,7 +52,7 @@ DEFAULT_DWELL_TIME_S = 5
 DEFAULT_NUM_TIMING_STEPS = 32
 DEFAULT_NUM_VOLTAGE_STEPS = 64
 DEFAULT_MAX_TIMING_OFFSET = 50           # 0.50 UI in 0.01-UI units
-DEFAULT_MAX_VOLTAGE_OFFSET = 200         # 200 mV
+DEFAULT_MAX_VOLTAGE_OFFSET = 49          # 0.49 V in 0.01-V register units
 
 # Canonical column order — keep CSV output in this order to match pci_lmt's.
 COLUMNS: tuple[str, ...] = (
@@ -87,7 +87,7 @@ class LmtLaneRecord:
     num_voltage_steps: int
     num_timing_steps: int
     max_timing_offset: int              # in 0.01 UI units
-    max_voltage_offset: int              # in mV
+    max_voltage_offset: int             # in 0.01 V register units
     sampling_rate_voltage: int
     sampling_rate_timing: int
     max_lanes: int
@@ -120,16 +120,24 @@ def _step_from_timing_ui(timing_ui: float, num_steps: int,
 
 
 def _step_from_voltage_mv(voltage_mv: float, num_steps: int,
-                           max_offset_mv: int) -> int:
-    if num_steps <= 0 or max_offset_mv <= 0:
+                          max_offset_001v: int) -> int:
+    """Map a mV voltage margin to the equivalent pci_lmt step number.
+
+    ``max_offset_001v`` is the MaxVoltageOffset register value in 0.01-V units
+    (per the PCIe LMR spec), so convert it to mV (1 unit = 10 mV) before
+    scaling -- mirroring how ``_step_from_timing_ui`` divides the 0.01-UI
+    register value by 100.
+    """
+    if num_steps <= 0 or max_offset_001v <= 0:
         return 0
+    max_offset_mv = max_offset_001v * 10.0
     step = round(voltage_mv * num_steps / max_offset_mv)
     return max(0, min(num_steps, step))
 
 
 def from_margin_result(margin: MarginResult, *, backend: Backend,
                         receiver_number: int = 1,
-                        sample_count_bits: int = 18,
+                        sample_count: int = 18,
                         error_count_limit: int = DEFAULT_ERROR_COUNT_LIMIT,
                         ) -> list[LmtLaneRecord]:
     """Project a ``MarginResult`` onto pci_lmt's per-lane schema.
@@ -164,7 +172,9 @@ def from_margin_result(margin: MarginResult, *, backend: Backend,
         "max_lanes": dev.max_link_width,
     }
     out: list[LmtLaneRecord] = []
-    sample_count = 1 << sample_count_bits
+    # OCP pci_lmt: sample_count is the raw 7-bit MSampleCount register value
+    # (0..127); sample_count_bits = 2**(sample_count/3) is the bits margined.
+    sample_count_bits = int(2 ** (sample_count / 3))
     for lane in margin.lanes:
         # The toolkit returns the LAST passing margin — error_count is 0 there,
         # by definition. If we extend to a step-by-step sweep, this constructor

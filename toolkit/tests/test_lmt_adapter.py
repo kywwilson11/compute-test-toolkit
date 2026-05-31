@@ -103,6 +103,56 @@ class TestFromMarginResult:
         m = MarginResult(bdf="0000:03:00.0", lanes=[])
         assert lmt.from_margin_result(m, backend=backend) == []
 
+    def test_sample_count_is_raw_7bit_register_value_and_bits_are_derived(self):
+        # OCP pci_lmt (pcie_lane_margining.py): sample_count is the raw 7-bit
+        # MSampleCount register field (0..127, "Value = 3*log2(bits)") and
+        # sample_count_bits = int(2**(sample_count/3)) is the bits margined.
+        # NOT the inverse (the old code emitted sample_count = 1<<bits).
+        backend = self._backend()
+        m = MarginResult(bdf="0000:03:00.0",
+                         lanes=[LaneMargin(lane=0, timing_ui=0.30)])
+        r = lmt.from_margin_result(m, backend=backend)[0]
+        assert 0 <= r.sample_count <= 127
+        assert r.sample_count_bits == int(2 ** (r.sample_count / 3))
+        assert r.sample_count == 18 and r.sample_count_bits == 64  # default
+
+    def test_sample_count_register_value_drives_bit_count(self):
+        # 3*log2(bits) encoding: raw 21 -> 2**7 = 128 bits margined.
+        backend = self._backend()
+        m = MarginResult(bdf="0000:03:00.0",
+                         lanes=[LaneMargin(lane=0, timing_ui=0.30)])
+        r = lmt.from_margin_result(m, backend=backend, sample_count=21)[0]
+        assert r.sample_count == 21
+        assert r.sample_count_bits == 128
+
+    def test_max_offsets_are_in_register_units_not_mv(self):
+        # OCP/Google pci_lmt emit MaxTimingOffset/MaxVoltageOffset as raw
+        # Margining Capability register values: MaxTimingOffset in 1%-UI units
+        # (50 = 0.50 UI) and MaxVoltageOffset in 0.01-V units (49 = 0.49 V),
+        # capped near ~0.5 V -- NOT millivolts (200 mV would be 2.0 V).
+        backend = self._backend()
+        m = MarginResult(bdf="0000:03:00.0",
+                         lanes=[LaneMargin(lane=0, timing_ui=0.30)])
+        r = lmt.from_margin_result(m, backend=backend)[0]
+        assert r.max_timing_offset == 50
+        assert r.max_voltage_offset == 49
+        assert 0 < r.max_voltage_offset <= 63  # 7-bit field, physical <= ~0.5 V
+
+
+# ----------------------------------------------------------------------------
+# Step-mapping helper guards (degenerate device-cap inputs -> step 0)
+# ----------------------------------------------------------------------------
+class TestStepHelperGuards:
+    def test_voltage_step_guards_on_nonpositive_inputs(self):
+        # 0 voltage-steps or a 0 max-offset register value must yield step 0,
+        # never a divide-by-zero.
+        assert lmt._step_from_voltage_mv(120.0, 0, 49) == 0
+        assert lmt._step_from_voltage_mv(120.0, 64, 0) == 0
+
+    def test_timing_step_guards_on_nonpositive_inputs(self):
+        assert lmt._step_from_timing_ui(0.3, 0, 50) == 0
+        assert lmt._step_from_timing_ui(0.3, 32, 0) == 0
+
 
 # ----------------------------------------------------------------------------
 # Formatters
@@ -118,7 +168,7 @@ class TestFormatters:
             max_voltage_offset=200, sampling_rate_voltage=0,
             sampling_rate_timing=0, max_lanes=16, lane=0,
             receiver_number=1, margin_type="TIMING", step=30,
-            sample_count=1 << 18, sample_count_bits=18,
+            sample_count=18, sample_count_bits=int(2 ** (18 / 3)),
             error_count=0, ber=0.0,
         )
         defaults.update(kw)

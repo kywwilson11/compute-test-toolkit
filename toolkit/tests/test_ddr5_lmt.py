@@ -29,3 +29,14 @@ class TestTrainingToLmt:
         recs = training_to_lmt_records([DqMargin(0, 0, 0.3, 120)])
         assert "TIMING" in to_json(recs) and "VOLTAGE" in to_json(recs)
         assert to_csv(recs).splitlines()[0] == ",".join(COLUMNS)
+
+    def test_directional_flags_false_single_combined_axis(self):
+        # DDR5 emits ONE combined TIMING and ONE combined VOLTAGE record per DQ
+        # (DqMargin carries a single timing_ui / voltage_mv), so the pci_lmt
+        # directional-split flags must be False -- matching from_margin_result
+        # and gmsl, which set them False for the same reason. (Old code set
+        # them True, promising left/right + up/down records it never emits.)
+        recs = training_to_lmt_records([DqMargin(byte_lane=0, dq=0,
+                                                 timing_ui=0.3, voltage_mv=120)])
+        assert recs and all(not r.ind_left_right_timing for r in recs)
+        assert all(not r.ind_up_down_voltage for r in recs)
