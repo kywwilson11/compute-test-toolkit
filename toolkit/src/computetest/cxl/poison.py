@@ -44,8 +44,17 @@ class PoisonList:
     def get_list(self) -> list[PoisonEntry]:
         return list(self._entries)
 
-    def clear(self, dpa: int) -> None:
-        self._entries = [e for e in self._entries if e.dpa != dpa]
+    def clear(self, dpa: int, length: int | None = None) -> None:
+        """Clear poison at ``dpa``. With ``length=None`` clear every entry at that
+        DPA (legacy behavior). With a ``length`` given, only an entry whose DPA
+        AND length both match is removed, mirroring real CXL Clear Poison, which
+        clears a specific DPA+length span — so a length mismatch leaves the entry
+        in place and the inject/clear round-trip can legitimately FAIL."""
+        if length is None:
+            self._entries = [e for e in self._entries if e.dpa != dpa]
+        else:
+            self._entries = [e for e in self._entries
+                             if not (e.dpa == dpa and e.length == length)]
 
 
 @dataclass
@@ -76,7 +85,7 @@ def check_poison_inject_clear(plist: PoisonList, *, dpa: int,
     plist.inject(dpa, length)
     listed = plist.get_list()
     found = any(e.dpa == dpa and e.length == length for e in listed)
-    plist.clear(dpa)
+    plist.clear(dpa, length)
     cleared = not any(e.dpa == dpa for e in plist.get_list())
     checks = {"poison_listed_with_dpa_length": found, "poison_cleared": cleared}
     return PoisonHealth(dpa=dpa, length=length, checks=checks)

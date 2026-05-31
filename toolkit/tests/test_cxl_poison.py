@@ -32,6 +32,16 @@ class TestPoisonList:
         plist.clear(0x1000)
         assert {e.dpa for e in plist.get_list()} == {0x2000}
 
+    def test_length_scoped_clear_refuses_on_mismatch(self):
+        # Real CXL Clear Poison is DPA+length scoped: clearing a different length
+        # than was injected must NOT remove the entry (the round-trip can fail).
+        plist = PoisonList()
+        plist.inject(0x1000, 128)
+        plist.clear(0x1000, 64)
+        assert {(e.dpa, e.length) for e in plist.get_list()} == {(0x1000, 128)}
+        plist.clear(0x1000, 128)              # exact match removes it
+        assert plist.get_list() == []
+
     def test_summary_and_to_dict(self):
         h = check_poison_inject_clear(PoisonList(), dpa=0x500, length=32)
         assert "CXL poison" in h.summary()

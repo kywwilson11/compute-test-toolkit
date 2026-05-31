@@ -69,7 +69,11 @@ class TdrResult:
 
     @property
     def ok(self) -> bool:
-        return self.status != "fault"
+        # Whitelist the known-good statuses so an unexpected/garbage status from a
+        # real backend (e.g. 'error', 'unknown', '') fails CLOSED rather than open.
+        # 'skipped' is a deliberate non-failure (a TDR that didn't run shouldn't
+        # false-fail a good link); only 'ok'/'skipped' pass.
+        return self.status in ("ok", "skipped")
 
     def to_dict(self) -> dict:
         return {"status": self.status, "faults": list(self.faults), "ok": self.ok}
@@ -77,7 +81,13 @@ class TdrResult:
 
 @dataclass
 class PhyPrbsResult:
-    """One PHY PRBS-BIST window."""
+    """One PHY PRBS-BIST window.
+
+    ``locked`` is a COARSE sync flag (the BIST checker achieved/kept lock), NOT a
+    BER verdict: it can be True with a large-but-sub-threshold ``error_count``.
+    To decide pass/fail, feed ``(error_count, bits)`` to ``computetest.ber`` —
+    do not treat ``locked`` alone as a link-quality verdict.
+    """
     pattern: PhyPrbsPattern
     duration_s: float
     error_count: int

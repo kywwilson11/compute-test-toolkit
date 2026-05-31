@@ -45,6 +45,9 @@ def check_crc_parity(*, write_crc_enabled: bool, read_crc_enabled: bool,
         "read_crc_enabled": read_crc_enabled,
         "ca_parity_enabled": ca_parity_enabled,
         "alert_n_wired": alert_n_wired,
-        "crc_retries_within_budget": crc_retry_count <= max_retries,
+        # A CRC-retry counter is an unsigned register; a negative value can only be
+        # a parse-error/garbage read, so it must FAIL the budget rather than pass
+        # (negative <= max_retries would otherwise sneak through).
+        "crc_retries_within_budget": 0 <= crc_retry_count <= max_retries,
     }
     return CrcHealth(crc_retry_count=crc_retry_count, checks=checks)

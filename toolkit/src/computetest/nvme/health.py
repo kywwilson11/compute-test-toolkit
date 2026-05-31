@@ -73,8 +73,14 @@ def _history(smart: dict) -> list[str]:
         h.append(f"power_cycles={smart['power_cycles']}")
     if smart.get("unsafe_shutdowns", 0) > 0:
         h.append(f"unsafe_shutdowns={smart['unsafe_shutdowns']}")
-    if smart.get("data_units_written", 0) > 100000:
-        h.append("significant lifetime writes")
+    # data_units_written is in 1000*512-byte units (512 kB each) per the NVMe
+    # spec, so 100000 units is only ~51 GB — a single burn-in pass on a TB-class
+    # drive. Use a ~1 TB absolute floor and report the actual GB so the
+    # "used-stock" signal is meaningful, not tripped by a brief test write.
+    duw_units = smart.get("data_units_written", 0)
+    if duw_units > 2_000_000:                    # 2e6 units * 512 kB ~= 1.0 TB
+        gb = round(duw_units * 512_000 / 1e9)
+        h.append(f"significant lifetime writes (~{gb}GB)")
     return h
 
 

@@ -32,9 +32,16 @@ def test_to_dict_shape():
 
 
 def test_history_flags_significant_lifetime_writes():
-    # data_units_written over the threshold is reported as used-stock history.
-    h = nvme._history({"data_units_written": 200000})
-    assert any("significant lifetime writes" in x for x in h)
+    # data_units_written is in 512 kB units; over the ~1 TB floor (2e6 units) is
+    # reported as used-stock history, with the actual GB surfaced.
+    h = nvme._history({"data_units_written": 3_000_000})   # ~1.5 TB
+    assert any("significant lifetime writes" in x and "GB" in x for x in h)
+
+
+def test_history_no_flag_for_burn_in_writes():
+    # ~51 GB (the old threshold) and ~100 GB are normal burn-in on a TB drive and
+    # must NOT trip the lifetime-writes flag any more.
+    assert nvme._history({"data_units_written": 200000}) == []   # ~102 GB
 
 
 def test_history_empty_on_fresh_drive():

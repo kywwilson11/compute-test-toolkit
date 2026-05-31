@@ -165,6 +165,10 @@ class TestMockRetimerLaneStatus:
         s = rt.lane_status(0)
         assert s.eye_pass
         assert s.note == ""
+        # lane_status performs no error read, so error_count is None (unknown),
+        # not a structurally-fake 0; 'linked' reflects a non-zero eye opening.
+        assert s.error_count is None
+        assert s.linked is True
 
     def test_lane_status_fail_with_bad_eye(self):
         rt = MockRetimer(injected_eye_ui=0.10, injected_eye_mv=10.0)
@@ -189,6 +193,16 @@ class TestAriesStub:
     def test_unknown_part_rejected(self):
         with pytest.raises(RetimerError, match="unknown Aries part"):
             AriesRetimer("UNKNOWN-PART")
+
+    def test_default_i2c_address_in_range(self):
+        assert 0x08 <= AriesRetimer("PT5161L").address <= 0x77
+
+    def test_out_of_range_i2c_address_rejected(self):
+        # 0x00-0x07 and 0x78-0x7F are I2C-reserved; reject them.
+        with pytest.raises(RetimerError, match="I2C address"):
+            AriesRetimer("PT5161L", address=0x03)
+        with pytest.raises(RetimerError, match="I2C address"):
+            AriesRetimer("PT5161L", address=0x7A)
 
     def test_info_for_known_pt5161l(self):
         a = AriesRetimer("PT5161L")

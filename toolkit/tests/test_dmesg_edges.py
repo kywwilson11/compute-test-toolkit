@@ -22,6 +22,15 @@ def test_parse_classifies_link_down_event():
     assert not evs[0].uncorrectable                       # link-down isn't 'uncorrectable'
 
 
+def test_parse_filter_is_case_insensitive_for_link_down_variants():
+    # The filter and the classifier share one lowercased source-of-truth, so a
+    # non-canonical casing must NOT be dropped before classification (the chain
+    # diagnostic fails on severity=='link', so a dropped link-down = a missed fail).
+    for variant in ("pcie link down", "LINK DOWN", "something: Link is Down"):
+        evs = dmesg.parse_events(f"[1.0] pcieport 0000:00:1c.0: {variant}\n")
+        assert len(evs) == 1 and evs[0].severity == "link", variant
+
+
 def test_event_involves_bdf():
     ev = dmesg.DmesgEvent("non_fatal", ["0000:04:00.0", "0000:00:1c.0"], "text")
     assert ev.involves("0000:04:00.0") is True

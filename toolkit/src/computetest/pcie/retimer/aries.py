@@ -14,9 +14,12 @@ actual register reads raise ``NotImplementedError`` until the SDK is wired up.
 To enable on a real station:
 
 1. ``pip install ariesSDK`` (or check it into the lab's SDK repo).
-2. Set ``COMET_I2C_DEVICE`` env var to the COMET USB-I2C dongle path.
-3. Replace the ``_read_register`` body with the SDK call. The rest of the
-   methods already shape the returned data into the vendor-agnostic
+2. Replace the ``_open_sdk`` body with the documented SDK init
+   (``ariesSDK.PT5161L(comet=..., addr=self.address).init()``), passing the
+   COMET USB-I2C dongle transport.
+3. Implement the per-method register reads in ``read_eye`` / ``read_eq`` /
+   ``read_temperature`` / ``set_loopback`` / ``run_prbs_bist``. The methods
+   already shape the returned data into the vendor-agnostic
    ``EyeMeasurement`` / ``EqLevels`` / ``BISTResult`` dataclasses defined in
    ``base.py``; downstream code never sees vendor specifics.
 
@@ -70,6 +73,12 @@ class AriesRetimer(Retimer):
         if part_number not in _KNOWN_PARTS:
             raise RetimerError(
                 f"unknown Aries part {part_number!r}; known: {sorted(_KNOWN_PARTS)}")
+        # I2C 7-bit addressing reserves 0x00-0x07 and 0x78-0x7F; the usable slave
+        # range is 0x08-0x77 (an Aries retimer answers somewhere in this window).
+        if not 0x08 <= address <= 0x77:
+            raise RetimerError(
+                f"I2C address 0x{address:02X} out of the usable 7-bit range "
+                "[0x08, 0x77] (0x00-0x07 and 0x78-0x7F are I2C-reserved)")
         meta = _KNOWN_PARTS[part_number]
         self._info = RetimerInfo(
             vendor="Astera Labs", part_number=part_number,

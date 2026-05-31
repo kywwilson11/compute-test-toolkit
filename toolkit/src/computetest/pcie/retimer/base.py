@@ -126,10 +126,19 @@ class RetimerInfo:
 
 @dataclass
 class LaneStatus:
-    """Compact per-lane summary: link state, error count, eye verdict."""
+    """Compact per-lane summary.
+
+    * ``linked`` — the eye opening is non-zero (eye_ui>0 and eye_mv>0). This is an
+      eye-presence proxy, NOT a PCIe LTSSM-trained/link-up signal; the base
+      contract has no link-state read.
+    * ``error_count`` — link error count, or ``None`` when no error read was
+      performed. The base ``lane_status`` does not run a BIST, so it leaves this
+      ``None`` rather than a structurally-fake zero; a backend that sources a
+      real count fills it in.
+    """
     lane: int
     linked: bool
-    error_count: int
+    error_count: int | None
     eye_pass: bool
     note: str = ""
 
@@ -223,14 +232,20 @@ class Retimer(abc.ABC):
 
     # --- summary --------------------------------------------------------
     def lane_status(self, lane: int) -> LaneStatus:
-        """Per-lane health summary combining eye + a 0-duration error read."""
+        """Per-lane health summary from the eye telemetry.
+
+        ``linked`` here means the eye opening is non-zero (an eye-presence proxy),
+        NOT that the PCIe LTSSM has trained. No error read is performed, so
+        ``error_count`` is ``None`` (unknown) rather than a fake 0 — run
+        ``run_prbs_bist`` for a real per-lane error count.
+        """
         eye = self.read_eye(lane)
         eye_ok = eye_quality_verdict(eye, ui_min=self._eye_ui_min,
                                        mv_min=self._eye_mv_min)
         return LaneStatus(
             lane=lane,
             linked=eye.eye_ui > 0 and eye.eye_mv > 0,
-            error_count=0,
+            error_count=None,
             eye_pass=eye_ok,
             note="" if eye_ok else
             f"eye {eye.eye_ui:.3f}UI/{eye.eye_mv:.1f}mV below "

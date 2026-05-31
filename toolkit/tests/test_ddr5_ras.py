@@ -36,6 +36,12 @@ class TestEcs:
         with pytest.raises(Ddr5RasError, match="threshold"):
             MockDdr5Ras().set_ecs(threshold=999)
 
+    def test_bad_mode_rejected(self):
+        # mode is an enumerated EDAC ecs_fruX value; an unknown string must raise
+        # rather than being silently stored (matches real-sysfs rejection).
+        with pytest.raises(Ddr5RasError, match="mode"):
+            MockDdr5Ras().set_ecs(mode="counts_bananas")
+
     def test_scrub_cycle_reports_counts(self):
         d = MockDdr5Ras(injected_scrub_corrected=42, injected_scrub_max_row=7)
         assert d.trigger_scrub_cycle() == (42, 7)

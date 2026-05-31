@@ -5,8 +5,9 @@ Extends the ``memory.py`` EDAC CE/UE reader to the DDR5-specific RAS control
 plane exposed by the Linux 6.15 EDAC sysfs: Error Check and Scrub (``ecs_fruX``),
 background patrol scrub (``scrubX``), and memory repair (``mem_repairX`` — sPPR /
 hPPR / sparing). Modeled as a deterministic in-memory device (``MockDdr5Ras``) so
-ECS/PPR are unit-testable on macOS exactly like the CE/UE counters; the real
-backend reads/writes the sysfs nodes behind the same surface.
+ECS/PPR are unit-testable on macOS exactly like the CE/UE counters, with room for
+a real EDAC sysfs backend to drop in behind the same surface. Only the mock is
+implemented today; no real-hardware ecs_fruX/scrubX/mem_repairX path exists yet.
 """
 from __future__ import annotations
 
@@ -14,6 +15,8 @@ from dataclasses import dataclass
 
 # ECS error-count thresholds exposed by the Linux 6.15 EDAC ECS ABI.
 ECS_THRESHOLDS = (256, 1024, 4096)
+# ECS count mode — the enumerated Linux EDAC ``ecs_fruX`` 'mode' values.
+ECS_MODES = ("counts_codewords", "counts_rows")
 
 
 @dataclass
@@ -91,6 +94,9 @@ class MockDdr5Ras:
         if threshold is not None and threshold not in ECS_THRESHOLDS:
             raise Ddr5RasError(
                 f"ECS threshold must be one of {ECS_THRESHOLDS}; got {threshold}")
+        if mode is not None and mode not in ECS_MODES:
+            raise Ddr5RasError(
+                f"ECS mode must be one of {ECS_MODES}; got {mode!r}")
         if mode is not None:
             self._ecs.mode = mode
         if log_entry_type is not None:

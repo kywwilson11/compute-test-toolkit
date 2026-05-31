@@ -34,7 +34,10 @@ NVME_CASES = {
     "nvme/2.11/samsung-pm9a3":
         dict(model=_PM9A3, temp=41, avail=100, used=0, ok=True,  history=0),
     "nvme/2.11/used-stock-drive":
-        dict(model=_PM9A3, temp=47, avail=100, used=1, ok=False, history=3),
+        # 102 GB written (data_units_written=200000 * 512 kB) is trivial burn-in on a
+        # 960 GB drive, so the corrected ~1 TB threshold no longer flags "significant
+        # lifetime writes" -> 2 history flags, not 3 (step 25 data_units_written fix).
+        dict(model=_PM9A3, temp=47, avail=100, used=1, ok=False, history=2),
 }
 
 

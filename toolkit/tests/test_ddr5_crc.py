@@ -27,6 +27,18 @@ class TestCrcParity:
         h = _good(crc_retry_count=5)
         assert not h.ok and h.checks["crc_retries_within_budget"] is False
 
+    def test_negative_retry_count_fails_closed(self):
+        # A negative count is a garbage/sentinel read from the unsigned counter;
+        # it must FAIL the budget, not pass via (-1 <= max_retries).
+        h = _good(crc_retry_count=-1)
+        assert not h.ok and h.checks["crc_retries_within_budget"] is False
+
+    def test_within_nondefault_budget_passes(self):
+        # Pin the verdict (not just the echoed count) for a retry_count>0 that is
+        # within a non-default budget, so a budget-comparison regression is caught.
+        h = _good(crc_retry_count=2, max_retries=10)
+        assert h.ok and h.checks["crc_retries_within_budget"] is True
+
     def test_summary_and_to_dict(self):
         assert "DDR5 CRC/parity" in _good().summary()
         assert _good(crc_retry_count=2, max_retries=10).to_dict()["crc_retry_count"] == 2

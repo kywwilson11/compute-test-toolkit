@@ -19,7 +19,11 @@ import subprocess
 from dataclasses import dataclass, field
 
 _BDF = re.compile(r"[0-9a-fA-F]{4}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2}\.[0-7]")
-_KEYWORDS = ("AER", "PCIe Bus Error", "link is down", "Link Down", "link down")
+# One lowercased source-of-truth shared by the line filter (parse_events) and the
+# severity classifier (_severity): both match against the line lowercased, so a
+# vendor/casing variant like 'PCIe link down' or 'LINK DOWN' can't slip past the
+# filter while still being classifiable. "link is down" subsumes "link down".
+_KEYWORDS = ("aer", "pcie bus error", "link is down", "link down")
 
 
 @dataclass
@@ -55,7 +59,7 @@ def parse_events(text: str, only_bdfs: list[str] | None = None) -> list[DmesgEve
     keep = set(only_bdfs) if only_bdfs is not None else None
     events = []
     for line in text.splitlines():
-        if not any(k in line for k in _KEYWORDS):
+        if not any(k in line.lower() for k in _KEYWORDS):
             continue
         bdfs = _BDF.findall(line)
         if keep is not None and not (set(bdfs) & keep):

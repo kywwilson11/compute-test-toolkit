@@ -67,6 +67,13 @@ class TestMockPhy:
         assert not fault.ok and fault.faults[0]["code"] == "open"
         assert fault.to_dict()["ok"] is False
 
+    def test_tdr_ok_is_failclosed_whitelist(self):
+        # 'skipped' is a deliberate non-failure; any unrecognized status from a
+        # real backend must fail closed (ok is a whitelist, not !="fault").
+        assert TdrResult(status="skipped").ok is True
+        assert TdrResult(status="error").ok is False
+        assert TdrResult(status="").ok is False
+
     def test_prbs_bist(self):
         r = MockPhy(speed_mbps=1000).run_prbs_bist(duration_s=1.0)
         assert isinstance(r, PhyPrbsResult)
