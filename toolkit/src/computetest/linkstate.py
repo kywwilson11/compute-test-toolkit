@@ -9,7 +9,7 @@ from __future__ import annotations
 import time
 from dataclasses import dataclass
 
-from .backend import LINK_SPEED_GTPS, Backend, link_bits_per_second
+from .backend import DOWNSTREAM_PORTS, LINK_SPEED_GTPS, Backend, link_bits_per_second
 
 # Re-exported so callers needing the link payload rate have one obvious home
 # (the rate is a link property). E.g. `link_bits_per_second(5, 16)` = Gen5 x16 (the
@@ -106,13 +106,22 @@ def check_link(backend: Backend, bdf: str, *, expected_speed: int | None = None,
                poll_s: float = 0.005) -> LinkHealth:
     """Check link speed/width against max (or expectation). If ``watch_s`` > 0, poll
     Link Status for that long, counting retrains, tracking the minimum speed/width
-    seen, and latching any LBMS/LABS bandwidth-change event."""
+    seen, and latching any LBMS/LABS bandwidth-change event.
+
+    LBMS/LABS limitation: per the PCIe base spec those latches are RsvdZ on Endpoints
+    and Upstream Ports -- only a link-owning Downstream Port (Root / Switch-Downstream)
+    implements them. We therefore arm/read them only when ``bdf`` is such a port; on an
+    endpoint they stay clear (the chain diagnostic reads them at the downstream port).
+    The retrain count and the min speed/width polling still run for every port, so a
+    sampled dip is caught regardless."""
     dev = backend.get_device(bdf)
     health = LinkHealth(bdf, dev.current_link_speed, dev.current_link_width,
                         dev.max_link_speed, dev.max_link_width,
                         expected_speed, expected_width)
     if watch_s > 0:
-        backend.clear_link_bw_status(bdf)   # arm the LBMS/LABS latches
+        owns_bw_latch = backend.read_port_type(bdf) in DOWNSTREAM_PORTS
+        if owns_bw_latch:
+            backend.clear_link_bw_status(bdf)   # arm the LBMS/LABS latches (RsvdZ on endpoints)
         t0 = time.monotonic()
         was_training = False
         while time.monotonic() - t0 < watch_s:
@@ -123,7 +132,7 @@ def check_link(backend: Backend, bdf: str, *, expected_speed: int | None = None,
             was_training = ls.training
             health.min_speed = min(health.min_speed, ls.speed)
             health.min_width = min(health.min_width, ls.width)
-            if ls.bw_changed or ls.autonomous_bw:
+            if owns_bw_latch and (ls.bw_changed or ls.autonomous_bw):
                 health.bw_changed = True
             if poll_s:
                 time.sleep(poll_s)

@@ -2,6 +2,7 @@
 Bit errors are evaluated per-BDF (per direction); link downgrades per-link."""
 from computetest import diagnostics
 from computetest.backend import (
+    ECAP_AER,
     PORT_ENDPOINT,
     PORT_ROOT,
     PORT_SWITCH_DOWNSTREAM,
@@ -59,3 +60,32 @@ def test_chain_attributes_uncorrectable_on_a_segment():
     assert d.status == "fail"
     seg = next(s for s in d.segments if s.bdf == "0000:03:00.0")
     assert "CmplTO" in seg.uncorrectable_types
+
+
+def test_chain_segment_with_no_error_source_is_skip_not_pass():
+    # An upstream BDF with neither AER nor Device Status cannot have its BER measured.
+    # It must be reported 'skip', never a silent 'pass' (mirrors the single-device rule).
+    be = _switch_board(**{"0000:02:00.0": dict(has_pcie_cap=False)})
+    be._devs["0000:02:00.0"]._ext_caps.pop(ECAP_AER)   # no AER AND no Device Status -> 'none'
+    d = diagnostics.diagnose_chain(be, "0000:04:00.0", target_ber=1e-9, max_seconds=3,
+                                   expected_speed=4, expected_width=16)
+    seg = next(s for s in d.segments if s.bdf == "0000:02:00.0")
+    assert seg.status == "skip"          # unmeasurable, not pass
+    assert d.status == "skip"            # folds through (no fail anywhere else)
+
+
+def test_chain_no_expectation_falls_back_to_downstream_port_max():
+    # No expected_speed/width supplied: a link statically trained below its OWN max
+    # (Gen3 vs max Gen4, no LBMS/LABS latched) must still FAIL via the max fallback.
+    be = _switch_board(**{"0000:03:00.0": dict(link_speed=3)})   # max_link_speed stays 4
+    d = diagnostics.diagnose_chain(be, "0000:04:00.0", target_ber=1e-9, max_seconds=3)
+    assert d.status == "fail"
+    bad = [li for li in d.links if li.status == "fail"]
+    assert any(li.downstream_bdf == "0000:03:00.0" and li.speed == 3 for li in bad)
+
+
+def test_chain_no_expectation_clean_link_at_max_passes():
+    # Same path, link at its max (Gen4=Gen4) and no expectation: must NOT false-fail.
+    d = diagnostics.diagnose_chain(_switch_board(), "0000:04:00.0", target_ber=1e-9,
+                                   max_seconds=3)
+    assert all(li.status == "pass" for li in d.links)

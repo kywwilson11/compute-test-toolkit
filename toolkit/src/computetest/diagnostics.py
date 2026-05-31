@@ -137,7 +137,7 @@ class ChainSegmentResult:
     direction: str                      # e.g. "0000:00:1c.0->0000:02:00.0"
     correctable_types: list[str]        # correctable bit names seen this direction
     uncorrectable_types: list[str]      # uncorrectable bit names seen this direction
-    status: str                         # "pass" | "fail"
+    status: str                         # "pass" | "fail" | "skip" (no PCIe error source)
 
 
 @dataclass
@@ -171,6 +171,10 @@ class ChainDiagnostic:
         if (self.bert.status == "fail" or any(s.status == "fail" for s in self.segments)
                 or any(li.status == "fail" for li in self.links) or self.bad_kernel_events):
             return "fail"
+        # An unmeasurable segment (no PCIe error source) is never a silent pass: fold it
+        # through to skip, mirroring the single-device honesty rule (fail > skip > pass).
+        if any(s.status == "skip" for s in self.segments):
+            return "skip"
         return self.bert.status         # "pass" (or "skip" if the endpoint had no AER)
 
     def reasons(self) -> list[str]:
@@ -243,21 +247,31 @@ def diagnose_chain(backend: Backend, endpoint_bdf: str, *, expected_speed: int |
     # Read each upstream BDF's accrued errors (one direction of one link).
     segments = []
     for m in upstream:
-        r = aer.read_errors(backend, m.bdf, aer.error_source(backend, m.bdf))
+        src = aer.error_source(backend, m.bdf)
+        r = aer.read_errors(backend, m.bdf, src)
         backend.set_exercising(m.bdf, False)
         cor = [n for _, n, _ in r.correctable]
         unc = [n for _, n, _ in r.uncorrectable]
-        ok = not unc and len(cor) <= upstream_correctable_ok
-        segments.append(ChainSegmentResult(m.bdf, m.direction, cor, unc,
-                                            "pass" if ok else "fail"))
+        if src == "none":           # no AER and no Device Status: BER was never measurable
+            status = "skip"
+        elif not unc and len(cor) <= upstream_correctable_ok:
+            status = "pass"
+        else:
+            status = "fail"
+        segments.append(ChainSegmentResult(m.bdf, m.direction, cor, unc, status))
 
     # Per-link downgrade, read once at the downstream port (both ends agree on speed/width).
     link_results = []
     for li in links:
         ls = backend.read_link_status(li.downstream_bdf)
+        # No explicit expectation -> hold the link to the downstream port's OWN max, so a
+        # link that came up degraded BEFORE the window (LBMS/LABS never latched) is caught.
+        port = backend.get_device(li.downstream_bdf)
+        tgt_speed = expected_speed or port.max_link_speed
+        tgt_width = expected_width or port.max_link_width
         bw = ls.bw_changed or ls.autonomous_bw
-        downgraded = bool((expected_speed and ls.speed < expected_speed)
-                          or (expected_width and ls.width < expected_width) or bw)
+        downgraded = bool((tgt_speed and ls.speed < tgt_speed)
+                          or (tgt_width and ls.width < tgt_width) or bw)
         link_results.append(ChainLinkResult(li.name, li.downstream_bdf, ls.speed, ls.width,
                                              expected_speed, expected_width, bw,
                                              "fail" if downgraded else "pass"))

@@ -1,7 +1,7 @@
 """LinkHealth properties + summary formatting, and the watch loop (retrains, min
 speed/width, LBMS/LABS bandwidth-change latch) driven through the mock backend."""
 from computetest import linkstate
-from computetest.backend import MockBackend, MockDevice
+from computetest.backend import PORT_ENDPOINT, PORT_ROOT, MockBackend, MockDevice
 
 
 def _be(**kw):
@@ -62,7 +62,10 @@ def test_check_link_no_watch_reports_current():
 
 # --- check_link: watch loop -------------------------------------------------- #
 def test_check_link_watch_catches_downtrain_and_bw_latch():
-    be = _be(link_speed=4, link_width=16, max_link_speed=4, max_link_width=16)
+    # LBMS/LABS exist only on a link-owning DOWNSTREAM port (Root/Switch-Down); read them
+    # at PORT_ROOT so the latch path is exercised where the spec actually implements it.
+    be = _be(link_speed=4, link_width=16, max_link_speed=4, max_link_width=16,
+             port_type=PORT_ROOT)
     be.inject_downtrain("0000:03:00.0", per_sec=1e6)     # transient speed dip under load
     h = linkstate.check_link(be, "0000:03:00.0", expected_speed=4,
                              watch_s=0.05, poll_s=0.0)
@@ -70,6 +73,20 @@ def test_check_link_watch_catches_downtrain_and_bw_latch():
     assert h.bw_changed                                  # LBMS/LABS latched during watch
     assert h.min_speed < 4 and h.speed_degraded          # the dip was caught
     assert not h.ok
+
+
+def test_check_link_bw_latch_not_read_on_endpoint():
+    # PCIe spec: LBMS/LABS are RsvdZ on Endpoints/Upstream Ports. Even when the mock
+    # would latch them, check_link must NOT trust bw_changed at an endpoint -- but the
+    # min-speed dip polling still catches the transient (so the link is still flagged).
+    be = _be(link_speed=4, link_width=16, max_link_speed=4, max_link_width=16,
+             port_type=PORT_ENDPOINT)
+    be.inject_downtrain("0000:03:00.0", per_sec=1e6)
+    h = linkstate.check_link(be, "0000:03:00.0", expected_speed=4,
+                             watch_s=0.05, poll_s=0.0)
+    assert h.poll_count > 0
+    assert not h.bw_changed                              # not read at an endpoint (RsvdZ)
+    assert h.min_speed < 4 and h.speed_degraded          # dip still caught by polling
 
 
 def test_check_link_watch_counts_retrains_on_rising_edge():
