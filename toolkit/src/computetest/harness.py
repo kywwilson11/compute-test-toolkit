@@ -59,6 +59,19 @@ class TestReport:
                 + f"\n  => {c['pass']} pass, {c['fail']} fail, {c['skip']} skip  [{verdict}]")
 
 
+def _heartbeat_detail(report: TestReport) -> str:
+    """Terminal heartbeat verdict, using the SAME three-way logic as
+    cli._verdict_exit_any: any genuine fail -> FAIL; else any skip -> INCOMPLETE
+    (uncovered tests are not a pass); else PASS. report.ok alone would mislabel an
+    all-skip run 'PASS' while the CLI exit code is EXIT_UNAVAIL."""
+    statuses = [r.status for r in report.records]
+    if any(s == "fail" for s in statuses):
+        return "FAIL"
+    if any(s in ("skip", "unavailable", "incomplete") for s in statuses):
+        return "INCOMPLETE"
+    return "PASS"
+
+
 def run_test_plan(backend: Backend, plan: dict, *, store: ResultStore | None = None,
                   do_bert: bool = True, do_margin: bool = True) -> TestReport:
     """Run the full plan, recording each result. Returns a TestReport."""
@@ -72,59 +85,81 @@ def run_test_plan(backend: Backend, plan: dict, *, store: ResultStore | None = N
         if store:
             store.record(rec)
 
-    def add_health(subsystem: str, target: str, test_name: str, h: Any) -> None:
-        """Record a Layer-2 functional-check result. ``h`` is duck-typed: any object with
-        .ok / .summary() / .to_dict() (every check_*Health returns one)."""
-        add(TestRecord(subsystem, target, test_name,
-                       "pass" if h.ok else "fail", h.to_dict(), h.summary()))
+    def safe_add(subsystem: str, target: str, test_name: str, make: Any) -> None:
+        """Run ``make()`` (which returns a TestRecord) but never let one raising check
+        abort the plan. Mirrors diagnostics._try_margin: on any fault, record a SKIP so
+        the rest of the report -- and every remaining device/handle -- still runs."""
+        try:
+            add(make())
+        except Exception as e:  # pragma: no cover - real-hw path (mock checks never raise)
+            add(TestRecord(subsystem, target, test_name, "skip", {},
+                           f"{type(e).__name__}: {e}"))
 
-    # 1. Enumeration: are the expected PCIe devices present?
-    enum = topology.enumerate_against(backend, cfg)
-    add(TestRecord("enum", "topology", "enumeration",
-                   "pass" if enum.ok else "fail",
-                   {"matched": enum.matched, "missing": enum.missing,
-                    "unexpected": enum.unexpected},
-                   "" if enum.ok else "missing: " + ", ".join(enum.missing)))
+    def add_health(subsystem: str, target: str, test_name: str, make: Any) -> None:
+        """Record a Layer-2 functional-check result. ``make`` is a zero-arg callable
+        returning a duck-typed health object (.ok / .summary() / .to_dict()); it is
+        invoked inside safe_add so a raising real-hw check degrades to SKIP."""
+        def _rec() -> TestRecord:
+            h = make()
+            return TestRecord(subsystem, target, test_name,
+                              "pass" if h.ok else "fail", h.to_dict(), h.summary())
+        safe_add(subsystem, target, test_name, _rec)
 
-    # 2. PCIe diagnostics per matched device.
-    for exp in cfg.devices:
-        for bdf in enum.matched.get(exp.name, []):
-            d = diagnostics.diagnose(
-                backend, bdf, expected=exp, do_bert=do_bert, do_margin=do_margin,
-                target_ber=cfg.target_ber, confidence=cfg.confidence,
-                bert_max_s=plan.get("bert_max_s", 30.0),
-                watch_retrains_s=plan.get("watch_retrains_s", 0.2))
-            add(TestRecord("pcie", bdf, f"{exp.name}:diagnose", d.status,
-                           d.to_dict(), "; ".join(d.reasons())))
+    try:
+        # 1. Enumeration: are the expected PCIe devices present?
+        enum = topology.enumerate_against(backend, cfg)
+        add(TestRecord("enum", "topology", "enumeration",
+                       "pass" if enum.ok else "fail",
+                       {"matched": enum.matched, "missing": enum.missing,
+                        "unexpected": enum.unexpected},
+                       "" if enum.ok else "missing: " + ", ".join(enum.missing)))
 
-    # 3. Layer 2: functional / DEVICE health checks (keyed by OS handle). These test
-    #    each device itself (a GPU's link is Layer 1 above; its ECC/thermal is here).
-    fc = plan.get("functional_checks", {})
-    for dev in fc.get("nvme", []):
-        add_health("nvme", dev, "smart", nvme.check_nvme(dev))
-    for idx in fc.get("gpus", []):
-        add_health("gpu", str(idx), "health", gpu.check_gpu(idx))
-    for link in fc.get("gmsl", []):
-        add_health("gmsl", link, "link+video", gmsl.check_gmsl(link))
-    for iface in fc.get("ethernet", []):
-        add_health("ethernet", iface, "link", ethernet.check_ethernet(iface))
-    for iface in fc.get("can", []):
-        add_health("can", iface, "state", ethernet.check_can(iface))
+        # 2. PCIe diagnostics per matched device.
+        for exp in cfg.devices:
+            for bdf in enum.matched.get(exp.name, []):
+                def _diag(bdf: str = bdf, exp: topology.DeviceExpectation = exp) -> TestRecord:
+                    d = diagnostics.diagnose(
+                        backend, bdf, expected=exp, do_bert=do_bert, do_margin=do_margin,
+                        target_ber=cfg.target_ber, confidence=cfg.confidence,
+                        bert_max_s=plan.get("bert_max_s", 30.0),
+                        watch_retrains_s=plan.get("watch_retrains_s", 0.2))
+                    return TestRecord("pcie", bdf, f"{exp.name}:diagnose", d.status,
+                                      d.to_dict(), "; ".join(d.reasons()))
+                safe_add("pcie", bdf, f"{exp.name}:diagnose", _diag)
 
-    # 4. Whole-chain diagnostics (every link in an endpoint's path). Each entry is an
-    #    endpoint BDF, or {endpoint, expected_speed, expected_width}.
-    for spec in plan.get("chains", []):
-        ep = spec if isinstance(spec, str) else spec["endpoint"]
-        kw = {} if isinstance(spec, str) else {
-            "expected_speed": spec.get("expected_speed"),
-            "expected_width": spec.get("expected_width")}
-        # Distinct name (vs the per-device PcieDiagnostic `d` above) keeps the types crisp.
-        chain_d = diagnostics.diagnose_chain(backend, ep, target_ber=cfg.target_ber,
-                                             confidence=cfg.confidence,
-                                             max_seconds=plan.get("bert_max_s", 30.0), **kw)
-        add(TestRecord("chain", ep, "chain", chain_d.status, chain_d.to_dict(),
-                       "; ".join(chain_d.reasons())))
+        # 3. Layer 2: functional / DEVICE health checks (keyed by OS handle). These test
+        #    each device itself (a GPU's link is Layer 1 above; its ECC/thermal is here).
+        fc = plan.get("functional_checks", {})
+        for dev in fc.get("nvme", []):
+            add_health("nvme", dev, "smart", lambda dev=dev: nvme.check_nvme(dev))
+        for idx in fc.get("gpus", []):
+            add_health("gpu", str(idx), "health", lambda idx=idx: gpu.check_gpu(idx))
+        for link in fc.get("gmsl", []):
+            add_health("gmsl", link, "link+video", lambda link=link: gmsl.check_gmsl(link))
+        for iface in fc.get("ethernet", []):
+            add_health("ethernet", iface, "link",
+                       lambda iface=iface: ethernet.check_ethernet(iface))
+        for iface in fc.get("can", []):
+            add_health("can", iface, "state", lambda iface=iface: ethernet.check_can(iface))
 
-    if store:
-        store.heartbeat("idle", "PASS" if report.ok else "FAIL")
+        # 4. Whole-chain diagnostics (every link in an endpoint's path). Each entry is an
+        #    endpoint BDF, or {endpoint, expected_speed, expected_width}.
+        for spec in plan.get("chains", []):
+            ep = spec if isinstance(spec, str) else spec["endpoint"]
+            kw = {} if isinstance(spec, str) else {
+                "expected_speed": spec.get("expected_speed"),
+                "expected_width": spec.get("expected_width")}
+            def _chain(ep: str = ep, kw: dict = kw) -> TestRecord:
+                # Distinct name (vs per-device `d` above) keeps the types crisp.
+                chain_d = diagnostics.diagnose_chain(
+                    backend, ep, target_ber=cfg.target_ber, confidence=cfg.confidence,
+                    max_seconds=plan.get("bert_max_s", 30.0), **kw)
+                return TestRecord("chain", ep, "chain", chain_d.status,
+                                  chain_d.to_dict(), "; ".join(chain_d.reasons()))
+            safe_add("chain", ep, "chain", _chain)
+    finally:
+        if store:
+            # Terminal heartbeat ALWAYS supersedes the early "running" beat (even if a
+            # bug below the safe_add net escaped) so no station is left stuck "running".
+            store.heartbeat("idle", _heartbeat_detail(report))
     return report

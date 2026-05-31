@@ -48,6 +48,20 @@ def test_load_config_from_json_file(tmp_path):
     assert cfg.devices[0].match["class_code"] == 0x010802  # 0x-string coerced to int
 
 
+def test_load_config_bdf_match_round_trips_as_string():
+    # Regression: load_config must NOT base-0 coerce the documented `bdf` match key
+    # (int('0000:03:00.0', 0) raises ValueError). bdf is an address string that
+    # matches() compares verbatim; numeric keys alongside it are still coerced.
+    cfg = topology.load_config(
+        {"pcie_devices": [{"name": "GPU", "match": {"bdf": "0000:03:00.0",
+                                                    "vendor_id": "0x10DE"}}]})
+    exp = cfg.devices[0]
+    assert exp.match["bdf"] == "0000:03:00.0"   # left a string, not coerced/crashed
+    assert exp.match["vendor_id"] == 0x10DE      # numeric key still coerced
+    assert exp.matches(_dev(bdf="0000:03:00.0")) is True
+    assert exp.matches(_dev(bdf="0000:09:00.0")) is False
+
+
 # --- EnumerationReport.summary --------------------------------------------- #
 def test_enumeration_summary_lists_matched_missing_unexpected():
     be = MockBackend()

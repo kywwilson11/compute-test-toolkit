@@ -7,9 +7,24 @@ table the dashboard uses to show which stations are alive.
 from __future__ import annotations
 
 import json
+import math
 import sqlite3
 import time
 from dataclasses import dataclass, field
+
+
+def _json_safe(obj):
+    """Replace non-finite floats (inf/-inf/NaN) with None, recursively. A real-DUT BERT
+    skip legitimately produces ber_upper_bound=float('inf'); json.dumps would otherwise
+    write the bare token `Infinity`, which is NOT a JSON number per RFC 8259 Section 6
+    and is rejected by strict consumers (the dashboard browser, Go/Rust/jq)."""
+    if isinstance(obj, float):
+        return obj if math.isfinite(obj) else None
+    if isinstance(obj, dict):
+        return {k: _json_safe(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_json_safe(v) for v in obj]
+    return obj
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS results (
@@ -55,7 +70,7 @@ class ResultStore:
             "target, test_name, status, measured, message) VALUES (?,?,?,?,?,?,?,?,?,?)",
             (time.time(), self.station, self.dut_serial, self.program_version,
              rec.subsystem, rec.target, rec.test_name, rec.status,
-             json.dumps(rec.measured), rec.message))
+             json.dumps(_json_safe(rec.measured), allow_nan=False), rec.message))
         self.conn.commit()
 
     def heartbeat(self, status: str = "idle", detail: str = "") -> None:

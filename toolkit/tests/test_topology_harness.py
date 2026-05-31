@@ -119,6 +119,80 @@ def test_analyze_chain_errors_per_bdf_downgrades_per_link():
     assert {l.downstream_bdf for l in links} == {"0000:00:1c.0", "0000:03:00.0"}
 
 
+def test_one_raising_check_skips_and_does_not_abort_plan(monkeypatch):
+    # A real-hw functional check that raises (e.g. nvme-cli missing -> RuntimeError, or
+    # a nonzero exit -> CalledProcessError) must degrade to a SKIP record and NOT abort
+    # the remaining checks -- mirroring diagnostics._try_margin's isolation.
+    import subprocess
+
+    from computetest import ethernet as eth_mod
+    from computetest import nvme as nvme_mod
+
+    be = MockBackend()
+    calls = {"eth": 0}
+    orig_eth = eth_mod.check_ethernet
+
+    def boom(_dev):
+        raise subprocess.CalledProcessError(1, ["nvme", "smart-log"])
+
+    def counted_eth(iface):
+        calls["eth"] += 1
+        return orig_eth(iface)
+
+    monkeypatch.setattr(nvme_mod, "check_nvme", boom)
+    monkeypatch.setattr(eth_mod, "check_ethernet", counted_eth)
+    plan = {"functional_checks": {"nvme": ["/dev/nvme0"], "ethernet": ["eth0"]}}
+    report = run_test_plan(be, plan)
+    nvme_recs = [r for r in report.records if r.subsystem == "nvme"]
+    assert len(nvme_recs) == 1 and nvme_recs[0].status == "skip"
+    assert "CalledProcessError" in nvme_recs[0].message     # type+detail, like _try_margin
+    # The ethernet check after the raising nvme check still ran (plan not aborted).
+    assert calls["eth"] == 1
+    assert any(r.subsystem == "ethernet" for r in report.records)
+
+
+def test_terminal_heartbeat_incomplete_on_all_skip_and_idle_after_raise(monkeypatch):
+    # Heartbeat detail uses the same 3-way logic as cli._verdict_exit_any: an all-skip
+    # plan is INCOMPLETE (not PASS), and the terminal beat always supersedes "running".
+    from computetest import nvme as nvme_mod
+
+    be = MockBackend()
+
+    def boom(_dev):
+        raise RuntimeError("nvme-cli not found")
+
+    monkeypatch.setattr(nvme_mod, "check_nvme", boom)
+    store = ResultStore(":memory:", station="bench-iso")
+    run_test_plan(be, {"functional_checks": {"nvme": ["/dev/nvme0"]}}, store=store)
+    st = store.stations()[0]
+    assert st["status"] == "idle"             # not left stuck on "running"
+    assert st["detail"] == "INCOMPLETE"       # all-skip != PASS (matches EXIT_UNAVAIL)
+    store.close()
+
+
+def test_terminal_heartbeat_pass_only_when_all_pass():
+    from computetest.backend import (
+        PORT_ENDPOINT,
+        PORT_ROOT,
+        PORT_SWITCH_DOWNSTREAM,
+        PORT_SWITCH_UPSTREAM,
+        MockDevice,
+    )
+    be = MockBackend([
+        MockDevice("0000:00:1c.0", parent=None, port_type=PORT_ROOT),
+        MockDevice("0000:02:00.0", parent="0000:00:1c.0", port_type=PORT_SWITCH_UPSTREAM),
+        MockDevice("0000:03:00.0", parent="0000:02:00.0", port_type=PORT_SWITCH_DOWNSTREAM),
+        MockDevice("0000:04:00.0", parent="0000:03:00.0", port_type=PORT_ENDPOINT),
+    ])
+    store = ResultStore(":memory:", station="bench-pass")
+    plan = {"target_ber": 1e-9, "confidence": 0.95, "bert_max_s": 2,
+            "chains": [{"endpoint": "0000:04:00.0", "expected_speed": 4,
+                        "expected_width": 16}]}
+    run_test_plan(be, plan, store=store)
+    assert store.stations()[0]["detail"] == "PASS"   # no fail, no skip
+    store.close()
+
+
 def test_plan_runs_chain_section():
     from computetest.backend import (
         PORT_ENDPOINT,

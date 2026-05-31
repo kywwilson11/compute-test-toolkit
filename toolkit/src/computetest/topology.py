@@ -87,9 +87,14 @@ def load_config(source) -> TopologyConfig:
     def to_int(v):
         return int(v, 0) if isinstance(v, str) else v
 
+    # Only the numeric identity keys are base-0 coerced. `bdf` is an address string
+    # (e.g. "0000:03:00.0") that int(..., 0) cannot parse and that matches() compares
+    # verbatim against dev.bdf, so it (and any future non-numeric key) stays a string.
+    numeric_keys = {"vendor_id", "device_id", "class_code"}
     devs = []
     for d in data.get("pcie_devices", []):
-        match = {k: to_int(v) for k, v in d.get("match", {}).items()}
+        match = {k: (to_int(v) if k in numeric_keys else v)
+                 for k, v in d.get("match", {}).items()}
         devs.append(DeviceExpectation(
             name=d["name"], match=match, count=d.get("count", 1),
             expected_speed=d.get("expected_speed"), expected_width=d.get("expected_width"),
