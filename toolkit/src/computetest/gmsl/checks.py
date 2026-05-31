@@ -14,10 +14,8 @@ from dataclasses import dataclass, field
 
 from ..ber import BertVerdict, assess
 from ..instruments import PowerSupply, SwitchMatrix
-from ..pcie.retimer.base import EyeMeasurement, eye_quality_verdict
+from ..pcie.retimer.base import EyeMeasurement
 from .serdes import (
-    DEFAULT_EOM_MV_MIN,
-    DEFAULT_EOM_UI_MIN,
     GmslMode,
     GmslPrbsPattern,
     LinkDirection,
@@ -230,14 +228,15 @@ def check_eom(serdes: SerDesLink, *, link: int = 0,
               direction: LinkDirection = LinkDirection.FORWARD) -> EomHealth:
     """Read the eye-opening monitor for one link/direction and map it onto the
     retimer ``EyeMeasurement``. The PAM4 *worst* sub-eye becomes ``eye_mv`` (the
-    closing eye is the margin oracle); the verdict reuses the retimer's
-    ``eye_quality_verdict`` with GMSL-specific thresholds."""
+    closing eye is the margin oracle); the verdict reuses the device's own
+    ``serdes.eom_verdict`` so an operator-tightened EOM floor set via
+    ``set_eom_thresholds`` is honored (matching the shmoo consumer)."""
     eom = serdes.read_eom(link, direction)
     eye = EyeMeasurement(
         lane=link, eye_ui=eom.horizontal_ui, eye_mv=eom.worst_vertical_mv,
-        height_mv=max(eom.vertical_mv), width_ui=eom.horizontal_ui)
-    passed = eye_quality_verdict(eye, ui_min=DEFAULT_EOM_UI_MIN,
-                                 mv_min=DEFAULT_EOM_MV_MIN)
+        height_mv=max(eom.vertical_mv) if eom.vertical_mv else 0.0,
+        width_ui=eom.horizontal_ui)
+    passed = serdes.eom_verdict(eom)
     return EomHealth(link=link, direction=direction.value, mode=eom.mode.value,
                      eye=eye, subeyes_mv=list(eom.vertical_mv),
                      checks={"eye_open": passed})

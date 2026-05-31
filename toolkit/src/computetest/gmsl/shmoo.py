@@ -11,11 +11,21 @@ via ``gmsl.eom_to_lmt_records`` (Sprint 4.1.7).
 """
 from __future__ import annotations
 
+import time
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 
 from ..instruments import PowerSupply, ThermalChamber
-from .serdes import LinkDirection, SerDesLink
+from .serdes import LinkDirection, SerDesError, SerDesLink
+
+# Chamber settle budget at each temperature corner: a real chamber slews over
+# minutes across the AEC-Q100 Grade-2 -40..+105 C range, so the eye/die-temp
+# must not be read until the actual temperature is within tolerance of the
+# setpoint. The mock reflects the setpoint instantly, so it settles on poll #1
+# (zero sleeps). Real programs tune the timeout to their chamber's slew rate.
+DEFAULT_SETTLE_TIMEOUT_S = 600.0
+DEFAULT_SETTLE_POLL_S = 1.0
+DEFAULT_SETTLE_TOLERANCE_C = 2.0
 
 
 @dataclass
@@ -58,23 +68,52 @@ class ShmooResult:
                 "checks": self.checks, "ok": self.ok}
 
 
+def _wait_settled(chamber: ThermalChamber, *, timeout_s: float,
+                  tolerance_c: float) -> None:
+    """Poll ``chamber.settled()`` until the actual temperature is within
+    ``tolerance_c`` of the setpoint or ``timeout_s`` elapses. The mock reflects
+    the setpoint instantly so this returns on the first poll (no sleep); a real
+    chamber slews, so a never-settling chamber raises ``SerDesError`` rather than
+    letting the eye/die-temp be read at the wrong corner."""
+    deadline = time.monotonic() + timeout_s
+    while True:
+        if chamber.settled(tolerance_c=tolerance_c):
+            return
+        if time.monotonic() >= deadline:
+            raise SerDesError(
+                f"thermal chamber did not settle within {timeout_s:g}s "
+                f"(tolerance {tolerance_c:g} C)")
+        time.sleep(DEFAULT_SETTLE_POLL_S)
+
+
 def vt_shmoo(serdes: SerDesLink, *, psu: PowerSupply, chamber: ThermalChamber,
              voltages: Sequence[float], temperatures: Sequence[float],
              link: int = 0,
-             direction: LinkDirection = LinkDirection.FORWARD) -> ShmooResult:
+             direction: LinkDirection = LinkDirection.FORWARD,
+             settle_timeout_s: float = DEFAULT_SETTLE_TIMEOUT_S,
+             settle_tolerance_c: float = DEFAULT_SETTLE_TOLERANCE_C) -> ShmooResult:
     """Run a two-axis voltage x temperature margining shmoo on one link.
 
-    At each (temperature, voltage) corner: set the chamber, set the rail, force a
-    re-train (AEQ re-convergence), then read the on-die temperature and the EOM
-    eye. A corner where the link doesn't re-lock fails ``aeq_reconverged``; a
-    corner whose eye closes fails ``all_corners_eye_open``."""
+    At each (temperature, voltage) corner: set the chamber, **wait for the
+    chamber to settle within ``settle_tolerance_c`` of the setpoint** (bounded by
+    ``settle_timeout_s``), set the rail, force a re-train (AEQ re-convergence),
+    then read the on-die temperature and the EOM eye. A corner where the link
+    doesn't re-lock fails ``aeq_reconverged``; a corner whose eye closes fails
+    ``all_corners_eye_open``. Raises ``SerDesError`` if the chamber never settles
+    so a slewing chamber can never misattribute eye margin to the wrong corner."""
     points: list[ShmooPoint] = []
     for temp in temperatures:
         chamber.set_temperature(temp)
+        _wait_settled(chamber, timeout_s=settle_timeout_s,
+                      tolerance_c=settle_tolerance_c)
         for volt in voltages:
             psu.set_voltage(volt)
             serdes.force_relock(link)            # AEQ re-converge after the V/T step
-            relocked = serdes.lock_status()[link].locked
+            locks = serdes.lock_status()         # one read per corner
+            this_link = next((ll for ll in locks if ll.link == link), None)
+            if this_link is None:
+                raise SerDesError(f"link {link} not present in lock_status()")
+            relocked = this_link.locked
             die = serdes.read_temperature()
             if relocked:
                 eom = serdes.read_eom(link, direction)
