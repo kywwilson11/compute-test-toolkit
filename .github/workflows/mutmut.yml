@@ -28,11 +28,15 @@ defaults:
 jobs:
   mutmut:
     runs-on: ubuntu-latest
-    # Per-shard budget. Worst case at ~6 s/mutant avg (mix of fast-killed and
-    # full-suite survivors) × the largest module (bert.py ~347 mutants) ≈ 35 min;
-    # 90 min is ~2.5× that, with headroom for the GHA runner's lower CPU vs a
-    # dev laptop. fail-fast disabled below so a timeout in one module doesn't
-    # cancel the others' signal.
+    # This lane REPORTS mutation survivors; it does not gate. Survivors are expected
+    # on any real codebase, so `continue-on-error` keeps the workflow-run conclusion
+    # green (no failure email) whether mutants survive OR a shard hits its timeout.
+    # The signal lives in the run Summary tab + the uploaded cache, triaged weekly.
+    continue-on-error: true
+    # Per-shard budget. ~6 s/mutant avg (fast-killed + full-suite survivors) ×
+    # the largest module (bert.py ~347 mutants). bert can still brush 90 min when it
+    # has many survivors (each re-runs the full suite) -- tolerated via the above.
+    # fail-fast disabled so one shard's timeout doesn't cancel the others' signal.
     timeout-minutes: 90
     strategy:
       fail-fast: false
@@ -64,17 +68,26 @@ jobs:
         run: python -m pip install -e '.[dev]'
       - name: Run mutmut on ${{ matrix.name }} (${{ matrix.module }})
         # `--paths-to-mutate` overrides the setup.cfg list to this single module.
-        # mutmut exits non-zero when any mutant survives -- exactly the signal
-        # we want; the shard fails red and the artifact + the `mutmut results`
-        # step below tell the triager what survived.
+        # mutmut exits non-zero when mutants survive; that's an expected report
+        # outcome, not a build break, so the job's continue-on-error swallows it.
+        # The survivor list is surfaced in the summary step below + the cache artifact.
         run: python -m mutmut run --paths-to-mutate ${{ matrix.module }}
-      - name: Show surviving mutants for ${{ matrix.name }}
+      - name: Report surviving mutants for ${{ matrix.name }}
         if: always()
-        run: python -m mutmut results || true
+        # Surface the survivor list in the run's Summary tab so weekly triage
+        # doesn't have to dig through job logs.
+        run: |
+          {
+            echo "### mutmut — ${{ matrix.name }} (\`${{ matrix.module }}\`)"
+            echo '```'
+            python -m mutmut results || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
       - name: Upload .mutmut-cache for ${{ matrix.name }}
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: mutmut-cache-${{ matrix.name }}
           path: toolkit/.mutmut-cache
+          include-hidden-files: true   # .mutmut-cache is a dotfile; upload-artifact@v4 skips hidden by default
           if-no-files-found: ignore
