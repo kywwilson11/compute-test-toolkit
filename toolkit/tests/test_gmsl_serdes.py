@@ -253,3 +253,38 @@ class TestLoopbackAndRelock:
     def test_force_relock_bad_link_raises(self):
         with pytest.raises(SerDesError, match="out of range"):
             MockSerDes(links=2).force_relock(9)
+
+
+class TestPublicSurface:
+    """Lock the package __all__ against the public namespace it re-exports.
+
+    The gmsl/cxl/nvme.mi __init__ files re-export their subpackage symbols; the
+    DEFAULT_* tuning constants are part of that contract. Because the gmsl
+    imports use ``# noqa: F401``, ruff's re-export rule does NOT enforce __all__
+    completeness for them, so this test is the guard.
+    """
+
+    def test_gmsl_exports_default_tuning_constants(self):
+        import computetest.gmsl as gmsl
+        for name in ("DEFAULT_BIST_DURATION_S", "DEFAULT_EOM_MV_MIN",
+                     "DEFAULT_EOM_UI_MIN", "DEFAULT_MAX_LOCK_MS",
+                     "DEFAULT_PRE_FEC_TARGET_BER"):
+            assert name in gmsl.__all__, f"{name} missing from gmsl.__all__"
+            assert hasattr(gmsl, name), f"{name} not importable from gmsl"
+
+    @pytest.mark.parametrize("modname",
+                             ["computetest.gmsl", "computetest.cxl",
+                              "computetest.nvme.mi"])
+    def test_all_matches_public_namespace(self, modname):
+        import importlib
+        import types
+        mod = importlib.import_module(modname)
+        exported = set(mod.__all__)
+        # public, non-dunder names that are not submodules
+        public = {k for k, v in vars(mod).items()
+                  if not k.startswith("_") and not isinstance(v, types.ModuleType)}
+        missing = public - exported
+        dangling = exported - set(vars(mod))
+        assert not missing, f"{modname}: public names absent from __all__: {sorted(missing)}"
+        assert not dangling, f"{modname}: __all__ names not importable: {sorted(dangling)}"
+        assert len(mod.__all__) == len(exported), f"{modname}: __all__ has duplicates"

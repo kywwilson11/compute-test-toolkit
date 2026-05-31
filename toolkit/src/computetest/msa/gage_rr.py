@@ -115,8 +115,10 @@ def _validate(measurements) -> tuple[int, int, int]:
         raise ValueError("measurements is empty")
     n_parts = len(measurements)
     n_operators = len(measurements[0])
-    if n_operators == 0:
-        raise ValueError("each part needs >=1 operator's rows")
+    if n_operators < 2:
+        raise ValueError(
+            "Gage R&R needs >=2 operators (appraiser variation is not "
+            "estimable with one operator)")
     n_trials = len(measurements[0][0])
     if n_trials < 2:
         raise ValueError("Gage R&R needs >=2 trials per (part, operator) cell")

@@ -32,3 +32,14 @@ def test_clean_gpu_volatile_vs_aggregate():
     h = gpu.check_gpu(0)
     # passes on volatile (this test) even though aggregate lifetime counters can be >0
     assert h.metrics["ecc_uncorrected_volatile"] == 0
+
+
+def test_xid_92_label_is_high_single_bit_not_contained():
+    # NVIDIA's Xid catalog: 92 = "High single-bit ECC error rate" (a correctable
+    # SBE-RATE signal), 94 = "Contained ECC error", 95 = "Uncontained ECC error".
+    # Regression: 92 used to duplicate 94's "contained ECC" label.
+    labels = gpu._XID_CRITICAL
+    assert "single-bit" in labels[92]
+    assert labels[92] != labels[94]            # 92 is NOT the contained-ECC code
+    assert labels[94] == "contained ECC"
+    assert labels[95] == "uncontained ECC"

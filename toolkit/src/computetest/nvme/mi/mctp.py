@@ -23,12 +23,13 @@ class MctpError(RuntimeError):
     """An MCTP framing or transport fault."""
 
 
-# Per DSP0239 — MCTP Endpoint IDs (8-bit):
-# * 0x00 — Null endpoint
-# * 0x01–0x07 — Reserved
-# * 0x08–0xEF — Routable endpoint addresses
-# * 0xF0–0xFE — Reserved
-# * 0xFF — Broadcast
+# Per DSP0236 Table 2 (Special endpoint IDs) — MCTP Endpoint IDs (8-bit):
+# * 0x00        — Null EID (physical addressing only)
+# * 0x01–0x07   — Reserved for future definition
+# * 0x08–0xFE   — Available for assignment/allocation to endpoints (routable)
+# * 0xFF        — Broadcast EID
+# NOTE: 0xF0–0xFF is a reserved range for *control command numbers*
+# (transport-specific opcodes), NOT for EIDs — they are distinct fields.
 @dataclass(frozen=True)
 class MctpEndpointId:
     """One MCTP endpoint address."""
@@ -48,11 +49,13 @@ class MctpEndpointId:
 
     @property
     def is_reserved(self) -> bool:
-        return (1 <= self.value <= 7) or (0xF0 <= self.value <= 0xFE)
+        # DSP0236 Table 2: only EIDs 0x01–0x07 are reserved for future definition.
+        return 1 <= self.value <= 7
 
     @property
     def is_routable(self) -> bool:
-        return 0x08 <= self.value <= 0xEF
+        # DSP0236 Table 2: "all other values" (0x08–0xFE) are assignable to endpoints.
+        return 0x08 <= self.value <= 0xFE
 
 
 class MctpMessageType(IntEnum):
@@ -82,7 +85,7 @@ class MctpMessage:
     message_type: MctpMessageType
     body: bytes = field(default=b"")
     message_tag: int = 0             # 0..7, owner-rotated for paired req/resp
-    integrity_check: bool = False    # IC bit per DSP0239 §6.4
+    integrity_check: bool = False    # IC bit (MCTP message header field, DSP0236)
 
     def __post_init__(self) -> None:
         if not 0 <= self.message_tag <= 7:

@@ -25,8 +25,9 @@ _THROTTLE_BAD = {0x8: "hw_slowdown", 0x20: "sw_thermal", 0x40: "hw_thermal",
                  0x80: "hw_power_brake"}
 # XID codes that indicate a hardware fault (subset; see Guide A's XID table).
 _XID_CRITICAL = {48: "DBE ECC", 63: "row-remap pending", 64: "row-remap failure",
-                 74: "NVLink error", 79: "GPU fell off the bus", 92: "contained ECC",
-                 94: "contained ECC", 95: "uncontained ECC"}
+                 74: "NVLink error", 79: "GPU fell off the bus",
+                 92: "high single-bit ECC rate",   # NVIDIA XID catalog: 92 is the SBE-rate
+                 94: "contained ECC", 95: "uncontained ECC"}   # signal, NOT contained ECC (94)
 _XID_RE = re.compile(r"NVRM:\s*Xid\s*\([^)]*\):\s*(\d+)")
 
 

@@ -74,6 +74,62 @@ class TestGageRrAnova:
         assert (r.ss_part + r.ss_operator + r.ss_interaction
                 + r.ss_error) == pytest.approx(ss_total, rel=1e-9)
 
+    def test_anova_pins_aiag_spc_worked_example(self):
+        # Pin SS / MS / F / variance components / %R&R to a PUBLISHED worked
+        # example (not just internal identities), so an EMS-divisor or
+        # variance-component drift is caught against absolute textbook numbers.
+        #
+        # Source: SPC for Excel, "ANOVA Gage R&R" Parts 1-3, which reproduces
+        # the AIAG MSA 4th Ed. crossed-ANOVA method. 5 parts x 3 operators x
+        # 3 trials = 45 measurements. m is indexed [part][operator][trial].
+        #   https://www.spcforexcel.com/knowledge/
+        #     measurement-systems-analysis-gage-rr/anova-gage-rr-part-1/
+        # Published ANOVA table (Part 1): SS op=1.630 part=28.909 int=0.065
+        #   equip=1.712 total=32.317; MS op=0.815 part=7.227 int=0.008
+        #   equip=0.057; F op=100.322 part=889.458 int=0.142.
+        # Published full-model variance components (Part 2/3, Table 3):
+        #   EV=0.0571 operator=0.0538 interaction=0.0000 (clipped from
+        #   -0.0163) PV=0.8021 GRR=0.1109 total=0.9130; %GRR=12.14% of
+        #   variance => sqrt => 34.85% as a sigma ratio => not_acceptable.
+        op_a = {1: [3.29, 3.41, 3.64], 2: [2.44, 2.32, 2.42],
+                3: [4.34, 4.17, 4.27], 4: [3.47, 3.50, 3.64],
+                5: [2.20, 2.08, 2.16]}
+        op_b = {1: [3.08, 3.25, 3.07], 2: [2.53, 1.78, 2.32],
+                3: [4.19, 3.94, 4.34], 4: [3.01, 4.03, 3.20],
+                5: [2.44, 1.80, 1.72]}
+        op_c = {1: [3.04, 2.89, 2.85], 2: [1.62, 1.87, 2.04],
+                3: [3.88, 4.09, 3.67], 4: [3.14, 3.20, 3.11],
+                5: [1.54, 1.93, 1.55]}
+        ops = [op_a, op_b, op_c]
+        m = [[ops[j][part] for j in range(3)] for part in range(1, 6)]
+        r = gage_rr_anova(m)
+        # Sums of squares (df: part=4, op=2, int=8, equip=30).
+        assert r.ss_operator == pytest.approx(1.630, abs=5e-3)
+        assert r.ss_part == pytest.approx(28.909, abs=5e-3)
+        assert r.ss_interaction == pytest.approx(0.065, abs=5e-3)
+        assert r.ss_error == pytest.approx(1.712, abs=5e-3)
+        # Mean squares (SS / df) — catches an EMS-divisor (df) error.
+        assert r.ms_operator == pytest.approx(0.815, abs=5e-3)
+        assert r.ms_part == pytest.approx(7.227, abs=5e-3)
+        assert r.ms_interaction == pytest.approx(0.008, abs=5e-3)
+        assert r.ms_error == pytest.approx(0.057, abs=5e-3)
+        # F ratios from the published table.
+        assert r.ms_operator / r.ms_interaction == pytest.approx(100.322, abs=5e-2)
+        assert r.ms_part / r.ms_interaction == pytest.approx(889.458, abs=5e-1)
+        assert r.ms_interaction / r.ms_error == pytest.approx(0.142, abs=5e-3)
+        # Variance components — the EMS-divisor-sensitive numbers. A wrong
+        # divisor (e.g. o*r <-> p*r) would move var_part to ~0.4813 and
+        # var_operator to ~0.0897, so these absolute values gate the drift.
+        assert r.var_equipment == pytest.approx(0.0571, abs=5e-4)
+        assert r.var_operator == pytest.approx(0.0538, abs=5e-4)
+        assert r.var_interaction == 0.0          # (0.008-0.057)/3 < 0, clipped
+        assert r.var_part == pytest.approx(0.8021, abs=5e-4)
+        assert r.var_rr == pytest.approx(0.1109, abs=5e-4)
+        assert r.var_total == pytest.approx(0.9130, abs=5e-4)
+        # %R&R is the sigma ratio: sqrt(0.1109/0.9130)*100 = 34.85%.
+        assert r.pct_rr == pytest.approx(34.85, abs=5e-2)
+        assert r.verdict == "not_acceptable"
+
     def test_verdict_thresholds(self):
         # %R&R < 10  -> capable
         # 10 <= %R&R < 30 -> marginal
@@ -101,9 +157,13 @@ class TestGageRrAnova:
         with pytest.raises(ValueError, match="empty"):
             gage_rr_anova([])
         with pytest.raises(ValueError, match=">=2 trials"):
-            gage_rr_anova([[[1.0]]])
+            gage_rr_anova([[[1.0], [2.0]]])      # 2 operators, 1 trial -> trials check
         with pytest.raises(ValueError, match="crossed design"):
             gage_rr_anova([[[1, 2], [3, 4]], [[5, 6]]])      # ragged operators
+        # AIAG requires >=2 operators: AV (reproducibility) is not estimable
+        # with a single appraiser, so o<2 must be rejected, not silently run.
+        with pytest.raises(ValueError, match=">=2 operators"):
+            gage_rr_anova([[[1.0, 2.0]], [[3.0, 4.0]], [[5.0, 6.0]]])
 
 
 # ----------------------------------------------------------------------------
@@ -397,12 +457,24 @@ class TestInvariants:
         # Intercept scales linearly.
         assert r2.intercept == pytest.approx(r1.intercept * 10, rel=1e-9)
 
-    def test_distinct_parts_force_part_variance_positive(self):
+    def test_single_operator_study_is_rejected_not_silently_run(self):
+        # n_operators=1 -> appraiser variation (reproducibility) is NOT
+        # estimable (df_operator=0). The old code silently forced AV=0 and a
+        # 'capable' verdict; AIAG MSA requires >=2 operators, so this must
+        # raise rather than return a meaningless result.
         m = [[[100.0, 100.0]], [[110.0, 110.0]], [[120.0, 120.0]]]
+        with pytest.raises(ValueError, match=">=2 operators"):
+            gage_rr_anova(m)
+
+    def test_distinct_parts_force_part_variance_positive(self):
+        # Two operators (the AIAG minimum) measuring three well-separated,
+        # noiseless parts: PV must dominate and all percentages stay finite.
+        m = [[[100.0, 100.0], [100.0, 100.0]],
+             [[110.0, 110.0], [110.0, 110.0]],
+             [[120.0, 120.0], [120.0, 120.0]]]
         r = gage_rr_anova(m)
-        # n_operators=1 -> AV cannot be computed reliably, but PV must dominate.
         assert r.var_part > 0
         assert r.pct_pv > 0.0
-        # sanity: a perfectly noiseless n_operators=1 study gives some math.nan-
-        # free, finite percentages.
+        # sanity: a perfectly noiseless study gives finite (math.nan-free)
+        # percentages.
         assert math.isfinite(r.pct_pv) and math.isfinite(r.pct_rr)

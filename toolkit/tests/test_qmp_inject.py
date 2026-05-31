@@ -24,7 +24,8 @@ _spec.loader.exec_module(inject)
 
 class FakeQMPServer:
     """Minimal QMP server: sends the greeting, answers qmp_capabilities, records every command,
-    returns "" for human-monitor-command (QEMU's success = no output), and errors on "boom"."""
+    echoes an "OK id: ..." report for a successful pcie_aer_inject_error human-monitor-command
+    (real QEMU echoes that, NOT an empty string), and errors on "boom"."""
 
     GREETING = {"QMP": {"version": {"qemu": {"major": 11, "minor": 0, "micro": 0},
                                     "package": "fake"}, "capabilities": []}}
@@ -69,8 +70,15 @@ class FakeQMPServer:
                 if msg.get("execute") == "boom":
                     conn.sendall(b'{"error": {"class": "GenericError", "desc": "boom"}}\r\n')
                 elif msg.get("execute") == "human-monitor-command":
-                    cl = msg["arguments"]["command-line"]
-                    if "nonexistent" in cl:        # mimic a QEMU error report (no leading "OK")
+                    # human-monitor-command's only required member is command-line
+                    # (qapi/misc.json@v11.0.0: data {'command-line':'str','*cpu-index':'int'}).
+                    # A call missing it is rejected by QEMU's qmp input visitor with a
+                    # GenericError, so reject it here too instead of KeyError-crashing.
+                    cl = msg.get("arguments", {}).get("command-line")
+                    if cl is None:
+                        conn.sendall(b'{"error": {"class": "GenericError", "desc": '
+                                     b'"Parameter \'command-line\' is missing"}}\r\n')
+                    elif "nonexistent" in cl:      # mimic a QEMU error report (no leading "OK")
                         conn.sendall(b'{"return": "invalid id: nonexistent"}\r\n')
                     else:                          # QEMU success echoes "OK id: <id> ..."
                         conn.sendall(b'{"return": "OK id: dev root bus: 0000:00, '
@@ -163,3 +171,29 @@ def test_main_rejects_nonpositive_count():
     with pytest.raises(SystemExit):
         inject.main(["--qmp", "127.0.0.1:1", "--id", "rp0",
                      "--correctable", "0x40", "--count", "0"])
+
+
+def test_hmp_missing_command_line_raises(server):
+    # human-monitor-command requires command-line (qapi/misc.json@v11.0.0:
+    # data {'command-line': 'str', '*cpu-index': 'int'}). QEMU's qmp input
+    # visitor rejects a call that omits it, so an under-specified inject must
+    # fail here too rather than silently "succeed" against the fake.
+    with inject.QMPClient(server.addr) as q:
+        with pytest.raises(inject.QMPError, match="command-line"):
+            q.execute("human-monitor-command")
+
+
+def test_inject_aer_hmp_line_carries_required_positional_args(server):
+    # pcie_aer_inject_error's args_type marks id and error_status as required
+    # (non-optional) positionals (hmp-commands.hx@v11.0.0:
+    # "advisory_non_fatal:-a,correctable:-c,id:s,error_status:s,header0:i?,...").
+    # Pin that the constructed HMP line always carries both, so a refactor that
+    # drops the qdev id or the status would fail rather than build a line QEMU
+    # would reject.
+    with inject.QMPClient(server.addr) as q:
+        q.inject_uncorrectable("rp3", inject.UNC_POISONED_TLP)
+    (line,) = server.hmp_lines()
+    tokens = line.split()
+    assert tokens[0] == "pcie_aer_inject_error"
+    assert "rp3" in tokens                       # id:s
+    assert tokens[-1] == hex(inject.UNC_POISONED_TLP)  # error_status:s (raw 32-bit)

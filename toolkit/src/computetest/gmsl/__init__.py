@@ -84,12 +84,13 @@ __all__ = [
     "SerDesLink", "MockSerDes", "SerDesError", "SerDesInfo", "SerDesRole",
     "GmslMode", "LinkDirection", "GmslPrbsPattern", "LinkLock", "EomReading",
     "FecStats", "PrbsResult", "ErrorCounters", "VideoStats", "ControlChannelStats",
+    "DEFAULT_BIST_DURATION_S", "DEFAULT_EOM_MV_MIN", "DEFAULT_EOM_UI_MIN",
     # checks (Sprint 4.1)
     "SerDesLinkHealth", "check_serdes_link", "PrbsBerHealth", "check_prbs_ber",
     "FecHealth", "check_fec", "EomHealth", "check_eom",
     "SafetyHealth", "verify_safety_mechanism", "bench_line_fault",
     "VideoHealth", "check_video_integrity", "ControlHealth", "check_control_channel",
-    "DEFAULT_CSI2_DATA_TYPE",
+    "DEFAULT_CSI2_DATA_TYPE", "DEFAULT_MAX_LOCK_MS", "DEFAULT_PRE_FEC_TARGET_BER",
     # channel (Sprint 4.1)
     "SParamMask", "MaskKind", "ChannelComplianceResult", "apply_gmsl3_filter",
     "check_against_mask", "check_channel_compliance", "GMSL3_FILTER_HZ",

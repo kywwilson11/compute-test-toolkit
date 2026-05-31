@@ -1,9 +1,13 @@
 # OCP `nvme-cli internal-log` corpus
 
-Each subdirectory is one known drive family's verbatim
-`nvme ocp internal-log -o json` output — a snapshot for regression-testing
-the parser in `computetest/nvme/ocp_telemetry.py`. Drop a new directory in
-when you want to pin a real drive's decode.
+Each subdirectory is a snapshot for regression-testing the parser in
+`computetest/nvme/ocp_telemetry.py`. A real capture is verbatim
+`nvme ocp internal-log -o json` output; the `synthetic-mock-1tb` case is the
+in-module mock decode (`_MOCK_TELEMETRY` / `_MOCK_STRINGS`), kept as a
+mock-only regression fixture — its key shape (`dataAreas`/`sizeBlocks`/
+`header.version`) is the toolkit's projection, not the spaced human-readable
+keys nvme-cli's OCP plugin actually emits. Drop a new directory in when you
+want to pin a real drive's decode.
 
 Layout:
 

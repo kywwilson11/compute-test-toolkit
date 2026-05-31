@@ -53,10 +53,42 @@ class TestMctpEndpointId:
         assert not eid.is_routable
 
     def test_routable_range(self):
-        for v in (0x08, 0x55, 0xEF):
+        # DSP0236 Table 2: 0x08-0xFE are "available for assignment" (routable),
+        # incl. 0xF0-0xFE which are NOT reserved (that band is control-command
+        # opcodes, a different field). 0x01-0x07 are the only reserved EIDs.
+        for v in (0x08, 0x55, 0xEF, 0xF0, 0xFE):
             assert MctpEndpointId(v).is_routable
-        for v in (0x01, 0x07, 0xF0, 0xFE):
+            assert not MctpEndpointId(v).is_reserved
+        for v in (0x01, 0x07):
             assert MctpEndpointId(v).is_reserved
+            assert not MctpEndpointId(v).is_routable
+
+    def test_eid_classification_boundaries(self):
+        """Pin every DSP0236 Table 2 class boundary so is_routable/is_reserved
+        cannot drift. Classes: 0x00 null | 0x01-0x07 reserved |
+        0x08-0xFE routable | 0xFF broadcast (mutually exclusive, exhaustive)."""
+        def classify(v: int) -> str:
+            e = MctpEndpointId(v)
+            flags = [e.is_null, e.is_reserved, e.is_routable, e.is_broadcast]
+            assert sum(flags) == 1, f"EID {v:#04x} matched {sum(flags)} classes"
+            return ("null", "reserved", "routable", "broadcast")[flags.index(True)]
+
+        expected = {0x00: "null", 0x07: "reserved", 0x08: "routable",
+                    0xFE: "routable", 0xFF: "broadcast"}
+        # exact boundary transitions
+        assert classify(0x00) == "null"
+        assert classify(0x01) == "reserved"   # null -> reserved at 0x01
+        assert classify(0x07) == "reserved"
+        assert classify(0x08) == "routable"   # reserved -> routable at 0x08
+        assert classify(0xEF) == "routable"   # no spurious reserved cut at 0xF0
+        assert classify(0xF0) == "routable"
+        assert classify(0xFE) == "routable"
+        assert classify(0xFF) == "broadcast"  # routable -> broadcast at 0xFF
+        for v, cls in expected.items():
+            assert classify(v) == cls
+        # exhaustive: every 8-bit value falls in exactly one class
+        for v in range(0x100):
+            classify(v)
 
 
 class TestMctpMessage:
