@@ -16,26 +16,42 @@ from dataclasses import dataclass, field
 
 class SequenceRecovery:
     """802.1CB vector/sequence recovery: accept each sequence number once within
-    a history window; eliminate duplicates and stale (out-of-window) frames."""
+    a history window; eliminate duplicates and stale (out-of-window) frames.
 
-    def __init__(self, history_len: int = 32) -> None:
+    The R-TAG SequenceNumber is a ``seq_width``-bit field (default 16), so the
+    window/staleness comparisons use signed modular distance (mod 2**seq_width)
+    and wrap correctly across the 2**seq_width - 1 -> 0 rollover, instead of
+    misreading a wrapped frame (e.g. 0 after 65535) as stale."""
+
+    def __init__(self, history_len: int = 32, *, seq_width: int = 16) -> None:
         if history_len < 1:
             raise ValueError("history_len must be >= 1")
+        if seq_width < 1:
+            raise ValueError("seq_width must be >= 1")
         self.history_len = history_len
+        self._mod = 1 << seq_width
+        self._mask = self._mod - 1
         self._seen: set[int] = set()
         self._max: int | None = None
 
+    def _ahead(self, a: int, b: int) -> int:
+        """Signed modular distance: how far ``a`` is ahead of ``b`` (negative =
+        behind ``b``), in [-mod/2, mod/2). Wraps across the R-TAG rollover."""
+        return ((a - b + self._mod // 2) % self._mod) - self._mod // 2
+
     def receive(self, seq: int) -> bool:
         """Return True to accept (pass), False to eliminate (a duplicate or a
-        stale frame outside the recovery window)."""
+        stale frame behind the recovery window)."""
+        seq &= self._mask
         if seq in self._seen:
             return False                                  # duplicate -> eliminate
-        if self._max is not None and seq <= self._max - self.history_len:
-            return False                                  # stale -> eliminate
+        if self._max is not None and self._ahead(seq, self._max) <= -self.history_len:
+            return False                                  # stale (behind window) -> eliminate
         self._seen.add(seq)
-        self._max = seq if self._max is None else max(self._max, seq)
-        lo = self._max - self.history_len
-        self._seen = {s for s in self._seen if s > lo}    # prune below the window
+        if self._max is None or self._ahead(seq, self._max) > 0:
+            self._max = seq                               # advance high-water (modular)
+        self._seen = {s for s in self._seen                # prune entries behind the window
+                      if self._ahead(s, self._max) > -self.history_len}
         return True
 
 
@@ -62,16 +78,16 @@ class FrerHealth:
 
 
 def check_frer(*, sent_seqs: Sequence[int], arrivals: Sequence[int],
-               history_len: int = 32) -> FrerHealth:
+               history_len: int = 32, seq_width: int = 16) -> FrerHealth:
     """Run a stream of replicated arrivals through sequence recovery and verify
-    fail-operational exactly-once delivery: no loss, no delivered duplicates,
-    and the delivered set equals the distinct sent set."""
-    rec = SequenceRecovery(history_len)
+    fail-operational exactly-once delivery: no loss, and the delivered set equals
+    the distinct sent set (which also implies no delivered duplicates — a repeat
+    in ``delivered`` makes ``exactly_once`` false)."""
+    rec = SequenceRecovery(history_len, seq_width=seq_width)
     delivered = [seq for seq in arrivals if rec.receive(seq)]
     distinct_sent = sorted(set(sent_seqs))
     checks = {
         "no_loss": set(distinct_sent) <= set(delivered),
-        "no_duplicates_delivered": len(delivered) == len(set(delivered)),
         "exactly_once": sorted(delivered) == distinct_sent,
     }
     return FrerHealth(sent_seqs=distinct_sent, delivered=delivered, checks=checks)
