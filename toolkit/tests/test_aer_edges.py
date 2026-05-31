@@ -106,17 +106,29 @@ def test_snapshot_without_aer_but_with_devstatus_uncorrectable_is_flagged():
     """Audit Critical: a no-AER device with a NonFatal/Fatal Device Status bit must
     still surface via aer.snapshot(); the original snapshot() only read the AER cap
     and returned (None, 0, 0), false-PASSing a real uncorrectable when --no-bert was
-    used. snapshot() now falls back to Device Status."""
+    used. snapshot() now falls back to Device Status.
+
+    Regression (audit H2/M1): the fallback must also DECODE through the coarse
+    Device-Status table, not the AER table — otherwise the uncorrectable name list is
+    empty (DEVSTA NonFatal=bit 1 is absent from the AER UNCORRECTABLE_BITS table) and a
+    coarse correctable (DEVSTA bit 0) mislabels as the AER-specific 'RxErr'."""
     be = MockBackend([_no_aer()])                        # has PCIe cap (Device Status), no AER
     be.inject_uncorrectable("0000:01:00.0", 4)           # DLP error (uncorrectable bit 4)
-    be.read_device_status("0000:01:00.0")                # latch
+    be.inject_stuck_correctable("0000:01:00.0")          # a correctable too (AER BadTLP bit 6)
+    be.read_device_status("0000:01:00.0")                # latch both
     snap = aer.snapshot(be, "0000:01:00.0")
     # aer_base is still None (data came from Device Status, not the AER cap), but the
     # uncorrectable signal makes it through.
     assert snap.aer_base is None
+    assert snap.source == "devstatus"
     assert snap.has_uncorrectable, (
         "snapshot must fall back to Device Status when AER is absent, "
         "or --no-bert false-PASSes a real uncorrectable")
+    # Decoded NAME lists must use the coarse Device-Status table, not the AER table.
+    # The device exposes only a coarse NonFatal flag (bit 1) -> 'NonFatalDetected';
+    # an AER-table decode of bit 1 would be empty, and bit 0 would mislabel as 'RxErr'.
+    assert [n for _, n, _ in snap.uncorrectable] == ["NonFatalDetected"]
+    assert [n for _, n, _ in snap.correctable] == ["CorrErrDetected"]
 
 
 def test_snapshot_without_aer_or_devstatus_remains_clean():

@@ -73,14 +73,22 @@ class AerSnapshot:
     aer_base: int | None
     correctable_raw: int
     uncorrectable_raw: int
+    source: str = "aer"   # "aer" | "devstatus" | "none" — picks the decode table (see ErrorReading)
 
     @property
     def correctable(self) -> list[tuple[int, str, str]]:
-        return decode_correctable(self.correctable_raw)
+        # Device-Status fallback bits use a different register layout than AER, so they
+        # must be decoded with the coarse DEVSTATUS table, not the AER one (else bit 0
+        # mislabels as 'RxErr'). Mirrors ErrorReading.
+        tbl = CORRECTABLE_BITS if self.source == "aer" else DEVSTATUS_COR_BITS
+        return decode(self.correctable_raw, tbl)
 
     @property
     def uncorrectable(self) -> list[tuple[int, str, str]]:
-        return decode_uncorrectable(self.uncorrectable_raw)
+        # Same reason: a devstatus NonFatal/Fatal bit (1/2) has no entry in the AER
+        # UNCORRECTABLE_BITS table (lowest bit 4), so it would decode to an empty list.
+        tbl = UNCORRECTABLE_BITS if self.source == "aer" else DEVSTATUS_UNC_BITS
+        return decode(self.uncorrectable_raw, tbl)
 
     @property
     def has_uncorrectable(self) -> bool:
@@ -108,7 +116,7 @@ def snapshot(backend: Backend, bdf: str) -> AerSnapshot:
         # Fall back to Device Status; read_errors handles the (aer|devstatus|none)
         # chain. base stays None to signal the source wasn't the AER cap directly.
         r = read_errors(backend, bdf)
-        return AerSnapshot(bdf, None, r.correctable_raw, r.uncorrectable_raw)
+        return AerSnapshot(bdf, None, r.correctable_raw, r.uncorrectable_raw, r.source)
     cor = backend.read_config(bdf, base + AER_CORR_STATUS, 4)
     unc = backend.read_config(bdf, base + AER_UNCORR_STATUS, 4)
     return AerSnapshot(bdf, base, cor, unc)
