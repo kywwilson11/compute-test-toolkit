@@ -17,8 +17,56 @@ def test_cable_test_ok_on_good_link():
 def test_cable_test_fault_locates_open():
     h = ethernet.check_ethernet("ethBAD", cable_test=True)
     assert h.cable_test["status"] == "fault" and h.checks["cable_ok"] is False
-    assert h.cable_test["faults"][0]["code"] == "open"
-    assert h.cable_test["faults"][0]["distance_m"] > 0
+    f0 = h.cable_test["faults"][0]
+    assert f0["code"] == "open"
+    assert f0["distance_m"] > 0
+    # pair is a str letter in BOTH mock and real (_real_cable_test emits 'A'..'D'); the mock
+    # used to emit int 0, which the audit flagged as a mock/real type mismatch.
+    assert f0["pair"] == "A" and isinstance(f0["pair"], str)
+
+
+def test_parse_role_prefers_negotiated_status_over_configured_preference():
+    # ethtool prints BOTH 'master-slave cfg:' (the preference) and 'master-slave status:'
+    # (the NEGOTIATED role). A PHY may prefer master yet negotiate to slave; role must report
+    # the status line. The old r"master-slave (?:cfg|status):" matched cfg first -> wrong role.
+    et = "master-slave cfg: master preferred\nmaster-slave status: slave\n"
+    assert ethernet._parse_role(et) == "slave"
+    # status wins both ways
+    et2 = "master-slave cfg: slave preferred\nmaster-slave status: master\n"
+    assert ethernet._parse_role(et2) == "master"
+    # fall back to cfg only when status is absent
+    assert ethernet._parse_role("master-slave cfg: master preferred") == "master"
+    # 'resolution error' / no master-slave line -> no role (not a false master/slave)
+    assert ethernet._parse_role("master-slave status: resolution error") == ""
+    assert ethernet._parse_role("Speed: 1000Mb/s\nLink detected: yes") == ""
+
+
+def test_parse_cable_test_multiline_layout_and_fractional_metres():
+    # Authoritative modern ethtool layout (kernel/ethtool netlink cable_test.c, confirmed by
+    # real PHY captures): the pair RESULT CODE and the FAULT LENGTH are on SEPARATE lines.
+    # A single-line `.` regex misses the fault entirely (false PASS); `(\d+)` alone reads
+    # 16.80m as 80. The input is lowercased exactly as _real_cable_test lowercases stdout.
+    modern = ("cable test tdr completed for device eth0.\n"
+              "pair a code ok\n"
+              "pair b code open circuit\n"
+              "pair b, fault length: 16.80m\n")
+    faults = ethernet._parse_cable_test(modern)
+    assert faults == [{"pair": "B", "code": "open", "distance_m": 16.80}]
+    # fractional-metre regression: a fault at 2.31m must report 2.31, NOT 31.
+    frac = "pair b code open circuit\npair b, fault length: 2.31m\n"
+    assert ethernet._parse_cable_test(frac)[0]["distance_m"] == 2.31
+    # legacy SAME-line layout still parses (code sets the accumulator before fault-length).
+    legacy = "pair b code open circuit, fault length: 2.31m\n"
+    assert ethernet._parse_cable_test(legacy) == [{"pair": "B", "code": "open",
+                                                   "distance_m": 2.31}]
+
+
+def test_parse_cable_test_clean_cable_has_no_faults():
+    # All pairs 'code OK' -> no faults, and a stray 'fault length' with no accumulated fault
+    # code must NOT fabricate a fault (the OK line clears the accumulator).
+    clean = ("pair a code ok\npair b code ok\npair c code ok\npair d code ok\n"
+             "pair a, fault length: 0.00m\n")
+    assert ethernet._parse_cable_test(clean) == []
 
 
 def test_speed_parse_handles_mb_and_g():

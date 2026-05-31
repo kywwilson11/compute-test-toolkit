@@ -71,6 +71,36 @@ def _parse_speed(ethtool_out: str) -> int:
     return int(val * (1000 if unit == "G" else 1))
 
 
+def _parse_role(ethtool_out: str) -> str:
+    """Role from the NEGOTIATED ``master-slave status:`` line (values: master / slave /
+    unknown / resolution error), falling back to ``master-slave cfg:`` only when status is
+    absent. The configured *preference* (cfg: ``preferred master``/``forced slave`` ...) is
+    NOT the resolved role: a PHY that prefers master can negotiate to slave, so reporting cfg
+    would mislabel the link. See ethtool netlink master-slave UAPI (kernel commit 558f7cc)."""
+    m = re.search(r"master-slave status:\s*(\S+)", ethtool_out, re.I)
+    if m is None:
+        m = re.search(r"master-slave cfg:\s*(\S+)", ethtool_out, re.I)
+    if m is None:
+        return ""
+    val = m.group(1).lower()
+    if "master" in val:
+        return "master"
+    if "slave" in val:
+        return "slave"
+    return ""
+
+
+def _run_checked(cmd: list[str], *, timeout: int) -> str:  # pragma: no cover - real-hw path
+    """Run a real-hw tool and return stdout, raising on a non-zero exit so a tool failure is
+    never silently scored as a clean link / CAN PASS. Mirrors the returncode-check convention
+    in lmt_adapter._run_pci_lmt (rc!=0 -> RuntimeError) and bert._run_c_engine."""
+    proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, check=False)
+    if proc.returncode != 0:
+        raise RuntimeError(
+            f"{cmd[0]} failed (rc={proc.returncode}): {proc.stderr.strip()}")
+    return proc.stdout
+
+
 def check_ethernet(iface: str = "eth0", *, expect_mbps: int = 1000,
                    min_throughput_mbps: float = 900, cable_test: bool = False,
                    iperf: bool = False, iperf_server: str | None = None,
@@ -95,15 +125,11 @@ def check_ethernet(iface: str = "eth0", *, expect_mbps: int = 1000,
         if not shutil.which("ethtool"):
             raise RuntimeError("ethtool not found")
         # timeout=10 because a wedged/flaky PHY can wedge `ethtool` indefinitely.
-        et = subprocess.run(["ethtool", iface],
-                            capture_output=True, text=True, timeout=10).stdout
+        et = _run_checked(["ethtool", iface], timeout=10)
         up = "Link detected: yes" in et
         spd = _parse_speed(et)
-        mlb = re.search(r"master-slave (?:cfg|status):\s*(\S+)", et, re.I)
-        role = "master" if (mlb and "master" in mlb.group(1).lower()) else \
-               ("slave" if mlb else "")
-        stats = subprocess.run(["ethtool", "-S", iface],
-                               capture_output=True, text=True, timeout=10).stdout
+        role = _parse_role(et)
+        stats = _run_checked(["ethtool", "-S", iface], timeout=10)
         rx_e, tx_e = _stat(stats, "rx_errors"), _stat(stats, "tx_errors")
         tput = _real_iperf(iperf_server) if iperf else 0.0
         ct = _real_cable_test(iface) if cable_test else None
@@ -133,22 +159,56 @@ def _real_iperf(server: str | None) -> float:  # pragma: no cover - real-hw path
 
 def _mock_cable_test(bad: bool) -> dict:
     if bad:
-        return {"status": "fault", "faults": [{"pair": 0, "code": "open", "distance_m": 2.3}]}
+        return {"status": "fault", "faults": [{"pair": "A", "code": "open", "distance_m": 2.3}]}
     return {"status": "ok", "faults": []}
 
 
+def _parse_cable_test(out: str) -> list[dict]:
+    """Parse `ethtool --cable-test-tdr` text into a fault list. ethtool prints the pair
+    result code and the fault length from distinct netlink attributes, so on the modern
+    layout they land on SEPARATE lines, e.g. (lowercased)::
+
+        pair a code ok
+        pair b code open circuit
+        pair b, fault length: 16.80m
+
+    A single-line `.*?` regex (a) cannot span the newline -> misses the fault entirely, and
+    (b) `(\\d+)` captures only the post-decimal fragment of `16.80m` -> reports 80 m. So we
+    scan line-by-line: accumulate the last faulted pair/code, then pair it with the next
+    `fault length:` line, reading the distance as a full decimal (`\\d+(?:\\.\\d+)?`). `OK`/
+    `good cable` lines clear the accumulator so a clean pair never yields a fault. The legacy
+    same-line layout (`pair b code open circuit, fault length: 2.31m`) is also handled because
+    the code on that line sets the accumulator before the fault-length match fires."""
+    faults: list[dict] = []
+    last_pair: str = ""
+    last_code: str | None = None
+    for line in out.splitlines():
+        ln = line.strip().lower()
+        pm = re.search(r"\bpair[:\s]+(\w+)", ln)
+        cm = re.search(r"\b(open|short|impedance)\b", ln)
+        if pm and cm:
+            last_pair, last_code = pm.group(1).upper(), cm.group(1)
+        elif pm and re.search(r"\b(ok|good)\b", ln):
+            last_pair, last_code = pm.group(1).upper(), None
+        if "fault length" in ln:
+            dm = re.search(r"(\d+(?:\.\d+)?)\s*m\b", ln)
+            if dm and last_code is not None:
+                faults.append({"pair": pm.group(1).upper() if pm else last_pair,
+                               "code": last_code, "distance_m": float(dm.group(1))})
+    return faults
+
+
 def _real_cable_test(iface: str) -> dict:  # pragma: no cover - real-hw path
-    """Best-effort TDR via ethtool. PHY/driver support varies; treated as 'skipped'
-    when unsupported so it never false-fails a good link."""
+    """Best-effort TDR via ethtool. PHY/driver support varies; treated as 'skipped' when
+    unsupported (subprocess error OR non-zero exit) so it never false-fails a good link."""
     try:
-        out = subprocess.run(["ethtool", "--cable-test-tdr", iface],
-                             capture_output=True, text=True, timeout=15).stdout.lower()
+        proc = subprocess.run(["ethtool", "--cable-test-tdr", iface],
+                              capture_output=True, text=True, timeout=15, check=False)
     except (OSError, subprocess.SubprocessError):
         return {"status": "skipped", "faults": []}
-    faults = []
-    for m in re.finditer(r"pair (\w).*?(open|short|impedance).*?(\d+)\s*m", out):
-        faults.append({"pair": m.group(1), "code": m.group(2),
-                       "distance_m": float(m.group(3))})
+    if proc.returncode != 0:
+        return {"status": "skipped", "faults": []}
+    faults = _parse_cable_test(proc.stdout)
     return {"status": "fault" if faults else "ok", "faults": faults}
 
 
@@ -202,8 +262,9 @@ def check_can(iface: str = "can0", *, mock: bool | None = None) -> CanHealth:
         state = "BUS-OFF" if bad else "ERROR-ACTIVE"
         tec, rec, fd = (255 if bad else 0), (130 if bad else 0), ("fd" in iface.lower())
     else:  # pragma: no cover - real-hw path
-        out = subprocess.run(["ip", "-details", "-statistics", "link", "show", iface],
-                             capture_output=True, text=True, timeout=10).stdout
+        # Inspect returncode (mirror _run_checked / lmt_adapter): a failed `ip` returns empty
+        # stdout, which would otherwise default to ERROR-ACTIVE and falsely PASS the bus.
+        out = _run_checked(["ip", "-details", "-statistics", "link", "show", iface], timeout=10)
         state = ("BUS-OFF" if "BUS-OFF" in out else
                  "ERROR-PASSIVE" if "ERROR-PASSIVE" in out else
                  "ERROR-WARNING" if "ERROR-WARNING" in out else "ERROR-ACTIVE")
