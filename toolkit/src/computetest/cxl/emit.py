@@ -11,7 +11,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 
 from ..io.ocpdiag import Emitter
-from .events import EventRecord
+from .events import EventLog, EventRecord
 from .link import CxlLinkHealth
 from .ras import CxlRasSnapshot
 
@@ -46,8 +46,14 @@ def emit_cxl_ras(em: Emitter, snapshot: CxlRasSnapshot, *,
     for _, name, _ in snapshot.correctable:
         em.measurement(name=f"cxl.ce.{name}", value=1, unit="count")
     status = "fail" if snapshot.has_uncorrectable else "pass"
-    msg = ("uncorrectable: " + ",".join(n for _, n, _ in snapshot.uncorrectable)
-           if snapshot.has_uncorrectable else "no uncorrectable errors")
+    if not snapshot.has_uncorrectable:
+        msg = "no uncorrectable errors"
+    elif snapshot.uncorrectable:
+        msg = "uncorrectable: " + ",".join(n for _, n, _ in snapshot.uncorrectable)
+    else:
+        # UE status nonzero but no named bit (reserved/future/vendor bit): a FAIL
+        # must still carry a cause, so name the raw mask.
+        msg = f"uncorrectable UE status=0x{snapshot.ue_raw:x} (no decoded bits)"
     em.diagnosis(verdict=f"cxl.ras.{status}",
                  type_="FAIL" if snapshot.has_uncorrectable else "PASS",
                  message=msg, hardware_info_id=hardware_info_id)
@@ -67,7 +73,13 @@ def emit_cxl_events(em: Emitter, records: Sequence[EventRecord], *,
                           metadata={"type": rec.record_type.value,
                                     "log": int(rec.log)})
     em.series_end(series_id=series, total_count=len(records))
-    em.diagnosis(verdict="cxl.events", type_="PASS",
-                 message=f"{len(records)} event records")
-    em.step_end("pass", step_id=sid)
+    # Drive the verdict from record severity: a FAILURE/FATAL event log entry is a
+    # device failure, not a PASS (EventLog FAILURE=2 < FATAL=3).
+    n_failed = sum(1 for rec in records if rec.log >= EventLog.FAILURE)
+    status = "fail" if n_failed else "pass"
+    msg = (f"{n_failed} of {len(records)} event records >= FAILURE severity"
+           if n_failed else f"{len(records)} event records (none >= FAILURE)")
+    em.diagnosis(verdict=f"cxl.events.{status}",
+                 type_="FAIL" if n_failed else "PASS", message=msg)
+    em.step_end(status, step_id=sid)
     return sid

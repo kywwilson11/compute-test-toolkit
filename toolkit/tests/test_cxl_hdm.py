@@ -6,7 +6,8 @@ from computetest.cxl import HdmDecoder, HdmHealth, calc_interleave_pos, check_hd
 
 class TestInterleavePos:
     def test_nested_position(self):
-        # root (pos 1, ways 2) then endpoint (pos 0, ways 2): 0*2+1 -> *2+0 = 2
+        # Endpoint-first (kernel order): endpoint (pos 1, ways 2) within its parent,
+        # then root (pos 0, ways 2): 0*2+1 -> *2+0 = 2 (kernel mem1 worked example).
         assert calc_interleave_pos([(1, 2), (0, 2)]) == 2
 
     def test_single_level(self):

@@ -45,9 +45,13 @@ def check_cxl_retimer(retimer: Retimer, *, expect_part: str,
     """Verify a CXL link-extension retimer: it is the expected part, every lane's
     eye clears the CXL thresholds, and junction temperature is in range."""
     info = retimer.info()
-    lane_iter = range(info.lanes) if lanes is None else lanes
-    eyes_ok = all(eye_quality_verdict(retimer.read_eye(lane), ui_min=ui_min,
-                                      mv_min=mv_min) for lane in lane_iter)
+    lane_list = list(range(info.lanes)) if lanes is None else list(lanes)
+    # Reject an empty lane set: all([]) is vacuously True, so an empty list would
+    # report all_lanes_eye_open=True having probed zero eyes. Guard with bool(...)
+    # like gmsl/shmoo.py and ddr5/eye.py do for the same "all eyes open" shape.
+    eyes_ok = bool(lane_list) and all(
+        eye_quality_verdict(retimer.read_eye(lane), ui_min=ui_min, mv_min=mv_min)
+        for lane in lane_list)
     checks = {
         "part_identity_ok": info.part_number == expect_part,
         "temperature_ok": retimer.temperature_ok(),

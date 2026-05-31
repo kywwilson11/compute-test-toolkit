@@ -4,8 +4,9 @@ CXL HDM decoder programming + interleave check (Sprint 4.4).
 Verifies a Host-managed Device Memory (HDM) decoder: the committed interleave
 ways + granularity and the HPA->DPA translation for an interleaved region. Also
 provides ``calc_interleave_pos`` — the kernel ``cxl_calc_interleave_pos`` helper
-(``pos = pos*parent_ways + parent_pos``) that folds a root->endpoint chain into
-the endpoint's interleave position for nested (switch/MLD) topologies.
+(``pos = pos*parent_ways + parent_pos``) that folds an endpoint->root chain
+(endpoint level first, ascending to the root decoder, matching the kernel loop)
+into the endpoint's interleave position for nested (switch/MLD) topologies.
 """
 from __future__ import annotations
 
@@ -14,8 +15,10 @@ from dataclasses import dataclass, field
 
 
 def calc_interleave_pos(chain: Sequence[tuple[int, int]]) -> int:
-    """Fold a root->endpoint chain of ``(interleave_position, interleave_ways)``
-    into the endpoint's interleave position (kernel ``cxl_calc_interleave_pos``)."""
+    """Fold an endpoint->root chain of ``(interleave_position, interleave_ways)``
+    -- endpoint level first, then each parent up to the root -- into the
+    endpoint's interleave position (kernel ``cxl_calc_interleave_pos`` iterates
+    endpoint->root, so the endpoint level is the most-significant digit)."""
     pos = 0
     for parent_pos, parent_ways in chain:
         pos = pos * parent_ways + parent_pos
