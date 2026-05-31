@@ -3,8 +3,9 @@ CXL coherency class + device-management lifecycle checks (Sprint 4.4).
 
 Classifies the device (Type 1 cache-only / Type 2 cache+mem / Type 3 mem-only)
 from IDENTIFY + DVSEC and asserts the claims are consistent — a Type-3 device
-must not claim a cache, and a cache-capable device must expose HDM-D[B] +
-BI-snoop coherency bridging. Also verifies the device-management contract that a
+must not claim a cache, and a Type-2 device (cache + device-coherent memory)
+must expose HDM-D[B] + BI-snoop coherency bridging. Also verifies the
+device-management contract that a
 long-running op (Sanitize / FW Activate) returns Background-Started and leaves
 media not-ready until completion. Device serviceability view, not a
 secure-erase-bypass.
@@ -43,15 +44,20 @@ class CoherencyHealth:
 def check_coherency(*, device_type: CxlDeviceType, claims_cache: bool,
                     claims_mem: bool, hdm_d_capable: bool,
                     bi_snoop_capable: bool) -> CoherencyHealth:
-    """Assert the device's cache/mem claims match its type and that a
-    cache-capable device exposes HDM-D[B] + BI-snoop coherency bridging."""
+    """Assert the device's cache/mem claims match its type and that a Type-2
+    device (cache + device-coherent memory) exposes HDM-D[B] + BI-snoop.
+
+    Coherency bridging is a property of device-coherent MEMORY, not of a cache:
+    a Type-1 cache-only accelerator has no device memory (no HDM-D[B]/BISnoop),
+    and a Type-3 expander using HDM-H needs none either — so the requirement is
+    gated on Type-2 (a Type-3 under HDM-DB is not disambiguated by these inputs)."""
     cache_capable = device_type in (CxlDeviceType.TYPE1, CxlDeviceType.TYPE2)
     mem_capable = device_type in (CxlDeviceType.TYPE2, CxlDeviceType.TYPE3)
     checks = {
         "cache_claim_consistent": claims_cache == cache_capable,
         "mem_claim_consistent": claims_mem == mem_capable,
         "coherency_bridging": ((hdm_d_capable and bi_snoop_capable)
-                               if cache_capable else True),
+                               if device_type == CxlDeviceType.TYPE2 else True),
     }
     return CoherencyHealth(device_type=int(device_type), checks=checks)
 

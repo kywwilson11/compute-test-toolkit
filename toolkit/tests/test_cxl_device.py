@@ -34,10 +34,12 @@ class TestCoherency:
         assert not bad.ok and bad.checks["coherency_bridging"] is False
 
     def test_type1_cache_only(self):
+        # A conformant Type-1 (cache only, no device memory) has NO HDM-D[B]/BISnoop;
+        # it must still pass. (This would FAIL under the old cache-gated logic.)
         h = check_coherency(device_type=CxlDeviceType.TYPE1, claims_cache=True,
-                            claims_mem=False, hdm_d_capable=True,
-                            bi_snoop_capable=True)
-        assert h.ok
+                            claims_mem=False, hdm_d_capable=False,
+                            bi_snoop_capable=False)
+        assert h.ok and h.checks["coherency_bridging"] is True
 
     def test_summary_and_to_dict(self):
         h = check_coherency(device_type=CxlDeviceType.TYPE3, claims_cache=False,
