@@ -1,7 +1,13 @@
 """Sprint 4.2.2: TSN bench HAL -- TimeIntervalAnalyzer + TSNTrafficGenerator."""
 from __future__ import annotations
 
-from computetest.instruments import TimeIntervalAnalyzer, TSNTrafficGenerator
+import pytest
+
+from computetest.instruments import (
+    InstrumentError,
+    TimeIntervalAnalyzer,
+    TSNTrafficGenerator,
+)
 
 
 class TestTimeIntervalAnalyzer:
@@ -34,6 +40,16 @@ class TestTsnTrafficGenerator:
         g.transport.set_measurement(":STREAM1:RX:COUN?", 998)
         g.transport.set_measurement(":STREAM1:DROP:COUN?", 2)
         assert g.read_counters(1) == {"tx": 1000, "rx": 998, "dropped": 2}
+
+    def test_read_counters_overflow_sentinel_raises_instrument_error(self):
+        # A saturated/N-A stream counter returns the 9.9E37 sentinel (-> +inf); that
+        # must raise InstrumentError, not a bare OverflowError from int(inf).
+        g = TSNTrafficGenerator(mock=True).open()
+        g.transport.set_measurement(":STREAM1:TX:COUN?", "9.9E37")
+        g.transport.set_measurement(":STREAM1:RX:COUN?", 998)
+        g.transport.set_measurement(":STREAM1:DROP:COUN?", 2)
+        with pytest.raises(InstrumentError, match="non-finite"):
+            g.read_counters(1)
 
     def test_set_impairment(self):
         g = TSNTrafficGenerator(mock=True).open()

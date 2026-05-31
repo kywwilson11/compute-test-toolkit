@@ -149,7 +149,7 @@ def _query_nvidia_smi(index: int) -> dict:  # pragma: no cover - real-hw path
     out = subprocess.run(["nvidia-smi", f"--query-gpu={q}", "--format=csv,noheader,nounits",
                           "-i", str(index)], capture_output=True, text=True, check=True).stdout
     f = [x.strip() for x in out.strip().split(",")]
-    throttle_bits = int(f[10], 16) if f[10] not in ("", "N/A") else 0
+    throttle_bits = _hex(f[10])
     reasons = [name for bit, name in _THROTTLE_BAD.items() if throttle_bits & bit]
     rr = _query_row_remap(index)
     return {"_name": f[0], "_gen": _int(f[1]), "_width": _int(f[2]), "temp": _int(f[3]),
@@ -185,3 +185,14 @@ def _float(s: str) -> float:
         return float(s)
     except (ValueError, TypeError):
         return 0.0
+
+
+def _hex(s: str) -> int:
+    """Parse a hex field (clocks_throttle_reasons.active) to int, degrading an
+    unparseable/unavailable token -- nvidia-smi emits ``[Not Supported]`` / ``[N/A]``
+    for fields a GPU lacks -- to 0 (no throttle reported) instead of crashing the
+    verdict, matching the ``_int``/``_float`` discipline used for every other field."""
+    try:
+        return int(s, 16)
+    except (ValueError, TypeError):
+        return 0

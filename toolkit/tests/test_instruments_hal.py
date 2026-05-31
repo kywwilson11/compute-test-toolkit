@@ -149,6 +149,26 @@ class TestExternalBert:
         r = b.read_result()
         assert r.ber == 0.0
 
+    def test_read_result_overflow_error_count_raises_instrument_error(self):
+        # A saturated/unset error counter returns the IEEE 488.2 9.9E37 sentinel
+        # (-> +inf); that must surface as InstrumentError, not a bare OverflowError.
+        b = ExternalBERT(mock=True).open()
+        b.transport.set_measurement(":READ:ERR?", "9.9E37")
+        b.transport.set_measurement(":READ:BITS?", "1e11")
+        b.transport.set_measurement(":READ:TIME?", "1.0")
+        with pytest.raises(InstrumentError, match="non-finite"):
+            b.read_result()
+
+    def test_read_result_overflow_bit_count_raises_not_silent_zero_ber(self):
+        # A saturated bit counter (9.9E37 -> +inf) previously made 500/inf == 0.0 BER,
+        # hiding real errors. It must now raise InstrumentError instead.
+        b = ExternalBERT(mock=True).open()
+        b.transport.set_measurement(":READ:ERR?", "500")
+        b.transport.set_measurement(":READ:BITS?", "9.9E37")
+        b.transport.set_measurement(":READ:TIME?", "1.0")
+        with pytest.raises(InstrumentError, match="non-finite"):
+            b.read_result()
+
 
 # ----------------------------------------------------------------------------
 # SwitchMatrix

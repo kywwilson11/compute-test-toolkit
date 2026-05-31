@@ -58,3 +58,11 @@ def test_int_float_parse_helpers():
     assert gpu._int("N/A") == 0 and gpu._int(None) == 0   # non-numeric -> 0
     assert gpu._float("3.5") == 3.5
     assert gpu._float("") == 0.0 and gpu._float("x") == 0.0
+
+
+def test_hex_parse_helper_degrades_unavailable_tokens():
+    assert gpu._hex("0x8") == 0x8 and gpu._hex("8") == 8
+    # nvidia-smi renders an unavailable throttle field as a BRACKETED sentinel;
+    # the bare-string guard missed these, so int(t, 16) used to crash. -> 0 now.
+    assert gpu._hex("[Not Supported]") == 0
+    assert gpu._hex("[N/A]") == 0 and gpu._hex("") == 0

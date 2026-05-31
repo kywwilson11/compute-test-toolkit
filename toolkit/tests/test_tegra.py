@@ -44,6 +44,17 @@ class TestParse:
         assert p["rails_mw"]["VDD_GPU_SOC"] == (1191, 1191)
         assert p["rails_mw"]["VIN_SYS_5V0"] == (2000, 2100)
 
+    def test_orin_jetpack5_mw_rail_format(self):
+        # JetPack 5/6 (AGX/Orin) emits rails as `<RAIL> <inst>mW/<avg>mW`; the parser
+        # must tolerate the mW suffix on each side (and still keep RAM/SWAP MB out).
+        line = ("RAM 1500/7850MB VDD_IN 4067mW/4067mW "
+                "VDD_CPU_GPU_CV 600mW/600mW VDD_SOC 1397mW/1397mW GPU@52C")
+        p = parse_tegrastats(line)
+        assert p["rails_mw"]["VDD_IN"] == (4067, 4067)
+        assert p["rails_mw"]["VDD_CPU_GPU_CV"] == (600, 600)
+        assert p["rails_mw"]["VDD_SOC"] == (1397, 1397)
+        assert "RAM" not in p["rails_mw"]
+
     def test_missing_fields_are_none(self):
         p = parse_tegrastats("GPU@40C")
         assert p["gr3d_pct"] is None and p["emc_pct"] is None
@@ -93,6 +104,25 @@ class TestMockAndVerdict:
     def test_gpu_temp_falls_back_to_max_zone(self):
         h = check_tegra(_lines=["CPU@55C AO@50C"])
         assert h.metrics["gpu_temp_c"] == 55.0        # no GPU and no tj -> max zone
+
+    def test_offline_gpu_zone_falls_back_not_surfaced(self):
+        # An offline GPU sensor reads -256C ("reported, never gated"); gpu_temp_c must
+        # fall back to tj, not surface -256.0 verbatim.
+        h = check_tegra(_lines=["GPU@-256C CPU@50C tj@48C"])
+        assert h.metrics["gpu_temp_c"] == 48.0        # tj fallback, not the offline -256
+
+    def test_gpu_temp_zero_is_preserved_not_dropped(self):
+        # A legitimate 0.0C GPU reading (> _MIN_PLAUSIBLE_C) must be reported as the GPU
+        # temp, not fall through to tj as the old falsy `or` chain did.
+        h = check_tegra(_lines=["GPU@0C tj@47C CPU@45C"])
+        assert h.metrics["gpu_temp_c"] == 0.0
+
+    def test_subzero_coldstart_is_not_false_failed(self):
+        # Plausible cold-start readings in (_MIN_PLAUSIBLE_C, 0] must pass the thermal
+        # gate (the old `0 < max_zone` lower bound wrongly FAILed a healthy cold board).
+        h = check_tegra(_lines=["GPU@-10C CPU@-5C"])
+        assert h.ok and h.checks["max_zone<=85C"] is True
+        assert h.metrics["max_zone_c"] == -5.0
 
     def test_no_samples_fails(self):
         h = check_tegra(_lines=["", "   "])

@@ -28,6 +28,7 @@ SCPI notes worth remembering
 """
 from __future__ import annotations
 
+import math
 import re
 from dataclasses import dataclass
 from typing import Any
@@ -91,6 +92,17 @@ def parse_scpi_float(raw: str) -> float:
     value = float(match.group(0))
     if abs(value) >= SCPI_OVERFLOW:
         return float("inf") if value > 0 else float("-inf")
+    return value
+
+
+def _require_finite(value: float, what: str) -> float:
+    """Return ``value`` if finite, else raise ``InstrumentError``. A SCPI counter that
+    saturates / is uninitialized returns the 9.9E37 overflow sentinel, which
+    ``parse_scpi_float`` maps to +/-inf; ``int()`` of that raises a bare ``OverflowError``
+    and a non-finite bit count silently collapses BER to 0.0. Funnel every count through
+    here so such a fault surfaces as the documented ``InstrumentError`` instead."""
+    if not math.isfinite(value):
+        raise InstrumentError(f"{what} returned a non-finite value ({value:g})")
     return value
 
 
@@ -766,8 +778,8 @@ class ExternalBERT(SCPIInstrument):
         err = self.query(":READ:ERR?")
         bits = self.query(":READ:BITS?")
         elapsed = self.query(":READ:TIME?")
-        n_err = int(parse_scpi_float(err))
-        n_bits = parse_scpi_float(bits)
+        n_err = int(_require_finite(parse_scpi_float(err), ":READ:ERR? error count"))
+        n_bits = _require_finite(parse_scpi_float(bits), ":READ:BITS? bit count")
         elapsed_s = parse_scpi_float(elapsed)
         ber = (n_err / n_bits) if n_bits > 0 else 0.0
         return BertReading(errors=n_err, bits=n_bits, ber=ber,
@@ -972,9 +984,13 @@ class TSNTrafficGenerator(SCPIInstrument):
 
     def read_counters(self, stream_id: int) -> dict[str, int]:
         """Read tx/rx/dropped frame counters for one stream."""
-        tx = int(self.query_float(f":STREAM{stream_id:d}:TX:COUN?"))
-        rx = int(self.query_float(f":STREAM{stream_id:d}:RX:COUN?"))
-        dropped = int(self.query_float(f":STREAM{stream_id:d}:DROP:COUN?"))
+        tx = int(_require_finite(
+            self.query_float(f":STREAM{stream_id:d}:TX:COUN?"), f"stream {stream_id} tx count"))
+        rx = int(_require_finite(
+            self.query_float(f":STREAM{stream_id:d}:RX:COUN?"), f"stream {stream_id} rx count"))
+        dropped = int(_require_finite(
+            self.query_float(f":STREAM{stream_id:d}:DROP:COUN?"),
+            f"stream {stream_id} dropped count"))
         return {"tx": tx, "rx": rx, "dropped": dropped}
 
     def set_impairment(self, *, loss_pct: float = 0.0,

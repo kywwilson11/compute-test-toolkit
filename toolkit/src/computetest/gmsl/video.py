@@ -89,14 +89,27 @@ def _real_check_gmsl(link, video_device, expect_w, expect_h,
     err_path = f"/sys/bus/i2c/devices/{link}/error_count"
     if os.path.exists(err_path):
         with open(err_path) as fh:
-            errors = int(fh.read().strip() or 0)
+            try:
+                errors = int(fh.read().strip() or 0)
+            except ValueError:
+                errors = 0          # unreadable counter -> treat as 0, don't crash the scan
     w = h = 0
-    fmt = subprocess.run(["v4l2-ctl", "-d", video_device, "--get-fmt-video"],
-                         capture_output=True, text=True, timeout=10).stdout
+    # `--get-fmt-video` carries a timeout but, like `--stream-mmap` below, a stuck
+    # locked-but-dead link can hang it; treat timeout/garbled output as w=h=0 (which
+    # already fails resolution_ok) instead of aborting the whole multi-link scan.
+    try:
+        fmt = subprocess.run(["v4l2-ctl", "-d", video_device, "--get-fmt-video"],
+                             capture_output=True, text=True, timeout=10).stdout
+    except subprocess.TimeoutExpired:
+        fmt = ""
     for line in fmt.splitlines():
         if "Width/Height" in line:
             parts = line.split(":")[-1].strip().split("/")
-            w, h = int(parts[0]), int(parts[1])
+            if len(parts) >= 2:
+                try:
+                    w, h = int(parts[0]), int(parts[1])
+                except ValueError:
+                    w = h = 0
     # `--stream-mmap` is the most likely hang in the toolkit: a locked link with no
     # frames flowing (the FrameSync bug this test is meant to catch) will wait forever.
     # Bound it generously (2 s per frame, min 30 s) and treat timeout as "no frames".
@@ -118,16 +131,21 @@ def _real_check_gmsl(link, video_device, expect_w, expect_h,
 class GmslDeserHealth:
     addr: str                       # deserializer I2C address (e.g. "1-0029")
     links: list[GmslHealth]
-    frame_sync_ok: bool             # all cameras locked and frame-synchronized
+    frame_sync_ok: bool | None      # True/False in mock; None = not verifiable on real hw
 
     @property
     def ok(self) -> bool:
-        return bool(self.links) and all(li.ok for li in self.links) and self.frame_sync_ok
+        # frame_sync_ok=None means "not verified" (no real inter-link FSYNC signal wired
+        # up): it must not synthesize a PASS, but an unverifiable sync must not hard-FAIL
+        # an otherwise-good deser either -- only an explicit False (mock DESYNC) gates.
+        return (bool(self.links) and all(li.ok for li in self.links)
+                and self.frame_sync_ok is not False)
 
     def summary(self) -> str:
         locked = sum(1 for li in self.links if li.locked)
         state = "OK" if self.ok else "FAIL"
-        sync = "sync" if self.frame_sync_ok else "DESYNC"
+        sync = ("sync?" if self.frame_sync_ok is None
+                else "sync" if self.frame_sync_ok else "DESYNC")
         head = f"GMSL deser {self.addr}: {locked}/{len(self.links)} links locked, {sync} -> {state}"
         return head + "".join(f"\n    {li.summary()}" for li in self.links)
 
@@ -155,6 +173,14 @@ def check_deserializer(addr: str = "1-0029", n_links: int = 4, *, expect_w: int 
         else:  # pragma: no cover - real-hw path
             links.append(check_gmsl(addr, vid, expect_w=expect_w, expect_h=expect_h,
                                     frames=frames, mock=False))
-    # FrameSync: every link locked AND synchronized (a "DESYNC" address models loss of sync).
-    frame_sync_ok = all(li.locked for li in links) and ("DESYNC" not in addr)
+    # FrameSync verdict. In mock, a "DESYNC" address models loss of sync. On real
+    # hardware there is no inter-link FSYNC/line-valid signal wired up here, so rather
+    # than synthesize a PASS from "all locked" (links can be locked yet cross-link
+    # misaligned -- the exact MAX96712 FrameSync failure this check targets) we report
+    # frame_sync_ok=None ("not verified") and let ok gate only on the per-link results.
+    frame_sync_ok: bool | None
+    if use_mock:
+        frame_sync_ok = all(li.locked for li in links) and ("DESYNC" not in addr)
+    else:  # pragma: no cover - real-hw path
+        frame_sync_ok = None
     return GmslDeserHealth(addr, links, frame_sync_ok)

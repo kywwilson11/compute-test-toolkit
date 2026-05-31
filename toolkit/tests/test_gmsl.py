@@ -22,3 +22,22 @@ def test_deserializer_desync_fails_even_if_all_locked():
 def test_single_link_check_still_works():
     h = gmsl.check_gmsl("1-0029")
     assert h.ok and h.locked
+
+
+def test_real_path_unverified_frame_sync_does_not_synthesize_pass_or_fail():
+    # On real hardware there is no inter-link FSYNC signal, so check_deserializer
+    # reports frame_sync_ok=None ("not verified"). That must not fake a sync PASS, but
+    # must not hard-FAIL an otherwise-good deser either; summary stays honest ("sync?").
+    good = gmsl.check_gmsl("1-0029")
+    d = gmsl.GmslDeserHealth("1-0029", [good], frame_sync_ok=None)
+    assert d.frame_sync_ok is None
+    assert d.ok is True                          # links ok + sync unverified -> not blocked
+    assert "sync?" in d.summary()                # not advertised as confirmed sync
+    assert d.to_dict()["frame_sync_ok"] is None
+
+
+def test_unverified_frame_sync_with_a_down_link_still_fails():
+    # An unverified sync (None) must not rescue a genuinely failed link.
+    bad = gmsl.check_gmsl("1-BAD")
+    d = gmsl.GmslDeserHealth("1-0029", [bad], frame_sync_ok=None)
+    assert d.ok is False

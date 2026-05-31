@@ -41,7 +41,7 @@ _MIN_PLAUSIBLE_C = -40.0
 _TEMP_RE = re.compile(r"\b([A-Za-z][\w.]*)@(-?\d+(?:\.\d+)?)C\b")
 # `<RAIL> <instant>/<avg>` in mW — POM_5V_IN 2532/2698, VDD_GPU_SOC 1191/1191. The
 # `(?=\s|$)` lookahead keeps `RAM 2594/3956MB` / `SWAP 0/1978MB` out (they're suffixed MB).
-_RAIL_RE = re.compile(r"\b([A-Z][A-Z0-9_]{2,})\s+(\d+)/(\d+)(?=\s|$)")
+_RAIL_RE = re.compile(r"\b([A-Z][A-Z0-9_]{2,})\s+(\d+)(?:mW)?/(\d+)(?:mW)?(?=\s|$)")
 _RAM_RE = re.compile(r"\bRAM\s+(\d+)/(\d+)MB\b")
 _GR3D_RE = re.compile(r"\bGR3D_FREQ\s+(\d+)%")
 _EMC_RE = re.compile(r"\bEMC_FREQ\s+(\d+)%")
@@ -152,17 +152,25 @@ def _build_health(lines: list[str], model: str, xids: dict[int, int],
         else:
             meaningful[z] = t
 
-    if meaningful:
+    have_data = bool(meaningful)
+    if have_data:
         hot_zone = max(meaningful, key=lambda z: meaningful[z])
         max_zone = meaningful[hot_zone]
     else:
         hot_zone, max_zone = "?", 0.0
-    gpu_temp = thermal.get("GPU") or thermal.get("tj") or max_zone
-    throttle_inferred = max_zone >= throttle_temp_c
+    # Resolve gpu_temp against the offline-filtered `meaningful` dict with explicit
+    # membership: an offline GPU sensor (-256C) falls back to tj/max_zone instead of
+    # being surfaced verbatim, and a legitimate 0.0C reading is preserved (0.0 is falsy
+    # under the old `or` chain, so it was wrongly dropped).
+    gpu_temp = meaningful["GPU"] if "GPU" in meaningful else meaningful.get("tj", max_zone)
+    throttle_inferred = have_data and max_zone >= throttle_temp_c
     bad_xid = [c for c in xids if c in _XID_CRITICAL]
 
     checks = {
-        f"max_zone<={max_temp_c:g}C": 0 < max_zone <= max_temp_c,
+        # Gate on have_data (not a 0< lower bound): a sub-zero-but-plausible cold-start
+        # reading (the module admits zones down to _MIN_PLAUSIBLE_C) must pass, while a
+        # genuine no-data window (max_zone defaults to 0.0, have_data False) still fails.
+        f"max_zone<={max_temp_c:g}C": have_data and max_zone <= max_temp_c,
         "no_thermal_throttle": not throttle_inferred,
         "no_critical_xid": not bad_xid,
     }
