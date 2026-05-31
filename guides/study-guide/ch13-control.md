@@ -224,7 +224,7 @@ A digital controller samples the measured output at a discrete time interval $T_
 (sampling period); the sampling frequency is $f_s = 1/T_s$.
 
 **Nyquist theorem:** to represent a signal of frequency $f$ without aliasing, the
-sampling rate must be at least $2f$. The **Nyquist frequency** is $f_s / 2$ — the
+sampling rate must be greater than $2f$ (strictly — at exactly $2f$ a band-edge sinusoid is ambiguous). The **Nyquist frequency** is $f_s / 2$ — the
 highest frequency that can be unambiguously represented in the sampled signal.
 
 For control systems, the practical rule is stricter: sample at least **10-20x the

@@ -151,7 +151,7 @@ into the 512-byte log page:
 
 These offsets are from the SMART / Health Information Log layout in the NVMe Base
 Specification (mirrored field-for-field by libnvme's `struct nvme_smart_log` and Microsoft's
-`NVME_HEALTH_INFO_LOG`). The 16-byte lifetime counters (offsets 0x20 through 0xB7) are
+`NVME_HEALTH_INFO_LOG`). The 16-byte lifetime counters (offsets 0x20 through 0xBF) are
 little-endian 128-bit values; `nvme-cli` parses them for you. Note the field order on the
 wire is **Power Cycles (0x70) then Power On Hours (0x80) then Unsafe Shutdowns (0x90) then
 Media Errors (0xA0)** — a common mistake is to assume Media Errors sits low in the page; it
@@ -275,9 +275,11 @@ cs              : 0
 .................
 ```
 
-The fields that matter for triage: `status_field` (the NVMe status code — bit 15.. is the
-phase tag, the low bits are the SCT/SC status-code-type and status-code; a media error shows
-up as SCT 0x2 with codes like 0x81 unrecovered-read-error / 0x80 write-fault), `lba` (the
+The fields that matter for triage: `status_field` (the NVMe status code — bit 0 is the phase
+tag; the status sits in bits 1:15 — Status Code in bits 1:8, Status-Code-Type in bits 9:11.
+nvme-cli prints the raw 16-bit field, so shift right 1 to drop the phase tag before decoding.
+A media error shows up as SCT 0x2 with codes like 0x81 unrecovered-read-error / 0x80
+write-fault), `lba` (the
 block that faulted — feed it back to `fio`/`dd` to confirm it is reproducible), and
 `error_count` (which is the *running* error counter, not the entry index). Decode the status
 code against the NVMe spec status tables, or let `nvme-cli` print the parenthetical for you.

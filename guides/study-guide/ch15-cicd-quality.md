@@ -108,9 +108,10 @@ wrong constantly:
   production module's `_global_singleton` and mutate it). When teardown is required,
   use `yield` — `pytest` guarantees teardown even on test failure.
 - **Scope mismatch.** A `scope="session"` fixture that calls a `scope="function"`
-  fixture is an error pytest will catch at collection. The rule: **a higher-scoped
-  fixture cannot depend on a lower-scoped one** — session can use module/function;
-  function can use session. Get this right and the fixture graph stays a DAG; get it
+  fixture is a `ScopeMismatch` error pytest raises when the fixture is requested at
+  test setup (collection still succeeds). The rule: **a higher-scoped fixture cannot
+  depend on a lower-scoped one** — function can use module/session; session cannot use
+  module/function. Get this right and the fixture graph stays a DAG; get it
   wrong and you create test interdependence pytest's parallel runners will surface
   randomly.
 
@@ -440,8 +441,9 @@ A killed mutant exits as soon as the first test fails (with `pytest -x`), so
 ~1 second. A survivor runs the whole suite to discover *nothing* fails — at the
 toolkit's 13 second baseline, ~13 seconds. With ~1264 mutants and a 30 % survivor
 rate, that's about 105 minutes of wall-clock. **Mutmut belongs nightly, never on
-the per-PR gate.** The toolkit's `.github/workflows/mutmut.yml` runs at 07:00 UTC
-with `timeout-minutes: 150`; the result is an artifact a human triages weekly,
+the per-PR gate.** The toolkit's `.github/workflows/mutmut.yml` runs at 07:00 UTC,
+sharded into six parallel per-module jobs each at `timeout-minutes: 90` (wall-clock ≈
+the slowest module, not the serial sum); the result is an artifact a human triages weekly,
 not a blocker on the PR cycle.
 
 The toolkit deliberately scopes `paths_to_mutate` to the *decision/math/logic*
@@ -729,15 +731,18 @@ the lie. Don't do that.
 
 ### 9.6 Mapping workflow files to intents
 
-The toolkit ships three workflows; the design is intentional:
+The toolkit ships four workflows; the design is intentional:
 
 - **`test.yml`** — the per-PR gate. Lint + types + tests + coverage. Eight-cell
   matrix. **Blocks merges.**
 - **`qemu.yml`** — the privileged real-hardware-path verification: boot a Linux
   guest, drive QMP from the host, run the toolkit's real backend inside the guest.
   Slow (10–15 min). Runs on `toolkit/sim/qemu/**` or `toolkit/c/**` path changes.
-- **`mutmut.yml`** — nightly mutation testing. 150-min timeout. Uploads
-  `.mutmut-cache` as artifact; a human triages weekly. **Doesn't block merges.**
+- **`mutmut.yml`** — nightly mutation testing, sharded into six parallel per-module
+  jobs (each `timeout-minutes: 90`). Uploads a `.mutmut-cache` artifact per shard; a
+  human triages weekly. **Doesn't block merges.**
+- **`corpus-refresh.yml`** — nightly schema-drift capture: re-runs the parsers against
+  pinned fixtures and opens a PR if captured output drifts. **Doesn't block merges.**
 
 This split — **fast + blocking on PR, slow + not-blocking on schedule** — is the
 ergonomic shape every test-engineering repo should converge to.
@@ -778,9 +783,10 @@ of the real thing.
 (literal output of `nvme smart-log -o json` captured from a real station) and asserts
 the toolkit's parser produces the expected verdict. Two reasons to do this:
 
-1. **Format drift.** `nvme-cli 2.11` renamed `avail_spare` to
-   `available_spare`. The corpus captures **both versions**; the test runs against
-   each; the day a parser quietly stops handling the old name, a corpus replay
+1. **Format drift.** `nvme-cli` emits the wire key `avail_spare`; the toolkit
+   normalizes it internally to `available_spare` (see `nvme/health.py`). The corpus
+   captures the real wire key across nvme-cli versions and runs the parser against
+   each; the day a parser quietly stops handling the wire name, a corpus replay
    catches it.
 2. **Bug pinning.** The "abbreviated keys" bug (the toolkit's
    `_normalize_smart_keys`) is recorded as a corpus entry — the exact JSON shape
@@ -863,17 +869,19 @@ Total wall-clock: ~2 min on a warm cache. Blocks merge.
 
 **On every push to a sim-changing path (`qemu.yml`):**
 1. **Unit** (job 1, same machine) — `pytest tests/test_qmp_inject.py`.
-2. **E2E** (job 2, ubuntu, 30-min timeout) — boot a TCG guest, run Phase 2 AER
+2. **E2E** (job 2, ubuntu, 60-min timeout) — boot a TCG guest, run Phase 2 AER
    injection, run Phase 3 real-kernel-path vdev checks.
 
 Total: ~12 min. Doesn't block merge for Phase 2 (TCG-vs-HVF caveat); does for the
 unit + Phase 3 paths.
 
 **Nightly (`mutmut.yml`):**
-1. Spin a ubuntu runner. Install dev deps. Run `mutmut run` on the 6 scoped
-   modules with `timeout-minutes: 150`. Upload `.mutmut-cache` as artifact.
+1. Six parallel shards (one per scoped module) each spin a ubuntu runner, install dev
+   deps, run `mutmut run` on their module with `timeout-minutes: 90`, and upload a
+   per-shard `.mutmut-cache` artifact.
 
-Total: 60–150 min. Doesn't block anything; produces a triage queue.
+Total: ≈ the slowest module's shard (~35–45 min), not the serial sum. Doesn't block
+anything; produces a triage queue.
 
 **Release (when you cut one):**
 1. Tag the commit. CI runs the test workflow against the tag. Tag-bound artifact
@@ -936,8 +944,8 @@ refactor.** A test program isn't done when it works; it's done when the next per
 can change it. The path to "the next person can change it" is the stack above.
 
 The Zoox compute toolkit's metrics today — ~1,166 tests, 97 % branch coverage,
-ruff + mypy clean, a nightly mutation lane, three CI workflows totaling 11
-build-gate minutes per push — are not the goal. **Trust** is the goal. The metrics
+ruff + mypy clean, a nightly mutation lane, four CI workflows (two gating, ~11
+build-gate minutes per push) — are not the goal. **Trust** is the goal. The metrics
 are how you and the rest of the manufacturing organization decide whether to trust
 the verdict the BERT just printed. Build the pipeline so that every signal — lint
 clean, types clean, tests green, coverage above the gate, no surviving mutants in

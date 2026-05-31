@@ -317,7 +317,7 @@ observed variation into the gauge versus the part:
   operator/station-to-station.
 
 The AIAG study is **10 parts × 3 operators × 3 repeats** (90 measurements). Acceptance:
-**%GRR < 10%** good, **10-30%** conditional, **> 30%** unacceptable (and `ndc > 5`). If
+**%GRR < 10%** good, **10-30%** conditional, **> 30%** unacceptable (and `ndc ≥ 5`). If
 gauge variation is large relative to the tolerance, *your pass/fail is noise.* This is
 where `sigma_gauge` for the guard band (§4.1) comes from, and — crucially — **cross-CM
 correlation is a reproducibility study across sites** (§5.4). (Derivation and the
@@ -336,7 +336,7 @@ own* voice (mean ± 3σ), **not** the spec limits — a key distinction:
 
 The **Western Electric rules** flag special-cause variation *before* it becomes scrap
 (Math chapter, Western Electric rules): 1 point beyond 3σ; 2 of 3 beyond 2σ (same side); 4 of 5 beyond 1σ
-(same side); 8 in a row on one side; 6 in a row trending. **Reading the yield chart:** a
+(same side); 8 in a row on one side. (A 6-in-a-row monotonic trend is a *Nelson* rule, not Western Electric.) **Reading the yield chart:** a
 *sudden* drop says process change, equipment failure, or bad incoming material; a
 *gradual* decline says drift — tool calibration, fixture wear. The chart points; Root Cause Analysis (RCA) (§9)
 finds the cause.

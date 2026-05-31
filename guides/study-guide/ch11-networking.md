@@ -1116,7 +1116,7 @@ ntpq -p                                # NTPd peers and their offsets
 
 ```bash
 # chronyc tracking representative output:
-# Reference ID    : C0A8 0101 (10.168.1.1)
+# Reference ID    : C0A8 0101 (192.168.1.1)
 # Stratum         : 2
 # Ref time (UTC)  : Thu May 21 18:22:10 2026
 # System time     : 0.000004231 seconds slow of NTP time

@@ -296,7 +296,7 @@ class LinkStatus(NamedTuple):
 
 ls = LinkStatus("0000:03:00.0", "16 GT/s", 16)
 print(ls.speed)        # "16 GT/s"
-print(ls._asdict())    # OrderedDict for JSON serialization
+print(ls._asdict())    # regular dict since 3.8 (dicts keep insertion order since 3.7)
 bdf, speed, *_ = ls   # still iterable/unpackable
 ```
 
@@ -1110,7 +1110,7 @@ pat.match("nvme0: reset count=7")    # None -- string does not START with count=
 ```python
 m = re.search(r"(?P<dev>\w+):.*count=(?P<n>\d+)", "nvme0: reset count=7")
 m.group(0)                  # whole match: 'nvme0: reset count=7'
-m.group(1), m.group("dev")  # group 2 is '7'; 'nvme0' by name
+m.group(1), m.group("dev")  # both 'nvme0' (group 1 == named group 'dev'); group 2 ('7') is in groups() below
 m.groups()                  # ('nvme0', '7')
 m.groupdict()               # {'dev': 'nvme0', 'n': '7'}
 m.span(2)                   # (start, end) indices of group 2
@@ -1162,7 +1162,7 @@ text, n = re.subn(r"\bFAIL\b", "PASS", report)        # also returns how many it
 
 ```python
 re.split(r"[,\t|]+", line)          # split on any run of comma / tab / pipe
-re.split(r"(\d+)", "ch12blk3")       # ['ch', '12', 'blk', '3'] -- a capture group keeps the splitters
+re.split(r"(\d+)", "ch12blk3")       # ['ch','12','blk','3',''] -- capture group keeps the splitters; trailing '' (string ends on a match)
 ```
 
 #### Performance and pitfalls

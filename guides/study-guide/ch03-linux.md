@@ -277,8 +277,9 @@ PCIe AER uncorrectable non-fatal:
 [  55.300] 0000:03:00.0: PCIe Bus Error: severity=Uncorrected (Non-Fatal), type=Transaction Layer
 [  55.300] 0000:03:00.0:   device [10de:2342] error status/mask=00000020/00000000
 [  55.300] 0000:03:00.0:    [5] SDES          (First)
--> SDES = Symbol and Disparity Error. Physical layer symbol error.
-   Action: check retimer firmware; reseat connector; rule out power noise.
+-> SDES = Surprise Down Error Status (AER UESta bit 5, 0x20). The link partner dropped off
+   the bus -- a Data-Link-layer surprise-down (power loss or a PERST#/reset), not symbol noise.
+   Action: check power delivery to the slot and the PERST#/reset signal, then the device's link state.
 
 NVMe timeout / reset:
 [  88.002] nvme nvme0: I/O 23 QID 1 timeout, disable controller
@@ -288,8 +289,9 @@ NVMe timeout / reset:
    If media_errors > 0 on a brand-new drive, it is a bad unit.
 
 NVMe reset after link retrain:
-[  89.010] nvme nvme0: controller is down; will reset: CSTS=0x3, PCI_STATUS=0x10
--> CSTS fatal status + PCI_STATUS bit 4 (Master Data Parity Error). The NVMe lost
+[  89.010] nvme nvme0: controller is down; will reset: CSTS=0x3, PCI_STATUS=0x0110
+-> CSTS fatal status + PCI_STATUS bit 8 (Master Data Parity Error; 0x100 -- 0x10 alone is bit 4,
+   the benign Capabilities List bit). The NVMe lost
    its PCIe link before completing an I/O. Root cause is usually in the PCIe lane,
    not the NVMe itself.
 
@@ -448,7 +450,8 @@ xxd /sys/bus/pci/devices/0000:03:00.0/config | head -20
 #   Byte 8:     Revision ID
 #   Byte 9-11:  Class code
 #   Bytes 16-39: Base Address Registers (BARs 0-5)
-#   Byte 52-55: Subsystem Vendor/Device IDs
+#   Bytes 44-47 (0x2C): Subsystem Vendor ID (0x2C) + Subsystem ID (0x2E)
+#   Byte 52 (0x34): Capabilities Pointer
 #   Byte 60:    Interrupt line
 #   Byte 61:    Interrupt pin
 

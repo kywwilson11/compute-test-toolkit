@@ -310,12 +310,12 @@ The stress *provokes* errors; EDAC *counts* them. The two tools, and when to use
   exercises some I/O and cache coherency. Typical soak invocation:
 
   ```bash
-  stressapptest -s 120 -M 28000 -W          # 120 s, use ~28 GB, with memory-copy (-W) threads
-  stressapptest -s 600 -W                    # 10 min soak, auto-size memory, copy threads
+  stressapptest -s 120 -M 28000 -W          # 120 s, use ~28 GB, CPU-stressful copy routine (-W)
+  stressapptest -s 600 -W                    # 10 min soak, auto-size memory, CPU-stressful copy (-W)
   ```
 
   `-M` caps the memory footprint (MB) so you don't OOM the test station; omit it to let it
-  auto-size to most of free RAM. `-W` adds memory-copy worker threads (more bus stress). `-s`
+  auto-size to most of free RAM. `-W` switches to a more CPU-stressful copy routine (vector/FP); `-m N` sets the number of copy threads (default one per CPU). `-s`
   is the soak duration. The toolkit's `stress_memory(seconds, mb)` wraps exactly this:
   `["stressapptest", "-s", str(seconds), "-W"]` plus `-M` if a footprint is given.
 
@@ -447,7 +447,7 @@ The full memory flow at module test, in order:
    size, and speed of DIMMs are present (a missing or down-clocked DIMM is its own defect).
 3. **Baseline the counters.** Read CE/UE per controller and per DIMM (or reset where allowed)
    so you measure the *delta* across the soak, not boot-time noise.
-4. **Soak hot.** `stressapptest -s <soak> -W` (most of RAM, copy threads) at temperature —
+4. **Soak hot.** `stressapptest -s <soak> -W` (most of RAM, CPU-stressful copy) at temperature —
    long enough and hot enough to provoke marginal cells. This is the catching step.
 5. **Read the counters.** Delta CE/UE total and per-DIMM; `ras-mc-ctl --errors` for any error
    detail and the DIMM label.

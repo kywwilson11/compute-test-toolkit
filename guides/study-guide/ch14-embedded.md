@@ -119,7 +119,7 @@ Firmware is C (sometimes C++/Rust) cross-compiled on your workstation for the ta
 
 ```bash
 arm-none-eabi-gcc -mcpu=cortex-m4 -mthumb -O2 -ffunction-sections \
-  -T stm32f4.ld -nostartupfiles startup.s app.c -o app.elf   # -T = linker script (the memory map)
+  -T stm32f4.ld -nostartfiles startup.s app.c -o app.elf   # -T = linker script (the memory map)
 arm-none-eabi-objcopy -O binary app.elf app.bin              # strip ELF to a raw flashable image
 arm-none-eabi-size app.elf                                   # flash/SRAM usage vs the part's budget
 ```

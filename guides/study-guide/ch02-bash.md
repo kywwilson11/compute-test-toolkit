@@ -189,7 +189,7 @@ EOF
 
 # Here-string (<<<): a single string as stdin. Handy with grep/read/bc:
 grep -q "16 GT/s" <<< "$SPEED" && echo "Gen4"
-read -r bus dev func <<< "${BDF//[:.]/ }"   # split BDF "0000:03:00.0" into three fields
+read -r dom bus dev func <<< "${BDF//[:.]/ }"   # 0000:03:00.0 -> dom=0000 bus=03 dev=00 func=0 (4 fields)
 ```
 
 ### Pipes and tee
@@ -254,7 +254,9 @@ echo "${BASH_REMATCH[0]}"              # after =~, captured groups land in BASH_
 (( count == 4 ))
 (( count > 10 && count < 100 ))
 (( temp >= 70 )) && echo "OVERHEAT"
-# Gotcha: [[ "08" -eq 8 ]] is TRUE (numeric); [[ "08" == 8 ]] is FALSE (string "08" != "8").
+# Gotcha: a leading-zero operand is parsed as OCTAL in a numeric context, so
+# [[ "08" -eq 8 ]] ERRORS ("value too great for base" -- 8 is not an octal digit),
+# it is not TRUE. Force base 10 with (( 10#08 == 8 )). [[ "08" == 8 ]] is FALSE (string).
 
 # File tests:
 [[ -e "$path" ]]     # exists (file, dir, symlink, device)
@@ -1092,16 +1094,16 @@ for f in aer_dev_correctable aer_dev_nonfatal aer_dev_fatal; do
 done
 
 # Expected output on a healthy device (ALL counts should be zero or absent):
-# --- aer_dev_correctable ---
-# Receiver Error            0      <- physical layer noise on the lane
-# Bad TLP                   0      <- bad Transaction Layer Packet; framing error
-# Bad DLLP                  0      <- bad Data-Link Layer Packet
-# RELAY_NUM Rollover        0      <- internal counter rollover; not a real error event
-# Replay Timer Timeout      0      <- retrain fired; marginal link under load
-# Advisory Non-Fatal        0
-# Corrected Internal Error  0
-# Header Log Overflow       0
-# TOTAL_ERR_COR             0
+# --- aer_dev_correctable ---     (the kernel emits short tokens, not prose labels)
+# RxErr          0      <- receiver error: physical-layer noise on the lane
+# BadTLP         0      <- bad Transaction Layer Packet; framing error
+# BadDLLP        0      <- bad Data-Link Layer Packet
+# Rollover       0      <- REPLAY_NUM rollover; internal counter, not a real error event
+# Timeout        0      <- replay-timer timeout: retrain fired; marginal link under load
+# NonFatalErr    0      <- advisory non-fatal
+# CorrIntErr     0      <- corrected internal error
+# HeaderOF       0      <- header log overflow
+# TOTAL_ERR_COR  0
 
 # If any counter is non-zero and rising, classify:
 # Growing RxErr / BadTLP -> physical layer: SI problem, marginal trace, bad connector, retimer
@@ -1114,7 +1116,7 @@ Polling counters over time to detect a rate (useful for a pass/fail threshold on
 ```bash
 # Poll an AER correctable counter at T=0 and T=60s; fail if any counter accumulated.
 snap() {
-    grep -E 'Bad TLP|Replay Timer' "/sys/bus/pci/devices/$1/aer_dev_correctable" \
+    grep -E 'BadTLP|Timeout' "/sys/bus/pci/devices/$1/aer_dev_correctable" \
         | awk '{sum += $2} END {print sum+0}'
 }
 before=$(snap "$BDF")

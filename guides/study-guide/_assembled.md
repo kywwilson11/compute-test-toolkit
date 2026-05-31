@@ -539,7 +539,7 @@ class LinkStatus(NamedTuple):
 
 ls = LinkStatus("0000:03:00.0", "16 GT/s", 16)
 print(ls.speed) # "16 GT/s"
-print(ls._asdict()) # OrderedDict for JSON serialization
+print(ls._asdict()) # regular dict since 3.8 (dicts keep insertion order since 3.7)
 bdf, speed, *_ = ls # still iterable/unpackable
 ```
 
@@ -1353,7 +1353,7 @@ pat.match("nvme0: reset count=7") # None -- string does not START with count=
 ```python
 m = re.search(r"(?P<dev>\w+):.*count=(?P<n>\d+)", "nvme0: reset count=7")
 m.group(0) # whole match: 'nvme0: reset count=7'
-m.group(1), m.group("dev") # group 2 is '7'; 'nvme0' by name
+m.group(1), m.group("dev") # both 'nvme0' (group 1 == named group 'dev'); group 2 ('7') is in groups() below
 m.groups() # ('nvme0', '7')
 m.groupdict() # {'dev': 'nvme0', 'n': '7'}
 m.span(2) # (start, end) indices of group 2
@@ -1405,7 +1405,7 @@ text, n = re.subn(r"\bFAIL\b", "PASS", report) # also returns how many it change
 
 ```python
 re.split(r"[,\t|]+", line) # split on any run of comma / tab / pipe
-re.split(r"(\d+)", "ch12blk3") # ['ch', '12', 'blk', '3'] -- a capture group keeps the splitters
+re.split(r"(\d+)", "ch12blk3") # ['ch','12','blk','3',''] -- capture group keeps the splitters; trailing '' (string ends on a match)
 ```
 
 ### Performance and pitfalls
@@ -3496,7 +3496,7 @@ EOF
 
 # Here-string (<<<): a single string as stdin. Handy with grep/read/bc:
 grep -q "16 GT/s" <<< "$SPEED" && echo "Gen4"
-read -r bus dev func <<< "${BDF//[:.]/ }" # split BDF "0000:03:00.0" into three fields
+read -r dom bus dev func <<< "${BDF//[:.]/ }" # 0000:03:00.0 -> dom=0000 bus=03 dev=00 func=0 (4 fields)
 ```
 
 ### Pipes and tee
@@ -3561,7 +3561,9 @@ echo "${BASH_REMATCH[0]}" # after =~, captured groups land in BASH_REMATCH[]
 (( count == 4 ))
 (( count > 10 && count < 100 ))
 (( temp >= 70 )) && echo "OVERHEAT"
-# Gotcha: [[ "08" -eq 8 ]] is TRUE (numeric); [[ "08" == 8 ]] is FALSE (string "08" != "8").
+# Gotcha: a leading-zero operand is parsed as OCTAL in a numeric context, so
+# [[ "08" -eq 8 ]] ERRORS ("value too great for base" -- 8 is not an octal digit),
+# it is not TRUE. Force base 10 with (( 10#08 == 8 )). [[ "08" == 8 ]] is FALSE (string).
 
 # File tests:
 [[ -e "$path" ]] # exists (file, dir, symlink, device)
@@ -4399,15 +4401,15 @@ for f in aer_dev_correctable aer_dev_nonfatal aer_dev_fatal; do
 done
 
 # Expected output on a healthy device (ALL counts should be zero or absent):
-# --- aer_dev_correctable ---
-# Receiver Error 0 <- physical layer noise on the lane
-# Bad TLP 0 <- bad Transaction Layer Packet; framing error
-# Bad DLLP 0 <- bad Data-Link Layer Packet
-# RELAY_NUM Rollover 0 <- internal counter rollover; not a real error event
-# Replay Timer Timeout 0 <- retrain fired; marginal link under load
-# Advisory Non-Fatal 0
-# Corrected Internal Error 0
-# Header Log Overflow 0
+# --- aer_dev_correctable --- (the kernel emits short tokens, not prose labels)
+# RxErr 0 <- receiver error: physical-layer noise on the lane
+# BadTLP 0 <- bad Transaction Layer Packet; framing error
+# BadDLLP 0 <- bad Data-Link Layer Packet
+# Rollover 0 <- REPLAY_NUM rollover; internal counter, not a real error event
+# Timeout 0 <- replay-timer timeout: retrain fired; marginal link under load
+# NonFatalErr 0 <- advisory non-fatal
+# CorrIntErr 0 <- corrected internal error
+# HeaderOF 0 <- header log overflow
 # TOTAL_ERR_COR 0
 
 # If any counter is non-zero and rising, classify:
@@ -4421,7 +4423,7 @@ Polling counters over time to detect a rate (useful for a pass/fail threshold on
 ```bash
 # Poll an AER correctable counter at T=0 and T=60s; fail if any counter accumulated.
 snap() {
- grep -E 'Bad TLP|Replay Timer' "/sys/bus/pci/devices/$1/aer_dev_correctable" \
+ grep -E 'BadTLP|Timeout' "/sys/bus/pci/devices/$1/aer_dev_correctable" \
  | awk '{sum += $2} END {print sum+0}'
 }
 before=$(snap "$BDF")
@@ -4749,8 +4751,9 @@ PCIe AER uncorrectable non-fatal:
 [ 55.300] 0000:03:00.0: PCIe Bus Error: severity=Uncorrected (Non-Fatal), type=Transaction Layer
 [ 55.300] 0000:03:00.0: device [10de:2342] error status/mask=00000020/00000000
 [ 55.300] 0000:03:00.0: [5] SDES (First)
--> SDES = Symbol and Disparity Error. Physical layer symbol error.
- Action: check retimer firmware; reseat connector; rule out power noise.
+-> SDES = Surprise Down Error Status (AER UESta bit 5, 0x20). The link partner dropped off
+ the bus -- a Data-Link-layer surprise-down (power loss or a PERST#/reset), not symbol noise.
+ Action: check power delivery to the slot and the PERST#/reset signal, then the device's link state.
 
 NVMe timeout / reset:
 [ 88.002] nvme nvme0: I/O 23 QID 1 timeout, disable controller
@@ -4760,8 +4763,9 @@ NVMe timeout / reset:
  If media_errors > 0 on a brand-new drive, it is a bad unit.
 
 NVMe reset after link retrain:
-[ 89.010] nvme nvme0: controller is down; will reset: CSTS=0x3, PCI_STATUS=0x10
--> CSTS fatal status + PCI_STATUS bit 4 (Master Data Parity Error). The NVMe lost
+[ 89.010] nvme nvme0: controller is down; will reset: CSTS=0x3, PCI_STATUS=0x0110
+-> CSTS fatal status + PCI_STATUS bit 8 (Master Data Parity Error; 0x100 -- 0x10 alone is bit 4,
+ the benign Capabilities List bit). The NVMe lost
  its PCIe link before completing an I/O. Root cause is usually in the PCIe lane,
  not the NVMe itself.
 
@@ -4920,7 +4924,8 @@ xxd /sys/bus/pci/devices/0000:03:00.0/config | head -20
 # Byte 8: Revision ID
 # Byte 9-11: Class code
 # Bytes 16-39: Base Address Registers (BARs 0-5)
-# Byte 52-55: Subsystem Vendor/Device IDs
+# Bytes 44-47 (0x2C): Subsystem Vendor ID (0x2C) + Subsystem ID (0x2E)
+# Byte 52 (0x34): Capabilities Pointer
 # Byte 60: Interrupt line
 # Byte 61: Interrupt pin
 
@@ -5971,7 +5976,7 @@ The hierarchy fans out from the CPU:
  Endpoint Endpoint Endpoint (GPU, NVMe, NIC, custom card)
 ```
 
-| Port type | Code (DevType[3:0]) | Role |
+| Port type | Code (Device/Port Type — PCIe cap +0x02, bits [7:4]) | Role |
 |---|---|---|
 | Endpoint | 0x0 | A leaf: GPU, NVMe controller, NIC, custom FPGA card |
 | Root Port | 0x4 | A Root Complex egress port; a **downstream** port |
@@ -6239,19 +6244,22 @@ transients:
 |---|---|---|
 | 11 | **Link Training (LT)** | Set *while* retraining (in Recovery). Flicking = the link is bouncing. |
 | 13 | **DLLLA** (DL Link Active) | Drops to 0 on a link-down (DL_Down). A **latched link-down** detector — *but only meaningful if `LnkCap` bit 20 is set.* |
-| 14 | **LBMS** (LBMS) | **W1C latch**: set when speed/width changed via a *managed* retrain (software/hardware initiated). |
-| 15 | **LABS** (LABS) | **W1C latch**: set when the hardware changed speed/width **autonomously** — i.e. it couldn't *hold* the higher rate. |
+| 14 | **LBMS** (LBMS) | **W1C latch**: set on a completed software retrain **or** when hardware dropped speed/width to **correct unreliable link operation** — the "couldn't *hold* the rate" tell. |
+| 15 | **LABS** (LABS) | **W1C latch**: set when hardware changed speed/width **autonomously for reasons *other* than reliability** (power / bandwidth-on-demand) — not a reliability fault by itself. |
 
-> **`LABS` is the gem.** `LABS` latching after a soak means **the hardware autonomously
-> dropped speed/width during your test** — it trained to Gen4 x16 but couldn't hold it. A
-> one-shot "current speed = Gen4 x16" check *passes* that unit; the `LABS` latch *fails* it
-> correctly. This is the canonical **"trains fine, marginal under load/temperature"** catch,
-> and it costs one extra register read. Arm it (W1C) before the soak:
+> **`LBMS` is the gem.** Spec-precisely, `LBMS` (bit 14) is the bit hardware sets when it
+> dropped speed/width **to correct unreliable link operation** — so `LBMS` latching after a
+> soak (with no software-initiated retrain in the window) means the link **couldn't hold the
+> rate** and renegotiated down. `LABS` (bit 15) is the *autonomous, non-reliability* change
+> (power / bandwidth-on-demand). A one-shot "current speed = Gen4 x16" check *passes* a unit
+> that bounced; the `LBMS` latch *fails* it correctly — the canonical **"trains fine, marginal
+> under load/temperature"** catch, for one extra register read. Arm **both** adjacent W1C bits
+> before the soak (and read a set `LBMS` as the reliability tell):
 
 ```bash
 setpci -s $BDF CAP_EXP+0x12.W=0xc000 # write 1 to bits 14,15 -> clear LBMS|LABS (arm)
 # ... run stress / thermal soak ...
-setpci -s $BDF CAP_EXP+0x12.W # re-read: bit15(LABS) or bit14(LBMS) set => it renegotiated
+setpci -s $BDF CAP_EXP+0x12.W # re-read: bit14(LBMS)=reliability downgrade, bit15(LABS)=autonomous; either => renegotiated
 ```
 
 > **Read the latch at the *downstream port*, not the endpoint.** `LBMS`/`LABS` describe a
@@ -6259,10 +6267,10 @@ setpci -s $BDF CAP_EXP+0x12.W # re-read: bit15(LABS) or bit14(LBMS) set => it re
 > On the **endpoint** side of the link those bits are `RsvdZ` — they read as 0 forever. Arm
 > and re-read at the DSP's BDF (resolve it with `lspci -t`, or the toolkit's `link_chain()` /
 > `read_port_type()`), not at the endpoint you happen to be probing. Point this check at the
-> wrong end and your autonomous-downgrade detector silently never fires — it polls a
+> wrong end and your bandwidth-change detector silently never fires — it polls a
 > hard-wired 0 and PASSes every soak. (The toolkit was reading `$BDF` at the endpoint; the
-> fix was to resolve the owning downstream port. It's the most common way the `LABS` check
-> gets *written* but never *works*.)
+> fix was to resolve the owning downstream port. It's the most common way the `LBMS`/`LABS`
+> check gets *written* but never *works*.)
 
 What the words actually look like, decoded by hand (Link Status is 16-bit; width field is
 bits [9:4], so x16 = field value 0x10 sits at bit 8 = `0x0100`):
@@ -6284,8 +6292,8 @@ e104
  0xE104 = 1110 0001 0000 0100b
  [3:0]=0x4 (16 GT/s), [9:4]=0x10 (x16) -> ends Gen4 x16 again (a snapshot would PASS)
  bit13 (DLLLA) = 1 -> link is up
- bit14 (LBMS) = 1 -> bandwidth changed via a managed retrain
- bit15 (LABS) = 1 -> AUTONOMOUS bandwidth change -> it could not hold the rate -> FAIL
+ bit14 (LBMS) = 1 -> dropped speed/width to correct unreliable operation -> could NOT hold the rate -> FAIL
+ bit15 (LABS) = 1 -> ALSO an autonomous (non-reliability) bandwidth change in the window
 ```
 
 The point: both reads end at "Gen4 x16," so the speed/width fields alone pass the unit. Only
@@ -6738,7 +6746,7 @@ errors exceed a limit measures the **eye margin directly, on-die, with no oscill
 Timing margining is required at Gen4 (16 GT/s); **voltage margining is mandatory at Gen5
 (32 GT/s)** and up.
 
-**The real Linux tool is `pcilmr`** — part of `pciutils` (≥ 3.13, May 2024; improved in 3.14),
+**The real Linux tool is `pcilmr`** — part of `pciutils` (≥ 3.11, Feb 2024; further developed through 3.13),
 no vendor SDK required. *This is the answer to "how do I margin a lane today."* There is no
 generic kernel sysfs "margin this lane" interface; `pcilmr` drives the capability registers
 from user space and hardcodes vendor quirks (e.g. Ice Lake) a hand-rolled sequence would miss.
@@ -7096,9 +7104,10 @@ How to read it, top to bottom:
  of the two ends, so a GPU advertising 16GT/s behind a root port capped at 8GT/s is a config
  ceiling, not a defect.
 - **`DLActive+ BWMgmt+ ABWMgmt+`** on the `LnkSta` line — `lspci`'s names for **DLLLA**, **LBMS**,
- and **LABS**. `ABWMgmt+` (LABS) is the gem: this link **autonomously downgraded** — it could
- not hold the higher rate. A snapshot of "Speed 8GT/s" alone doesn't tell you *whether it ever
- tried 16*; `ABWMgmt+` does.
+ and **LABS**. `BWMgmt+` (LBMS) is the gem: spec-precisely it's the bit set when hardware
+ dropped speed/width **to correct unreliable operation** — the link could not hold the higher
+ rate. (`ABWMgmt+`/LABS is the *autonomous, non-reliability* change: power / bandwidth-on-demand.)
+ A snapshot of "Speed 8GT/s" alone doesn't tell you *whether it ever tried 16*; `BWMgmt+` does.
 - **`Train-`** is the LT bit at the instant of capture; if it flickers `Train+` across repeated
  reads the link is bouncing through Recovery (the live-retrain tell a single read misses).
 - **`CESta: RxErr+ BadTLP+ ... Timeout+`** — the correctable cluster. RxErr + BadTLP + Replay
@@ -7677,7 +7686,7 @@ into the 512-byte log page:
 
 These offsets are from the SMART / Health Information Log layout in the NVMe Base
 Specification (mirrored field-for-field by libnvme's `struct nvme_smart_log` and Microsoft's
-`NVME_HEALTH_INFO_LOG`). The 16-byte lifetime counters (offsets 0x20 through 0xB7) are
+`NVME_HEALTH_INFO_LOG`). The 16-byte lifetime counters (offsets 0x20 through 0xBF) are
 little-endian 128-bit values; `nvme-cli` parses them for you. Note the field order on the
 wire is **Power Cycles (0x70) then Power On Hours (0x80) then Unsafe Shutdowns (0x90) then
 Media Errors (0xA0)** — a common mistake is to assume Media Errors sits low in the page; it
@@ -7801,9 +7810,11 @@ cs : 0
 .................
 ```
 
-The fields that matter for triage: `status_field` (the NVMe status code — bit 15.. is the
-phase tag, the low bits are the SCT/SC status-code-type and status-code; a media error shows
-up as SCT 0x2 with codes like 0x81 unrecovered-read-error / 0x80 write-fault), `lba` (the
+The fields that matter for triage: `status_field` (the NVMe status code — bit 0 is the phase
+tag; the status sits in bits 1:15 — Status Code in bits 1:8, Status-Code-Type in bits 9:11.
+nvme-cli prints the raw 16-bit field, so shift right 1 to drop the phase tag before decoding.
+A media error shows up as SCT 0x2 with codes like 0x81 unrecovered-read-error / 0x80
+write-fault), `lba` (the
 block that faulted — feed it back to `fio`/`dd` to confirm it is reproducible), and
 `error_count` (which is the *running* error counter, not the entry index). Decode the status
 code against the NVMe spec status tables, or let `nvme-cli` print the parenthetical for you.
@@ -9292,12 +9303,12 @@ The stress *provokes* errors; EDAC *counts* them. The two tools, and when to use
  exercises some I/O and cache coherency. Typical soak invocation:
 
  ```bash
- stressapptest -s 120 -M 28000 -W # 120 s, use ~28 GB, with memory-copy (-W) threads
- stressapptest -s 600 -W # 10 min soak, auto-size memory, copy threads
+ stressapptest -s 120 -M 28000 -W # 120 s, use ~28 GB, CPU-stressful copy routine (-W)
+ stressapptest -s 600 -W # 10 min soak, auto-size memory, CPU-stressful copy (-W)
  ```
 
  `-M` caps the memory footprint (MB) so you don't OOM the test station; omit it to let it
- auto-size to most of free RAM. `-W` adds memory-copy worker threads (more bus stress). `-s`
+ auto-size to most of free RAM. `-W` switches to a more CPU-stressful copy routine (vector/FP); `-m N` sets the number of copy threads (default one per CPU). `-s`
  is the soak duration. The toolkit's `stress_memory(seconds, mb)` wraps exactly this:
  `["stressapptest", "-s", str(seconds), "-W"]` plus `-M` if a footprint is given.
 
@@ -9429,7 +9440,7 @@ The full memory flow at module test, in order:
  size, and speed of DIMMs are present (a missing or down-clocked DIMM is its own defect).
 3. **Baseline the counters.** Read CE/UE per controller and per DIMM (or reset where allowed)
  so you measure the *delta* across the soak, not boot-time noise.
-4. **Soak hot.** `stressapptest -s <soak> -W` (most of RAM, copy threads) at temperature —
+4. **Soak hot.** `stressapptest -s <soak> -W` (most of RAM, CPU-stressful copy) at temperature —
  long enough and hot enough to provoke marginal cells. This is the catching step.
 5. **Read the counters.** Delta CE/UE total and per-DIMM; `ras-mc-ctl --errors` for any error
  detail and the DIMM label.
@@ -11009,7 +11020,7 @@ observed variation into the gauge versus the part:
  operator/station-to-station.
 
 The AIAG study is **10 parts × 3 operators × 3 repeats** (90 measurements). Acceptance:
-**%GRR < 10%** good, **10-30%** conditional, **> 30%** unacceptable (and `ndc > 5`). If
+**%GRR < 10%** good, **10-30%** conditional, **> 30%** unacceptable (and `ndc >= 5`). If
 gauge variation is large relative to the tolerance, *your pass/fail is noise.* This is
 where `sigma_gauge` for the guard band comes from, and — crucially — **cross-CM
 correlation is a reproducibility study across sites**. (Derivation and the
@@ -11028,7 +11039,7 @@ own* voice (mean ± 3σ), **not** the spec limits — a key distinction:
 
 The **Western Electric rules** flag special-cause variation *before* it becomes scrap
 (Math chapter, Western Electric rules): 1 point beyond 3σ; 2 of 3 beyond 2σ (same side); 4 of 5 beyond 1σ
-(same side); 8 in a row on one side; 6 in a row trending. **Reading the yield chart:** a
+(same side); 8 in a row on one side. (A 6-in-a-row monotonic trend is a *Nelson* rule, not Western Electric.) **Reading the yield chart:** a
 *sudden* drop says process change, equipment failure, or bad incoming material; a
 *gradual* decline says drift — tool calibration, fixture wear. The chart points; Root Cause Analysis (RCA)
 finds the cause.
@@ -14318,7 +14329,7 @@ ntpq -p # NTPd peers and their offsets
 
 ```bash
 # chronyc tracking representative output:
-# Reference ID : C0A8 0101 (10.168.1.1)
+# Reference ID : C0A8 0101 (192.168.1.1)
 # Stratum : 2
 # Ref time (UTC) : Thu May 21 18:22:10 2026
 # System time : 0.000004231 seconds slow of NTP time
@@ -15192,8 +15203,10 @@ load. **Use 4-wire (Kelvin) sensing:**
  Force- o--[R_lead]--+----------+
 ```
 
-At 0.8V nominal with 100A draw and 100mΩ lead resistance, the 2-wire error is 10mV —
-a non-trivial fraction of a 24mV spec window (3% of 0.8V). 4-wire eliminates it.
+At 0.8V nominal with 100A draw through 100 µΩ (0.1 mΩ) of force-path/contact resistance, the
+2-wire error is 10mV — a non-trivial fraction of a 24mV one-sided spec allowance (3% of 0.8V).
+4-wire eliminates it. (100A across the 100mΩ of a DMM lead pair would be a 10V drop, not 10mV —
+the mΩ-scale figure belongs to the no-load lead context, not a 100A force path.)
 
 Additional DMM discipline:
 
@@ -15737,8 +15750,8 @@ The safety lifecycle phases relevant to a test engineer:
  FMEDA also computes:
  - **Diagnostic coverage (DC):** the fraction of the failure mode's random hardware
  failure rate that the safety mechanisms detect. ISO 26262-5 Table 14 defines three
- reference levels: Low (<60%), Medium (60% to <90%), and High (>=90%) per the
- standard. The word "high" in FMEDA reports corresponds to the >=90% tier; claims
+ reference levels: Low (60%), Medium (90%), and High (99%) per the
+ standard. The word "high" in FMEDA reports corresponds to the 99% tier (90% is Medium); claims
  of high DC require design evidence (architecture, test result, or analysis) that
  actually achieves that coverage in the fielded hardware.
  - **SPFM (Single-Point Fault Metric)** and **LFM (Latent Fault Metric):** fractions
@@ -15775,7 +15788,7 @@ The FMEDA produces a list of failure modes and their safety mechanism coverages.
 each safety mechanism, there must be evidence that it actually functions in every
 shipped unit. That evidence is produced by manufacturing test. The connection is direct:
 
-- **FMEDA says:** "ECC provides high DC (>90%) for single-bit DRAM failures; ECC must
+- **FMEDA says:** "ECC provides high DC (≈99%) for single-bit DRAM failures; ECC must
  function to achieve SPFM >= 99%."
 - **Manufacturing Test (MT) must prove:** ECC is enabled, ECC detects a correctable error (inject one or
  observe during memtest), and the EDAC driver reports it. Reading the corrected-error
@@ -15862,7 +15875,7 @@ Diagnostic coverage (DC) quantifies how thoroughly safety mechanisms detect the 
 hardware failure modes they are supposed to cover. DC is a calculation, not a
 measurement — but the *inputs* to that calculation must be validated by test:
 
-- If the FMEDA claims high DC (>=90%) for ECC on DRAM, that claim depends on ECC being
+- If the FMEDA claims high DC (≈99%) for ECC on DRAM, that claim depends on ECC being
  enabled, functional, and correctly configured in every shipped unit. Manufacturing
  test provides that validation.
 - If the FMEDA claims DC for a voltage monitor detecting rail out-of-spec events, that
@@ -16235,7 +16248,7 @@ A digital controller samples the measured output at a discrete time interval $T_
 (sampling period); the sampling frequency is $f_s = 1/T_s$.
 
 **Nyquist theorem:** to represent a signal of frequency $f$ without aliasing, the
-sampling rate must be at least $2f$. The **Nyquist frequency** is $f_s / 2$ — the
+sampling rate must be greater than $2f$ (strictly — at exactly $2f$ a band-edge sinusoid is ambiguous). The **Nyquist frequency** is $f_s / 2$ — the
 highest frequency that can be unambiguously represented in the sampled signal.
 
 For control systems, the practical rule is stricter: sample at least **10-20x the
@@ -16591,7 +16604,7 @@ Firmware is C (sometimes C++/Rust) cross-compiled on your workstation for the ta
 
 ```bash
 arm-none-eabi-gcc -mcpu=cortex-m4 -mthumb -O2 -ffunction-sections \
- -T stm32f4.ld -nostartupfiles startup.s app.c -o app.elf # -T = linker script (the memory map)
+ -T stm32f4.ld -nostartfiles startup.s app.c -o app.elf # -T = linker script (the memory map)
 arm-none-eabi-objcopy -O binary app.elf app.bin # strip ELF to a raw flashable image
 arm-none-eabi-size app.elf # flash/SRAM usage vs the part's budget
 ```
@@ -16833,9 +16846,10 @@ wrong constantly:
  production module's `_global_singleton` and mutate it). When teardown is required,
  use `yield` — `pytest` guarantees teardown even on test failure.
 - **Scope mismatch.** A `scope="session"` fixture that calls a `scope="function"`
- fixture is an error pytest will catch at collection. The rule: **a higher-scoped
- fixture cannot depend on a lower-scoped one** — session can use module/function;
- function can use session. Get this right and the fixture graph stays a DAG; get it
+ fixture is a `ScopeMismatch` error pytest raises when the fixture is requested at
+ test setup (collection still succeeds). The rule: **a higher-scoped fixture cannot
+ depend on a lower-scoped one** — function can use module/session; session cannot use
+ module/function. Get this right and the fixture graph stays a DAG; get it
  wrong and you create test interdependence pytest's parallel runners will surface
  randomly.
 
@@ -17165,8 +17179,9 @@ A killed mutant exits as soon as the first test fails (with `pytest -x`), so
 ~1 second. A survivor runs the whole suite to discover *nothing* fails — at the
 toolkit's 13 second baseline, ~13 seconds. With ~1264 mutants and a 30 % survivor
 rate, that's about 105 minutes of wall-clock. **Mutmut belongs nightly, never on
-the per-PR gate.** The toolkit's `.github/workflows/mutmut.yml` runs at 07:00 UTC
-with `timeout-minutes: 150`; the result is an artifact a human triages weekly,
+the per-PR gate.** The toolkit's `.github/workflows/mutmut.yml` runs at 07:00 UTC,
+sharded into six parallel per-module jobs each at `timeout-minutes: 90` (wall-clock ≈
+the slowest module, not the serial sum); the result is an artifact a human triages weekly,
 not a blocker on the PR cycle.
 
 The toolkit deliberately scopes `paths_to_mutate` to the *decision/math/logic*
@@ -17454,15 +17469,18 @@ the lie. Don't do that.
 
 ### Mapping workflow files to intents
 
-The toolkit ships three workflows; the design is intentional:
+The toolkit ships four workflows; the design is intentional:
 
 - **`test.yml`** — the per-PR gate. Lint + types + tests + coverage. Eight-cell
  matrix. **Blocks merges.**
 - **`qemu.yml`** — the privileged real-hardware-path verification: boot a Linux
  guest, drive QMP from the host, run the toolkit's real backend inside the guest.
  Slow (10–15 min). Runs on `toolkit/sim/qemu/**` or `toolkit/c/**` path changes.
-- **`mutmut.yml`** — nightly mutation testing. 150-min timeout. Uploads
- `.mutmut-cache` as artifact; a human triages weekly. **Doesn't block merges.**
+- **`mutmut.yml`** — nightly mutation testing, sharded into six parallel per-module
+ jobs (each `timeout-minutes: 90`). Uploads a `.mutmut-cache` artifact per shard; a
+ human triages weekly. **Doesn't block merges.**
+- **`corpus-refresh.yml`** — nightly schema-drift capture: re-runs the parsers against
+ pinned fixtures and opens a PR if captured output drifts. **Doesn't block merges.**
 
 This split — **fast + blocking on PR, slow + not-blocking on schedule** — is the
 ergonomic shape every test-engineering repo should converge to.
@@ -17503,9 +17521,10 @@ of the real thing.
 (literal output of `nvme smart-log -o json` captured from a real station) and asserts
 the toolkit's parser produces the expected verdict. Two reasons to do this:
 
-1. **Format drift.** `nvme-cli 2.11` renamed `avail_spare` to
- `available_spare`. The corpus captures **both versions**; the test runs against
- each; the day a parser quietly stops handling the old name, a corpus replay
+1. **Format drift.** `nvme-cli` emits the wire key `avail_spare`; the toolkit
+ normalizes it internally to `available_spare` (see `nvme/health.py`). The corpus
+ captures the real wire key across nvme-cli versions and runs the parser against
+ each; the day a parser quietly stops handling the wire name, a corpus replay
  catches it.
 2. **Bug pinning.** The "abbreviated keys" bug (the toolkit's
  `_normalize_smart_keys`) is recorded as a corpus entry — the exact JSON shape
@@ -17588,17 +17607,19 @@ Total wall-clock: ~2 min on a warm cache. Blocks merge.
 
 **On every push to a sim-changing path (`qemu.yml`):**
 1. **Unit** (job 1, same machine) — `pytest tests/test_qmp_inject.py`.
-2. **E2E** (job 2, ubuntu, 30-min timeout) — boot a TCG guest, run Phase 2 AER
+2. **E2E** (job 2, ubuntu, 60-min timeout) — boot a TCG guest, run Phase 2 AER
  injection, run Phase 3 real-kernel-path vdev checks.
 
 Total: ~12 min. Doesn't block merge for Phase 2 (TCG-vs-HVF caveat); does for the
 unit + Phase 3 paths.
 
 **Nightly (`mutmut.yml`):**
-1. Spin a ubuntu runner. Install dev deps. Run `mutmut run` on the 6 scoped
- modules with `timeout-minutes: 150`. Upload `.mutmut-cache` as artifact.
+1. Six parallel shards (one per scoped module) each spin a ubuntu runner, install dev
+ deps, run `mutmut run` on their module with `timeout-minutes: 90`, and upload a
+ per-shard `.mutmut-cache` artifact.
 
-Total: 60–150 min. Doesn't block anything; produces a triage queue.
+Total: ≈ the slowest module's shard (~35–45 min), not the serial sum. Doesn't block
+anything; produces a triage queue.
 
 **Release (when you cut one):**
 1. Tag the commit. CI runs the test workflow against the tag. Tag-bound artifact
@@ -17661,8 +17682,8 @@ refactor.** A test program isn't done when it works; it's done when the next per
 can change it. The path to "the next person can change it" is the stack above.
 
 The Zoox compute toolkit's metrics today — ~1,166 tests, 97 % branch coverage,
-ruff + mypy clean, a nightly mutation lane, three CI workflows totaling 11
-build-gate minutes per push — are not the goal. **Trust** is the goal. The metrics
+ruff + mypy clean, a nightly mutation lane, four CI workflows (two gating, ~11
+build-gate minutes per push) — are not the goal. **Trust** is the goal. The metrics
 are how you and the rest of the manufacturing organization decide whether to trust
 the verdict the BERT just printed. Build the pipeline so that every signal — lint
 clean, types clean, tests green, coverage above the gate, no surviving mutants in

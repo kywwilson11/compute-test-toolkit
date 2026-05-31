@@ -56,7 +56,7 @@ The hierarchy fans out from the CPU:
  Endpoint   Endpoint    Endpoint  (GPU, NVMe, NIC, custom card)
 ```
 
-| Port type | Code (DevType[3:0]) | Role |
+| Port type | Code (Device/Port Type — PCIe cap +0x02, bits [7:4]) | Role |
 |---|---|---|
 | Endpoint | 0x0 | A leaf: GPU, NVMe controller, NIC, custom FPGA card |
 | Root Port | 0x4 | A Root Complex egress port; a **downstream** port |
@@ -324,19 +324,22 @@ transients:
 |---|---|---|
 | 11 | **Link Training (LT)** | Set *while* retraining (in Recovery). Flicking = the link is bouncing. |
 | 13 | **DLLLA** (DL Link Active) | Drops to 0 on a link-down (DL_Down). A **latched link-down** detector — *but only meaningful if `LnkCap` bit 20 is set.* |
-| 14 | **LBMS** (LBMS) | **W1C latch**: set when speed/width changed via a *managed* retrain (software/hardware initiated). |
-| 15 | **LABS** (LABS) | **W1C latch**: set when the hardware changed speed/width **autonomously** — i.e. it couldn't *hold* the higher rate. |
+| 14 | **LBMS** (LBMS) | **W1C latch**: set on a completed software retrain **or** when hardware dropped speed/width to **correct unreliable link operation** — the "couldn't *hold* the rate" tell. |
+| 15 | **LABS** (LABS) | **W1C latch**: set when hardware changed speed/width **autonomously for reasons *other* than reliability** (power / bandwidth-on-demand) — not a reliability fault by itself. |
 
-> **`LABS` is the gem.** `LABS` latching after a soak means **the hardware autonomously
-> dropped speed/width during your test** — it trained to Gen4 x16 but couldn't hold it. A
-> one-shot "current speed = Gen4 x16" check *passes* that unit; the `LABS` latch *fails* it
-> correctly. This is the canonical **"trains fine, marginal under load/temperature"** catch,
-> and it costs one extra register read. Arm it (W1C) before the soak:
+> **`LBMS` is the gem.** Spec-precisely, `LBMS` (bit 14) is the bit hardware sets when it
+> dropped speed/width **to correct unreliable link operation** — so `LBMS` latching after a
+> soak (with no software-initiated retrain in the window) means the link **couldn't hold the
+> rate** and renegotiated down. `LABS` (bit 15) is the *autonomous, non-reliability* change
+> (power / bandwidth-on-demand). A one-shot "current speed = Gen4 x16" check *passes* a unit
+> that bounced; the `LBMS` latch *fails* it correctly — the canonical **"trains fine, marginal
+> under load/temperature"** catch, for one extra register read. Arm **both** adjacent W1C bits
+> before the soak (and read a set `LBMS` as the reliability tell):
 
 ```bash
 setpci -s $BDF CAP_EXP+0x12.W=0xc000     # write 1 to bits 14,15 -> clear LBMS|LABS (arm)
 #   ... run stress / thermal soak ...
-setpci -s $BDF CAP_EXP+0x12.W            # re-read: bit15(LABS) or bit14(LBMS) set => it renegotiated
+setpci -s $BDF CAP_EXP+0x12.W            # re-read: bit14(LBMS)=reliability downgrade, bit15(LABS)=autonomous; either => renegotiated
 ```
 
 > **Read the latch at the *downstream port*, not the endpoint.** `LBMS`/`LABS` describe a
@@ -344,10 +347,10 @@ setpci -s $BDF CAP_EXP+0x12.W            # re-read: bit15(LABS) or bit14(LBMS) s
 > On the **endpoint** side of the link those bits are `RsvdZ` — they read as 0 forever. Arm
 > and re-read at the DSP's BDF (resolve it with `lspci -t`, or the toolkit's `link_chain()` /
 > `read_port_type()`), not at the endpoint you happen to be probing. Point this check at the
-> wrong end and your autonomous-downgrade detector silently never fires — it polls a
+> wrong end and your bandwidth-change detector silently never fires — it polls a
 > hard-wired 0 and PASSes every soak. (The toolkit was reading `$BDF` at the endpoint; the
-> fix was to resolve the owning downstream port. It's the most common way the `LABS` check
-> gets *written* but never *works*.)
+> fix was to resolve the owning downstream port. It's the most common way the `LBMS`/`LABS`
+> check gets *written* but never *works*.)
 
 What the words actually look like, decoded by hand (Link Status is 16-bit; width field is
 bits [9:4], so x16 = field value 0x10 sits at bit 8 = `0x0100`):
@@ -369,8 +372,8 @@ e104
   0xE104 = 1110 0001 0000 0100b
     [3:0]=0x4 (16 GT/s), [9:4]=0x10 (x16)  -> ends Gen4 x16 again (a snapshot would PASS)
     bit13 (DLLLA) = 1    -> link is up
-    bit14 (LBMS)  = 1    -> bandwidth changed via a managed retrain
-    bit15 (LABS)  = 1    -> AUTONOMOUS bandwidth change -> it could not hold the rate -> FAIL
+    bit14 (LBMS)  = 1    -> dropped speed/width to correct unreliable operation -> could NOT hold the rate -> FAIL
+    bit15 (LABS)  = 1    -> ALSO an autonomous (non-reliability) bandwidth change in the window
 ```
 
 The point: both reads end at "Gen4 x16," so the speed/width fields alone pass the unit. Only
@@ -825,7 +828,7 @@ errors exceed a limit measures the **eye margin directly, on-die, with no oscill
 Timing margining is required at Gen4 (16 GT/s); **voltage margining is mandatory at Gen5
 (32 GT/s)** and up.
 
-**The real Linux tool is `pcilmr`** — part of `pciutils` (≥ 3.13, May 2024; improved in 3.14),
+**The real Linux tool is `pcilmr`** — part of `pciutils` (≥ 3.11, Feb 2024; further developed through 3.13),
 no vendor SDK required. *This is the answer to "how do I margin a lane today."* There is no
 generic kernel sysfs "margin this lane" interface; `pcilmr` drives the capability registers
 from user space and hardcodes vendor quirks (e.g. Ice Lake) a hand-rolled sequence would miss.
@@ -1183,9 +1186,10 @@ How to read it, top to bottom:
   of the two ends, so a GPU advertising 16GT/s behind a root port capped at 8GT/s is a config
   ceiling, not a defect.
 - **`DLActive+ BWMgmt+ ABWMgmt+`** on the `LnkSta` line — `lspci`'s names for **DLLLA**, **LBMS**,
-  and **LABS**. `ABWMgmt+` (LABS) is the gem: this link **autonomously downgraded** — it could
-  not hold the higher rate. A snapshot of "Speed 8GT/s" alone doesn't tell you *whether it ever
-  tried 16*; `ABWMgmt+` does.
+  and **LABS**. `BWMgmt+` (LBMS) is the gem: spec-precisely it's the bit set when hardware
+  dropped speed/width **to correct unreliable operation** — the link could not hold the higher
+  rate. (`ABWMgmt+`/LABS is the *autonomous, non-reliability* change: power / bandwidth-on-demand.)
+  A snapshot of "Speed 8GT/s" alone doesn't tell you *whether it ever tried 16*; `BWMgmt+` does.
 - **`Train-`** is the LT bit at the instant of capture; if it flickers `Train+` across repeated
   reads the link is bouncing through Recovery (the live-retrain tell a single read misses).
 - **`CESta: RxErr+ BadTLP+ ... Timeout+`** — the correctable cluster. RxErr + BadTLP + Replay

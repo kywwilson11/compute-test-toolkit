@@ -211,8 +211,10 @@ load. **Use 4-wire (Kelvin) sensing:**
   Force- o--[R_lead]--+----------+
 ```
 
-At 0.8V nominal with 100A draw and 100mΩ lead resistance, the 2-wire error is 10mV —
-a non-trivial fraction of a 24mV spec window (3% of 0.8V). 4-wire eliminates it.
+At 0.8V nominal with 100A draw through 100 µΩ (0.1 mΩ) of force-path/contact resistance, the
+2-wire error is 10mV — a non-trivial fraction of a 24mV one-sided spec allowance (3% of 0.8V).
+4-wire eliminates it. (100A across the 100mΩ of a DMM lead pair would be a 10V drop, not 10mV —
+the mΩ-scale figure belongs to the no-load lead context, not a 100A force path.)
 
 Additional DMM discipline:
 
@@ -756,8 +758,8 @@ The safety lifecycle phases relevant to a test engineer:
    FMEDA also computes:
    - **Diagnostic coverage (DC):** the fraction of the failure mode's random hardware
      failure rate that the safety mechanisms detect. ISO 26262-5 Table 14 defines three
-     reference levels: Low (<60%), Medium (60% to <90%), and High (>=90%) per the
-     standard. The word "high" in FMEDA reports corresponds to the >=90% tier; claims
+     reference levels: Low (60%), Medium (90%), and High (99%) per the
+     standard. The word "high" in FMEDA reports corresponds to the 99% tier (90% is Medium); claims
      of high DC require design evidence (architecture, test result, or analysis) that
      actually achieves that coverage in the fielded hardware.
    - **SPFM (Single-Point Fault Metric)** and **LFM (Latent Fault Metric):** fractions
@@ -794,7 +796,7 @@ The FMEDA produces a list of failure modes and their safety mechanism coverages.
 each safety mechanism, there must be evidence that it actually functions in every
 shipped unit. That evidence is produced by manufacturing test. The connection is direct:
 
-- **FMEDA says:** "ECC provides high DC (>90%) for single-bit DRAM failures; ECC must
+- **FMEDA says:** "ECC provides high DC (≈99%) for single-bit DRAM failures; ECC must
   function to achieve SPFM >= 99%."
 - **Manufacturing Test (MT) must prove:** ECC is enabled, ECC detects a correctable error (inject one or
   observe during memtest), and the EDAC driver reports it. Reading the corrected-error
@@ -881,7 +883,7 @@ Diagnostic coverage (DC) quantifies how thoroughly safety mechanisms detect the 
 hardware failure modes they are supposed to cover. DC is a calculation, not a
 measurement — but the *inputs* to that calculation must be validated by test:
 
-- If the FMEDA claims high DC (>=90%) for ECC on DRAM, that claim depends on ECC being
+- If the FMEDA claims high DC (≈99%) for ECC on DRAM, that claim depends on ECC being
   enabled, functional, and correctly configured in every shipped unit. Manufacturing
   test provides that validation.
 - If the FMEDA claims DC for a voltage monitor detecting rail out-of-spec events, that
