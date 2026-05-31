@@ -60,7 +60,6 @@ from .pma import (  # noqa: F401
 )
 from .preemption import (  # noqa: F401
     ADD_FRAG_SIZE_BYTES,
-    RESPOND_WINDOW_FRACTION,
     VERIFY_TIME_MAX_MS,
     VERIFY_TIME_MIN_MS,
     Fragment,
@@ -100,7 +99,6 @@ __all__ = [
     "Fragment", "PreemptionHealth", "min_fragment_bytes", "verify_time_valid",
     "run_verify_respond", "check_fragmentation", "check_preemption",
     "ADD_FRAG_SIZE_BYTES", "VERIFY_TIME_MIN_MS", "VERIFY_TIME_MAX_MS",
-    "RESPOND_WINDOW_FRACTION",
     # frer / 802.1CB (Sprint 4.2)
     "SequenceRecovery", "FrerHealth", "check_frer",
     # hot-standby / 802.1ASdm (Sprint 4.2)

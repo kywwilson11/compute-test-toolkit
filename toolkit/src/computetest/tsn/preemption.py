@@ -4,7 +4,7 @@
 The frame-preemption mechanism behind the UNH-IOL Clause-99 conformance groups
 (reception / rejection / transmission / Verify-Tx / Respond / AEC-TLV /
 prioritization): the Verify/Respond handshake (verifyTime 1-128 ms, Respond
-within 0.8x the window), the addFragSize -> minimum-fragment-size mapping
+within the verifyTime window), the addFragSize -> minimum-fragment-size mapping
 (0-3 -> 64/128/192/256 B), and fragment SMD sequencing + mCRC validity. The
 Clause-99 test-ID list (99.1.1-99.7.1) is public and enumerates straight into
 the coverage matrix (Sprint 4.2.12).
@@ -18,7 +18,6 @@ from dataclasses import dataclass, field
 ADD_FRAG_SIZE_BYTES = {0: 64, 1: 128, 2: 192, 3: 256}
 VERIFY_TIME_MIN_MS = 1
 VERIFY_TIME_MAX_MS = 128
-RESPOND_WINDOW_FRACTION = 0.8
 
 
 def min_fragment_bytes(add_frag_size: int) -> int:
@@ -71,13 +70,14 @@ class PreemptionHealth:
 def run_verify_respond(verify_time_ms: float, *, respond_delay_ms: float,
                        got_respond: bool) -> bool:
     """The Verify/Respond handshake succeeds iff verifyTime is valid, a Respond
-    (SMD-R) arrived, and it arrived within ``RESPOND_WINDOW_FRACTION`` of the
-    verifyTime window."""
+    (SMD-R) arrived, and it arrived within the verifyTime window. Per 802.1Qbu /
+    802.3br the Respond must be received before verifyTime expires — anywhere in
+    [0, verifyTime], not a sub-fraction of it."""
     if not verify_time_valid(verify_time_ms):
         return False
     if not got_respond:
         return False
-    return respond_delay_ms <= RESPOND_WINDOW_FRACTION * verify_time_ms
+    return 0 <= respond_delay_ms <= verify_time_ms
 
 
 def check_fragmentation(fragments: Sequence[Fragment],
@@ -89,6 +89,8 @@ def check_fragmentation(fragments: Sequence[Fragment],
     if not fragments:
         return False, ["no fragments"]
     floor = min_fragment_bytes(add_frag_size)
+    if len(fragments) < 2:
+        notes.append("a fragmented frame needs >= 2 fragments")
     if not fragments[0].is_start:
         notes.append("first fragment is not SMD-S")
     if any(f.is_start for f in fragments[1:]):
