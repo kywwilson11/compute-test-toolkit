@@ -1160,7 +1160,20 @@ Grandmaster (GM)          Slave (boundary/ordinary clock)
 ```
 
 The slave then applies this offset to slew its clock (gradually adjusting the clock rate
-rather than stepping, to avoid timestamp discontinuities). Hardware timestamping is
+rather than stepping, to avoid timestamp discontinuities).
+
+> **gPTP uses *peer* delay, and the rate-ratio scales the responder's turnaround.** The
+> formula above is the end-to-end (Delay_Request) mechanism. **802.1AS** instead uses the
+> **peer-delay (P2P)** mechanism between adjacent ports: the requestor sends Pdelay_Req
+> ($t_1$), the responder timestamps receive ($t_2$) and transmit ($t_3$), the requestor
+> receives the response ($t_4$), and
+> $\text{meanLinkDelay} = \big[(t_4-t_1) - r\,(t_3-t_2)\big]/2$, where $r$ is the
+> **neighborRateRatio**. The subtlety that's easy to get backwards: $r$ multiplies the
+> *responder's* turnaround $(t_3-t_2)$ — which is measured in the neighbor's clock — to
+> convert it into the local timebase; it is **not** applied to the round-trip $(t_4-t_1)$.
+> At a non-unity ratio the two placements give different delays, so this is a real
+> correctness trap (an automated audit even "corrected" the right formula to the wrong one).
+> When in doubt the reference is `linuxptp`'s `tsproc`: `delay = ((t2-t3)*rr + (t4-t1))/2`. Hardware timestamping is
 critical: software timestamps have jitter of tens of microseconds; hardware timestamps
 (taken at the moment the SFD crosses the wire at the NIC's MAC layer) have jitter of
 nanoseconds.

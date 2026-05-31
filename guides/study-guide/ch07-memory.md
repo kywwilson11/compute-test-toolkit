@@ -79,6 +79,17 @@ and how you read a failure:
 > count" — lean harder on the *stress* (miscompare detection in `stressapptest`) to provoke
 > the cell past what ODECC can hide.
 
+> **Reading "is this module ECC?" from the SPD — DDR5 moved the byte.** When a tool reads the
+> module's SPD EEPROM to record density/ECC for the RAS profile, the **SPD layout changed
+> from DDR4 to DDR5**. DDR4 carried the bus-width extension (the ECC indicator) in SPD
+> **byte 13**; DDR5 (JESD400-5) puts the Memory Channel Bus Width — bus-width extension at
+> **byte 235, bits [4:3]** — and byte 13 is now thermal/refresh options. A parser ported from
+> DDR4 that still reads byte 13 reports ECC from an unrelated field on a DDR5 module, and may
+> not read far enough into the (longer) DDR5 SPD to reach byte 235 at all. Read the
+> generation's byte and guard the buffer length. (A real DDR5-SPD audit find — and a textbook
+> *tautology trap*: the test corpus had been hand-built to satisfy the byte-13 read, so it
+> stayed green while decoding the wrong byte.)
+
 ### The memory controller (where the counters come from)
 
 On modern server silicon the **integrated memory controller (iMC)** lives on the CPU die,

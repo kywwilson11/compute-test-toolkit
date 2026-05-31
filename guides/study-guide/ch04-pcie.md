@@ -339,6 +339,16 @@ setpci -s $BDF CAP_EXP+0x12.W=0xc000     # write 1 to bits 14,15 -> clear LBMS|L
 setpci -s $BDF CAP_EXP+0x12.W            # re-read: bit15(LABS) or bit14(LBMS) set => it renegotiated
 ```
 
+> **Read the latch at the *downstream port*, not the endpoint.** `LBMS`/`LABS` describe a
+> *link*, and a link is owned by the **downstream port** above it (root port or switch DSP).
+> On the **endpoint** side of the link those bits are `RsvdZ` — they read as 0 forever. Arm
+> and re-read at the DSP's BDF (resolve it with `lspci -t`, or the toolkit's `link_chain()` /
+> `read_port_type()`), not at the endpoint you happen to be probing. Point this check at the
+> wrong end and your autonomous-downgrade detector silently never fires — it polls a
+> hard-wired 0 and PASSes every soak. (The toolkit was reading `$BDF` at the endpoint; the
+> fix was to resolve the owning downstream port. It's the most common way the `LABS` check
+> gets *written* but never *works*.)
+
 What the words actually look like, decoded by hand (Link Status is 16-bit; width field is
 bits [9:4], so x16 = field value 0x10 sits at bit 8 = `0x0100`):
 

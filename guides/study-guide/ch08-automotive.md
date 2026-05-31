@@ -140,6 +140,17 @@ variation, min/max PoC load). That number is your acceptance bar: GMSL is essent
 error-free pipe when healthy, so any nonzero decode/CRC error count on a soak is a finding,
 not noise.
 
+> **Two ways an eye/channel check fakes a pass — both real audit finds.** (1) If the
+> eye-opening-monitor verdict compares against a *fixed default* threshold instead of the
+> **threshold you configured**, a tightened limit doesn't actually gate — the check reports
+> PASS at a margin you meant to fail. Make the verdict read the per-link threshold you set.
+> (2) Channel-compliance against the S-parameter masks (insertion/return loss, e.g. ADI's
+> AN-2585) is meaningless without the *real* mask numbers; if you don't have them, the check
+> must **raise / refuse to pass**, never quietly pass against a placeholder mask. A green
+> "channel compliant" with no mask behind it is the worst kind of result — confidently wrong,
+> and it ships a marginal camera link. "I don't have the limit yet" is an honest skip; a
+> faked pass is a latent field failure.
+
 ### Forward and reverse control channels
 
 GMSL is **full-duplex on one conductor**. The two directions are:

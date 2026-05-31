@@ -322,6 +322,17 @@ nvme self-test-log    /dev/nvme0 -o json  # POLL: percent complete + pass/fail r
 > `poll_self_test()` polls `self_test_log()` on an interval until `in_progress` clears or a
 > timeout fires, and only then reads the result code; the gate is `result == 0`.
 
+> **And the parser must not default a missing result to PASS.** The trap above has a sharper
+> edge in the *parsing* code. `nvme-cli`'s JSON key names drift across versions (the
+> self-test-log array and the result field have been spelled differently), so a parser that
+> does `result = entry.get("Self Test Result", 0)` returns **0 (= passed)** the moment the
+> key name doesn't match — a **failing DST silently reads as PASS**. Two rules: (1) if the
+> expected keys are absent, **raise**, don't default to a pass; (2) pin the exact JSON shape
+> with a captured corpus (`nvme self-test-log -o json` from your deployed version, one
+> passing and one failing entry) so a key rename fails a replay test, not a DUT on the line.
+> "Default the absent oracle to good" is the same wrong-PASS pattern the toolkit's audit
+> found here — the fix is to fail loud, then pin the format.
+
 Real `nvme self-test-log` output mid-test and after a clean pass:
 
 ```text

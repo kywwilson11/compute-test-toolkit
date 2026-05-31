@@ -917,6 +917,17 @@ $\%\text{GR\&R} = 25\%$ (marginal). $\sigma_\text{part} = \sqrt{1.00^2 - 0.25^2}
 $\text{ndc} = 1.41(0.968/0.25) = 5.46 \to 5$ — just acceptable. The lesson connects
 straight to *Setting limits and guardbands*: that 0.25 of gauge sigma is the uncertainty your guardband must cover.
 
+> **Pin the GR&R math to a worked example, and demand $\ge 2$ operators.** A GR&R
+> *implementation* is easy to get subtly wrong: an EMS-divisor swap (dividing a variance
+> component by the wrong $o\cdot r$ vs $p\cdot r$) shifts the part/operator split *without*
+> breaking the sum-of-squares decomposition identity — so a test that only checks "the SS
+> components add up to the total" stays green on a wrong answer. Pin the full ANOVA table
+> (SS / MS / F / variance components / %GR&R) to a **published AIAG worked example** so a
+> divisor drift fails the test against absolute numbers. And reproducibility (AV) is **not
+> estimable with one operator** — a single-appraiser study has zero operator degrees of
+> freedom; reject $o<2$ rather than silently reporting AV $=0$ and "capable." (Both were
+> real gaps the toolkit's MSA audit closed.)
+
 ### Bland-Altman and tester-to-tester / Contract Manufacturer correlation
 
 GR&R answers "is this one station's measurement system capable?" The next question is
@@ -958,6 +969,19 @@ a new tester against the incumbent before it joins the fleet.
 > Two testers tracking each other perfectly with a fixed offset have $r\approx1$ and a
 > non-zero bias; Bland-Altman shows the offset, $r$ hides it. Report bias and LoA for
 > tester-to-tester and CM correlation, not $r$.
+
+> **The CI on the bias is a *mean* — use Student-$t$, not $1.96$.** The limits of agreement
+> $\bar d \pm 1.96\,s_d$ are a *reference interval* (where ~95% of differences fall), so the
+> normal $1.96$ is correct there. But the **confidence interval on the bias itself** is a CI
+> on a mean, so it takes $t_{0.975,\,n-1}$: $12.7$ at $n=2$, $2.23$ at $n=10$, reaching
+> $1.96$ only as $n\to\infty$. Using $1.96$ for a small-$n$ bias CI quietly understates it.
+> The slope/intercept complement to Bland-Altman is **Deming regression** (an
+> errors-in-variables fit, because *both* testers are noisy — ordinary least squares assumes
+> a perfect $x$ and is wrong here). If you bootstrap a Deming CI, **drop degenerate
+> resamples**: a resample whose $x$-values are all equal has zero covariance and no defined
+> slope; counting it as a spurious slope-$0$ "fit" drags the CI's lower edge to $0$, so the
+> slope CI spuriously contains $1$ and you falsely conclude the two testers agree. (That
+> false-agreement-at-small-$n$ bug was a real find in the toolkit's station-correlation audit.)
 
 ---
 

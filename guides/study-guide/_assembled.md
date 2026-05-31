@@ -6233,6 +6233,16 @@ setpci -s $BDF CAP_EXP+0x12.W=0xc000 # write 1 to bits 14,15 -> clear LBMS|LABS 
 setpci -s $BDF CAP_EXP+0x12.W # re-read: bit15(LABS) or bit14(LBMS) set => it renegotiated
 ```
 
+> **Read the latch at the *downstream port*, not the endpoint.** `LBMS`/`LABS` describe a
+> *link*, and a link is owned by the **downstream port** above it (root port or switch DSP).
+> On the **endpoint** side of the link those bits are `RsvdZ` — they read as 0 forever. Arm
+> and re-read at the DSP's BDF (resolve it with `lspci -t`, or the toolkit's `link_chain()` /
+> `read_port_type()`), not at the endpoint you happen to be probing. Point this check at the
+> wrong end and your autonomous-downgrade detector silently never fires — it polls a
+> hard-wired 0 and PASSes every soak. (The toolkit was reading `$BDF` at the endpoint; the
+> fix was to resolve the owning downstream port. It's the most common way the `LABS` check
+> gets *written* but never *works*.)
+
 What the words actually look like, decoded by hand (Link Status is 16-bit; width field is
 bits [9:4], so x16 = field value 0x10 sits at bit 8 = `0x0100`):
 
@@ -7817,6 +7827,17 @@ nvme self-test-log /dev/nvme0 -o json # POLL: percent complete + pass/fail resul
 > `poll_self_test()` polls `self_test_log()` on an interval until `in_progress` clears or a
 > timeout fires, and only then reads the result code; the gate is `result == 0`.
 
+> **And the parser must not default a missing result to PASS.** The trap above has a sharper
+> edge in the *parsing* code. `nvme-cli`'s JSON key names drift across versions (the
+> self-test-log array and the result field have been spelled differently), so a parser that
+> does `result = entry.get("Self Test Result", 0)` returns **0 (= passed)** the moment the
+> key name doesn't match — a **failing DST silently reads as PASS**. Two rules: (1) if the
+> expected keys are absent, **raise**, don't default to a pass; (2) pin the exact JSON shape
+> with a captured corpus (`nvme self-test-log -o json` from your deployed version, one
+> passing and one failing entry) so a key rename fails a replay test, not a DUT on the line.
+> "Default the absent oracle to good" is the same wrong-PASS pattern the toolkit's audit
+> found here — the fix is to fail loud, then pin the format.
+
 Real `nvme self-test-log` output mid-test and after a clean pass:
 
 ```text
@@ -9004,6 +9025,17 @@ and how you read a failure:
 > count" — lean harder on the *stress* (miscompare detection in `stressapptest`) to provoke
 > the cell past what ODECC can hide.
 
+> **Reading "is this module ECC?" from the SPD — DDR5 moved the byte.** When a tool reads the
+> module's SPD EEPROM to record density/ECC for the RAS profile, the **SPD layout changed
+> from DDR4 to DDR5**. DDR4 carried the bus-width extension (the ECC indicator) in SPD
+> **byte 13**; DDR5 (JESD400-5) puts the Memory Channel Bus Width — bus-width extension at
+> **byte 235, bits [4:3]** — and byte 13 is now thermal/refresh options. A parser ported from
+> DDR4 that still reads byte 13 reports ECC from an unrelated field on a DDR5 module, and may
+> not read far enough into the (longer) DDR5 SPD to reach byte 235 at all. Read the
+> generation's byte and guard the buffer length. (A real DDR5-SPD audit find — and a textbook
+> *tautology trap*: the test corpus had been hand-built to satisfy the byte-13 read, so it
+> stayed green while decoding the wrong byte.)
+
 ## The memory controller (where the counters come from)
 
 On modern server silicon the **integrated memory controller (iMC)** lives on the CPU die,
@@ -9564,6 +9596,17 @@ worst-case conditions (longest cable, aged cable, temperature extremes, PCB impe
 variation, min/max PoC load). That number is your acceptance bar: GMSL is essentially an
 error-free pipe when healthy, so any nonzero decode/CRC error count on a soak is a finding,
 not noise.
+
+> **Two ways an eye/channel check fakes a pass — both real audit finds.** (1) If the
+> eye-opening-monitor verdict compares against a *fixed default* threshold instead of the
+> **threshold you configured**, a tightened limit doesn't actually gate — the check reports
+> PASS at a margin you meant to fail. Make the verdict read the per-link threshold you set.
+> (2) Channel-compliance against the S-parameter masks (insertion/return loss, e.g. ADI's
+> AN-2585) is meaningless without the *real* mask numbers; if you don't have them, the check
+> must **raise / refuse to pass**, never quietly pass against a placeholder mask. A green
+> "channel compliant" with no mask behind it is the worst kind of result — confidently wrong,
+> and it ships a marginal camera link. "I don't have the limit yet" is an honest skip; a
+> faked pass is a latent field failure.
 
 ### Forward and reverse control channels
 
@@ -12691,6 +12734,17 @@ $\%\text{GR\&R} = 25\%$ (marginal). $\sigma_\text{part} = \sqrt{1.00^2 - 0.25^2}
 $\text{ndc} = 1.41(0.968/0.25) = 5.46 \to 5$ — just acceptable. The lesson connects
 straight to *Setting limits and guardbands*: that 0.25 of gauge sigma is the uncertainty your guardband must cover.
 
+> **Pin the GR&R math to a worked example, and demand $\ge 2$ operators.** A GR&R
+> *implementation* is easy to get subtly wrong: an EMS-divisor swap (dividing a variance
+> component by the wrong $o\cdot r$ vs $p\cdot r$) shifts the part/operator split *without*
+> breaking the sum-of-squares decomposition identity — so a test that only checks "the SS
+> components add up to the total" stays green on a wrong answer. Pin the full ANOVA table
+> (SS / MS / F / variance components / %GR&R) to a **published AIAG worked example** so a
+> divisor drift fails the test against absolute numbers. And reproducibility (AV) is **not
+> estimable with one operator** — a single-appraiser study has zero operator degrees of
+> freedom; reject $o<2$ rather than silently reporting AV $=0$ and "capable." (Both were
+> real gaps the toolkit's MSA audit closed.)
+
 ### Bland-Altman and tester-to-tester / Contract Manufacturer correlation
 
 GR&R answers "is this one station's measurement system capable?" The next question is
@@ -12732,6 +12786,19 @@ a new tester against the incumbent before it joins the fleet.
 > Two testers tracking each other perfectly with a fixed offset have $r\approx1$ and a
 > non-zero bias; Bland-Altman shows the offset, $r$ hides it. Report bias and LoA for
 > tester-to-tester and CM correlation, not $r$.
+
+> **The CI on the bias is a *mean* — use Student-$t$, not $1.96$.** The limits of agreement
+> $\bar d \pm 1.96\,s_d$ are a *reference interval* (where ~95% of differences fall), so the
+> normal $1.96$ is correct there. But the **confidence interval on the bias itself** is a CI
+> on a mean, so it takes $t_{0.975,\,n-1}$: $12.7$ at $n=2$, $2.23$ at $n=10$, reaching
+> $1.96$ only as $n\to\infty$. Using $1.96$ for a small-$n$ bias CI quietly understates it.
+> The slope/intercept complement to Bland-Altman is **Deming regression** (an
+> errors-in-variables fit, because *both* testers are noisy — ordinary least squares assumes
+> a perfect $x$ and is wrong here). If you bootstrap a Deming CI, **drop degenerate
+> resamples**: a resample whose $x$-values are all equal has zero covariance and no defined
+> slope; counting it as a spurious slope-$0$ "fit" drags the CI's lower edge to $0$, so the
+> slope CI spuriously contains $1$ and you falsely conclude the two testers agree. (That
+> false-agreement-at-small-$n$ bug was a real find in the toolkit's station-correlation audit.)
 
 ---
 
@@ -14259,7 +14326,20 @@ Grandmaster (GM) Slave (boundary/ordinary clock)
 ```
 
 The slave then applies this offset to slew its clock (gradually adjusting the clock rate
-rather than stepping, to avoid timestamp discontinuities). Hardware timestamping is
+rather than stepping, to avoid timestamp discontinuities).
+
+> **gPTP uses *peer* delay, and the rate-ratio scales the responder's turnaround.** The
+> formula above is the end-to-end (Delay_Request) mechanism. **802.1AS** instead uses the
+> **peer-delay (P2P)** mechanism between adjacent ports: the requestor sends Pdelay_Req
+> ($t_1$), the responder timestamps receive ($t_2$) and transmit ($t_3$), the requestor
+> receives the response ($t_4$), and
+> $\text{meanLinkDelay} = \big[(t_4-t_1) - r\,(t_3-t_2)\big]/2$, where $r$ is the
+> **neighborRateRatio**. The subtlety that's easy to get backwards: $r$ multiplies the
+> *responder's* turnaround $(t_3-t_2)$ — which is measured in the neighbor's clock — to
+> convert it into the local timebase; it is **not** applied to the round-trip $(t_4-t_1)$.
+> At a non-unity ratio the two placements give different delays, so this is a real
+> correctness trap (an automated audit even "corrected" the right formula to the wrong one).
+> When in doubt the reference is `linuxptp`'s `tsproc`: `delay = ((t2-t3)*rr + (t4-t1))/2`. Hardware timestamping is
 critical: software timestamps have jitter of tens of microseconds; hardware timestamps
 (taken at the moment the SFD crosses the wire at the NIC's MAC layer) have jitter of
 nanoseconds.
@@ -16747,7 +16827,16 @@ Two patterns the Zoox toolkit uses heavily:
 - **`pytest-timeout`** — a global timeout that kills a hung test. Mandatory the day
  you have any real-hardware or socket-bound test; without it, a wedge in production
  code wedges CI until the runner times the whole job out, and you lose the
- diagnostic.
+ diagnostic. *Concretely:* during the 2026 audit a new thermal-chamber settle-poll
+ spun to its 600-second timeout against a mock that never reported "settled," and the
+ whole suite hung — `--timeout=60` would have failed *that test* in a minute with its
+ name, instead of a silent 10-minute wall. The toolkit doesn't ship `pytest-timeout`
+ yet; that hang is the argument for adding it. Two lessons it drove home: a hang is not
+ a slow test (you need a per-test deadline, not a bigger job timeout), and **the
+ per-step "just run the tests I touched" gate could not see it** — only the *full*
+ suite did. Run the whole suite before you trust the green; targeted gates hide
+ cross-test interactions (that same audit had a second one — a corpus count that only
+ broke when an unrelated module's fix changed a shared expectation).
 - **`hypothesis`** — property-based testing. Doesn't conflict with pytest;
  registers as a plugin and adds the `@given(...)` decorator.
 
@@ -17087,9 +17176,9 @@ exclude_lines = [
 ```
 
 Then `# pragma: no cover` on the real path's branch and the gate counts only what
-*should* be covered. The toolkit sits at 98 % branch coverage with this rule;
-without the rule it would sit at ~80 % and everyone would learn to ignore the
-warning, which is much worse than the 98 %.
+*should* be covered. The toolkit sits at ~97 % branch coverage with this rule;
+without the rule it would sit far lower and everyone would learn to ignore the
+warning, which is much worse than the honest 97 %.
 
 ### `fail_under` is the gate, not the goal
 
@@ -17397,6 +17486,52 @@ a PR; the parser test that fails on the new corpus is your warning to update the
 parser. **You learn about a format change before manufacturing does**, on the
 tool maintainer's release rhythm, not yours.
 
+### The tautology trap — the oracle must be the spec, not the code
+
+ asked "is each covered line *asserted* on?" This goes one level deeper: **what is the
+assertion compared against?** A test's *oracle* is the source of its expected value, and
+the single most common way a green suite hides a spec-*wrong* program is an oracle
+**derived from the implementation itself**:
+
+- A corpus `expected.json` generated by *running the parser you're testing* and saving
+ its output. The replay then asserts the parser reproduces what the parser produced — it
+ can never fail, and it freezes in whatever bug the parser had the day you captured it.
+- A round-trip: `decode(encode(x)) == x`. That proves the codec is self-*consistent*, not
+ that the wire format is *correct*. A register field packed at the wrong bit offset
+ round-trips perfectly and ships.
+- A "golden" number copied from the code's current output instead of computed from the
+ datasheet.
+
+Each passes on day one and stays green through every refactor — while the device on the
+bench, which speaks the *actual* spec, is decoded wrong. The toolkit's 2026 audit found
+dozens: a DDR5 SPD corpus built to satisfy a parser reading the wrong byte (ECC at DDR4's
+byte 13, not DDR5's byte 235); an NVMe-MI header round-trip that "passed" with every field
+at the wrong bit position; CXL error-bit maps asserted against the code's own off-by-two
+table. **Anchor the oracle outside the code:**
+
+- **Golden vectors from the standard.** Hand-derive the expected bytes from the spec
+ figure or a published worked example, write them as literals, assert the code reproduces
+ *those*. The toolkit re-anchored its NVMe-MI test to a golden NMP byte (`0x09` for a
+ request / MI-command / CSI=1) computed from the spec, not from the encoder.
+- **A second, independent implementation.** Cross-check against `linuxptp`, the Linux
+ kernel decode tables, `libnvme`, QEMU's QAPI schema. Agreement with an independent source
+ is evidence; agreement with yourself is not.
+- **A real-hardware capture** whose ground truth is hand-verified once, replayed
+ forever.
+
+Litmus test for any test you inherit: *if the implementation were subtly wrong, could this
+test still pass?* If yes, its oracle is the code, and it is theater.
+
+> **A tool that flags a bug is itself a fallible oracle — verify before you "fix."** When
+> you run a static analyzer, a coverage report, or (as the toolkit did) a large automated
+> audit over your own test program, the findings are *hypotheses*, not facts. The toolkit's
+> audit had a meaningful **false-positive rate** — several "bugs" were the audit
+> misreading a spec (a density table that was already correct, a gPTP delay formula that
+> matched `linuxptp`, a coherency rule that was right). Applying those blindly would have
+> *introduced* the bug the audit imagined. Verify every finding against the authoritative
+> source before changing code; a test engineer who "fixes" an unverified finding has just
+> shipped a regression with a confident commit message.
+
 ---
 
 ## The pipeline you build at the bench (a concrete worked example)
@@ -17489,7 +17624,7 @@ That is what every section in this chapter, taken seriously, buys: **the budget 
 refactor.** A test program isn't done when it works; it's done when the next person
 can change it. The path to "the next person can change it" is the stack above.
 
-The Zoox compute toolkit's metrics today — 434 tests, 98 % branch coverage,
+The Zoox compute toolkit's metrics today — ~1,166 tests, 97 % branch coverage,
 ruff + mypy clean, a nightly mutation lane, three CI workflows totaling 11
 build-gate minutes per push — are not the goal. **Trust** is the goal. The metrics
 are how you and the rest of the manufacturing organization decide whether to trust
