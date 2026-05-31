@@ -7,9 +7,23 @@ read/clear path (``cxl/ras.py`` W1C, ``cxl/poison.py``, ``cxl/events.py``) reads
 real QEMU-generated state for hardware-free CI. Uses QEMU's ``cxl-inject-*`` QMP
 commands.
 
-AUDIT NOTE: confirm QEMU's cxl_type3 actually emulates the UE/CE bits, event
-types, and maintenance commands this toolkit asserts — the Sprint-2 x86-TCG AER
-bug showed emulator fidelity cannot be assumed.
+SCHEMA: every ``cxl-inject-*`` arg list below is reconciled against QEMU
+``qapi/cxl.json`` @ tag v11.0.0 (the version the fake QMP server's greeting
+reports). Per-command required (non-optional) members:
+  - cxl-inject-poison: path, start, length
+  - cxl-inject-uncorrectable-errors: path, errors
+  - cxl-inject-correctable-error: path, type
+  - cxl-inject-general-media-event: path, log, flags, dpa, descriptor, type,
+    transaction-type, sub-type (General-Media optionals: channel, rank,
+    device, component-id, ...).
+
+AUDIT NOTE (still open — needs an on-device run): this only reconciles the QMP
+ARG LISTS against a static schema snapshot. It does NOT confirm that QEMU's
+cxl_type3 actually emulates the UE/CE bits, event types, and maintenance
+commands this toolkit asserts (the Sprint-2 x86-TCG AER bug showed emulator
+fidelity cannot be assumed), nor does it pin a live ``query-qmp-schema``
+snapshot to the exact running qemu-system build — do both against the target
+emulator before trusting injected state.
 
 Pure Python; the command construction is exercised against a fake QMP server in
 tests/test_cxl_qmp_inject.py. The QMP transport is the ``QMPClient`` from
@@ -44,7 +58,33 @@ class CxlInjector:
                                  type=error_type)
 
     def inject_general_media_event(self, path: str, *, log: str, flags: int,
-                                   dpa: int):
-        """Inject a General Media event record into the given event ``log``."""
-        return self._qmp.execute("cxl-inject-general-media-event", path=path,
-                                 log=log, flags=flags, dpa=dpa)
+                                   dpa: int, descriptor: int, type_: int,
+                                   transaction_type: int, sub_type: int,
+                                   channel: int | None = None,
+                                   rank: int | None = None,
+                                   device: int | None = None,
+                                   component_id: str | None = None):
+        """Inject a General Media event record into the given event ``log``.
+
+        Sends every member ``cxl-inject-general-media-event`` requires per QEMU
+        ``qapi/cxl.json`` @ v11.0.0 (struct ``CXLGeneralMediaEvent`` over
+        ``CXLCommonEventBase``): path, log, flags, dpa, descriptor, type,
+        transaction-type, sub-type. The General-Media optionals (channel, rank,
+        device, component-id) are sent only when supplied. ``type_`` maps to the
+        reserved ``type`` QMP key; the args dict is built explicitly so the
+        hyphenated keys (``transaction-type``, ``sub-type``, ``component-id``)
+        reach QEMU instead of being dropped/renamed by ``**kwargs``.
+        """
+        args: dict = {"path": path, "log": log, "flags": flags, "dpa": dpa,
+                      "descriptor": descriptor, "type": type_,
+                      "transaction-type": transaction_type,
+                      "sub-type": sub_type}
+        if channel is not None:
+            args["channel"] = channel
+        if rank is not None:
+            args["rank"] = rank
+        if device is not None:
+            args["device"] = device
+        if component_id is not None:
+            args["component-id"] = component_id
+        return self._qmp.execute("cxl-inject-general-media-event", **args)

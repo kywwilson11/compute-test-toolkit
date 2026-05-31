@@ -58,8 +58,17 @@ class TestCxlInject:
             inj = cxl_inject.CxlInjector(q)
             inj.inject_correctable("/dev", error_type="crc-threshold")
             inj.inject_general_media_event("/dev", log="informational", flags=0,
-                                           dpa=0x2000)
+                                           dpa=0x2000, descriptor=0x01,
+                                           type_=0x00, transaction_type=0x01,
+                                           sub_type=0x00)
         execs = [c.get("execute") for c in server.commands]
         assert "cxl-inject-correctable-error" in execs
         assert "cxl-inject-general-media-event" in execs
-        assert _cmd(server, "cxl-inject-general-media-event")["arguments"]["dpa"] == 0x2000
+        # Assert the COMPLETE required-arg set per qapi/cxl.json@v11.0.0
+        # (CXLGeneralMediaEvent over CXLCommonEventBase): a missing required
+        # key is what real QEMU rejects, so the old dpa-only assertion was
+        # tautological. Optionals (channel/rank/device/component-id) omitted.
+        assert _cmd(server, "cxl-inject-general-media-event")["arguments"] == {
+            "path": "/dev", "log": "informational", "flags": 0, "dpa": 0x2000,
+            "descriptor": 0x01, "type": 0x00, "transaction-type": 0x01,
+            "sub-type": 0x00}

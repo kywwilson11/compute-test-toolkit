@@ -29,6 +29,19 @@ class FakeQMPServer:
     GREETING = {"QMP": {"version": {"qemu": {"major": 11, "minor": 0, "micro": 0},
                                     "package": "fake"}, "capabilities": []}}
 
+    # Required (non-optional) QMP members per QEMU qapi/cxl.json @ v11.0.0,
+    # the version this fake's greeting reports (major 11, minor 0). Used to
+    # reject a command missing a required member the way real QEMU does, so an
+    # under-built cxl-inject-* call fails the test instead of silently passing.
+    _CXL_REQUIRED = {
+        "cxl-inject-poison": ("path", "start", "length"),
+        "cxl-inject-uncorrectable-errors": ("path", "errors"),
+        "cxl-inject-correctable-error": ("path", "type"),
+        "cxl-inject-general-media-event": (
+            "path", "log", "flags", "dpa", "descriptor", "type",
+            "transaction-type", "sub-type"),
+    }
+
     def __init__(self):
         self._srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self._srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -62,6 +75,19 @@ class FakeQMPServer:
                     else:                          # QEMU success echoes "OK id: <id> ..."
                         conn.sendall(b'{"return": "OK id: dev root bus: 0000:00, '
                                      b'bus: 0 devfn: 3.0"}\r\n')
+                elif msg.get("execute") in self._CXL_REQUIRED:
+                    # Mimic QEMU's qmp input visitor: a missing required member
+                    # is rejected with GenericError before any injection.
+                    args = msg.get("arguments", {})
+                    missing = next((m for m in self._CXL_REQUIRED[msg["execute"]]
+                                    if m not in args), None)
+                    if missing is not None:
+                        conn.sendall(
+                            b'{"error": {"class": "GenericError", "desc": '
+                            + json.dumps(f"Parameter '{missing}' is missing").encode()
+                            + b'}}\r\n')
+                    else:
+                        conn.sendall(b'{"return": {}}\r\n')
                 else:
                     conn.sendall(b'{"return": {}}\r\n')
 
