@@ -30,6 +30,26 @@ def test_poll_self_test_completes_on_mock():
     assert log["in_progress"] is False and log["passed"] is True
 
 
+def test_temp_gate_passes_cold_and_zero_readings():
+    # The temp gate must NOT false-FAIL a valid cold reading: 0C and sub-zero composite
+    # temperatures (signed, NVMe-MI ctemp) are cold-chamber-valid, not over-temperature.
+    base = {"critical_warning": 0, "available_spare": 100, "percentage_used": 0,
+            "media_errors": 0, "num_err_log_entries": 0, "power_on_hours": 1}
+    assert nvme._apply_limits({**base, "temperature": 0}, 70, 50)["temp<=70"] is True
+    assert nvme._apply_limits({**base, "temperature": -5}, 70, 50)["temp<=70"] is True
+    # and a genuinely hot drive still fails
+    assert nvme._apply_limits({**base, "temperature": 96}, 70, 50)["temp<=70"] is False
+
+
+def test_temp_gate_fails_when_temperature_key_absent():
+    # Missing temperature is fail-present (can't confirm), never a silent pass and never
+    # a false over-temp FAIL via a spurious lower bound.
+    checks = nvme._apply_limits({"critical_warning": 0, "available_spare": 100,
+                                 "percentage_used": 0, "media_errors": 0,
+                                 "num_err_log_entries": 0, "power_on_hours": 1}, 70, 50)
+    assert checks["temp<=70"] is False
+
+
 def test_normalize_smart_keys_maps_nvme_cli_abbreviations():
     # nvme-cli's JSON uses avail_spare / spare_thresh / percent_used; the checks read
     # the canonical names. Without normalization a healthy drive false-FAILs.

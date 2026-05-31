@@ -16,6 +16,7 @@ import shutil
 import subprocess
 import time
 from dataclasses import dataclass, field
+from typing import Any
 
 from ..backend import mock_mode
 
@@ -60,7 +61,7 @@ def _apply_limits(smart: dict, max_temp_c: int, max_power_on_hours: int) -> dict
         "no_error_log_entries": smart.get("num_err_log_entries", 0) == 0,
         "percentage_used<2": smart.get("percentage_used", 0) < 2,
         "available_spare>=100": smart.get("available_spare", 0) >= 100,
-        f"temp<={max_temp_c}": 0 < smart.get("temperature", 0) <= max_temp_c,
+        f"temp<={max_temp_c}": "temperature" in smart and smart["temperature"] <= max_temp_c,
         f"power_on_hours<={max_power_on_hours}":
             smart.get("power_on_hours", 0) <= max_power_on_hours,
     }
@@ -166,15 +167,42 @@ def self_test_log(device: str, *, mock: bool | None = None) -> dict:
     return _real_self_test_log(device)  # pragma: no cover - real-hw path
 
 
+def _first_present(d: dict, *keys: str) -> Any:  # pragma: no cover - real-hw path
+    """Value for the first key that is *present* (presence, not truthiness: a real 0 must
+    win over a fallback) -- or None if none of the keys exist."""
+    for k in keys:
+        if k in d:
+            return d[k]
+    return None
+
+
 def _real_self_test_log(device: str) -> dict:  # pragma: no cover - real-hw path
     raw = json.loads(subprocess.run(["nvme", "self-test-log", device, "-o", "json"],
                                     capture_output=True, text=True, check=True).stdout)
-    cur = raw.get("current_operation", 0)
-    entry = (raw.get("Self-test Log") or raw.get("logs") or [{}])[0]
-    result = entry.get("result", entry.get("Self Test Result", 0)) or 0
-    in_progress = cur not in (0, 0xF)
-    return {"percent": raw.get("completion", 100), "in_progress": in_progress,
-            "result": result, "passed": (not in_progress) and result == 0}
+    # nvme-cli json_self_test_log keys, verbatim across v2.8 (deployed)/v2.11/master:
+    # "Current Device Self-Test Operation", "Current Device Self-Test Completion",
+    # "List of Valid Reports"[]."Self test result" (== dsts & 0xf). FLAG: pinned from
+    # source, not yet from a committed deployed-drive capture -- keep a tolerant fallback
+    # over the older guessed spellings, but NEVER default a missing op/array/result to PASS.
+    cur = _first_present(raw, "Current Device Self-Test Operation", "current_operation")
+    completion = _first_present(raw, "Current Device Self-Test Completion",
+                                "current_completion", "completion")
+    reports = _first_present(raw, "List of Valid Reports", "Self-test Log", "logs")
+    if cur is None or not isinstance(reports, list) or not reports:
+        raise RuntimeError(
+            f"nvme self-test-log: unrecognized JSON schema (top-level keys={sorted(raw)}); "
+            "cannot determine the self-test result -- refusing to report PASS")
+    entry = reports[0]
+    result = _first_present(entry, "Self test result", "result", "Self Test Result")
+    if result is None:
+        raise RuntimeError(
+            "nvme self-test-log: latest report entry has no 'Self test result' "
+            "-- refusing to report PASS")
+    result = int(result) & 0xF                       # lower nibble = DSTS result code
+    in_progress = (int(cur) & 0xF) != 0              # spec: op status is bits 3:0, 0h = idle
+    return {"percent": int(completion) if completion is not None else 0,
+            "in_progress": in_progress, "result": result,
+            "passed": (not in_progress) and result == 0}
 
 
 def poll_self_test(device: str, *, mock: bool | None = None, timeout: float = 120.0,
