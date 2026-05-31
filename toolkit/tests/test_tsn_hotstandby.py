@@ -33,6 +33,12 @@ class TestHotStandbyFailover:
                                        te_samples_ns=[50.0], as_capable_held=False)
         assert not h.ok and h.checks["as_capable_held"] is False
 
+    def test_empty_te_window_not_vacuous_pass(self):
+        # No failover TE samples = no measurement -> must NOT pass vacuously.
+        h = check_hot_standby_failover(standby_announces=[_gm("GM-s")],
+                                       te_samples_ns=[], as_capable_held=True)
+        assert not h.ok and h.checks["te_window_measured"] is False
+
     def test_summary_and_to_dict(self):
         h = check_hot_standby_failover(standby_announces=[_gm("GM-s")],
                                        te_samples_ns=[50.0], as_capable_held=True)

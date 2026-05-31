@@ -14,8 +14,9 @@ from dataclasses import dataclass, field
 
 from .gptp_proto import AnnounceMsg, bmca_elect
 
-# Failover TE transient budget (ns) — the ~1 us p-p automotive fail-operational
-# design target, looser than the 80 ns steady-state but bounded.
+# Failover TE transient budget (ns), as a one-sided max|TE| bound (consistent
+# with gptp.py's |TE| convention) — the ~1 us automotive fail-operational design
+# target, looser than the 80 ns steady-state but bounded.
 DEFAULT_HOLDOVER_NS = 1000.0
 
 
@@ -51,13 +52,18 @@ def check_hot_standby_failover(*, standby_announces: Sequence[AnnounceMsg],
                                holdover_budget_ns: float = DEFAULT_HOLDOVER_NS
                                ) -> HotStandbyHealth:
     """Verify a primary-GM-loss failover: a standby GM must be electable on the
-    surviving domain, the recovered-clock TE transient over the failover window
-    must stay within the holdover budget, and asCapable must not drop."""
+    surviving domain, the recovered-clock TE transient (one-sided max|TE|) over
+    the failover window must stay within the holdover budget, and asCapable must
+    not drop. An empty TE window (no measurement) fails rather than passing 0 ns."""
     gm = bmca_elect(standby_announces)
+    have_samples = len(te_samples_ns) > 0
     max_te = max((abs(s) for s in te_samples_ns), default=0.0)
     checks = {
         "standby_gm_available": gm is not None,
-        "te_within_holdover": max_te <= holdover_budget_ns,
+        # An empty TE window means the failover transient was never measured —
+        # that is not a pass.
+        "te_window_measured": have_samples,
+        "te_within_holdover": have_samples and max_te <= holdover_budget_ns,
         "as_capable_held": as_capable_held,
     }
     return HotStandbyHealth(failover_te_transient_ns=max_te,
