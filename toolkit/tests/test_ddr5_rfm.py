@@ -16,12 +16,16 @@ class TestRfmPrac:
         assert not h.ok and h.checks["rfm_enabled"] is False
 
     def test_unsupported_does_not_require_enable(self):
-        # No RFM/PRAC capability -> enablement is not required, but the alert
-        # path is still checked.
+        # No RFM/PRAC capability -> enablement is not required (the verdict passes),
+        # but the RAW observed state must still report the feature is OFF rather than
+        # being whitewashed to True, and the alert path is still checked.
         h = check_rfm_prac(capability_supported=False, rfm_enabled=False,
                            prac_enabled=False, alert_path_wired=True)
         assert h.ok
         assert h.checks["rfm_enabled"] is True and h.checks["prac_enabled"] is True
+        # Re-anchored: the observed reading is preserved truthfully.
+        assert h.rfm_enabled is False and h.prac_enabled is False
+        assert h.to_dict()["rfm_enabled"] is False
 
     def test_alert_path_not_wired_fails(self):
         h = check_rfm_prac(capability_supported=False, rfm_enabled=False,
@@ -33,3 +37,4 @@ class TestRfmPrac:
                            prac_enabled=True, alert_path_wired=True)
         assert "RFM/PRAC" in h.summary() and "supported" in h.summary()
         assert h.to_dict()["capability_supported"] is True
+        assert h.to_dict()["rfm_enabled"] is True and h.to_dict()["prac_enabled"] is True

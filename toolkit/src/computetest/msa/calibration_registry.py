@@ -18,7 +18,7 @@ The intentionally tiny surface area:
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import date, datetime
 
 
 @dataclass(frozen=True)
@@ -109,16 +109,19 @@ def load_registry(path: str) -> CalibrationRegistry:
             certificate: NIST-12-345
             notes: shipped to A2LA cal lab on 2026-01-08
     """
-    raw_text = open(path).read()
+    with open(path, encoding="utf-8") as fh:
+        raw_text = fh.read()
     if path.endswith((".yaml", ".yml")):
         try:
             import yaml
-            data = yaml.safe_load(raw_text)
-        except ImportError:
-            # JSON is a strict subset of YAML 1.2; try it as a fallback so the
-            # registry works without PyYAML installed in CI.
-            import json
-            data = json.loads(raw_text)
+        except ImportError as exc:
+            # A real YAML file can't be parsed by json.loads; raise an actionable
+            # error instead of an opaque JSONDecodeError. (Plain-JSON registries
+            # should use a .json extension, which takes the json path below.)
+            raise ValueError(
+                f"{path} is YAML but PyYAML is not installed; install pyyaml "
+                f"(pip install pyyaml) or provide the registry as JSON") from exc
+        data = yaml.safe_load(raw_text)
     else:
         import json
         data = json.loads(raw_text)
@@ -138,7 +141,11 @@ def load_registry(path: str) -> CalibrationRegistry:
 
 
 def _to_date(v) -> date:
-    """Accept either a ``date`` (YAML 1.2 native) or an ISO ``YYYY-MM-DD`` string."""
+    """Accept a ``date``/``datetime`` (YAML 1.2 native) or an ISO ``YYYY-MM-DD``
+    string. A ``datetime`` is normalized down to its ``date`` so later date-only
+    arithmetic/comparison (is_expired, days_until_due) never mixes the two types."""
+    if isinstance(v, datetime):       # datetime subclasses date; check it FIRST
+        return v.date()
     if isinstance(v, date):
         return v
     return date.fromisoformat(v)

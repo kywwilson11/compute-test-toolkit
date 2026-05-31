@@ -80,8 +80,15 @@ def vpd_read(request: VpdReadRequest, transport=None, *,
     Mock path returns a slice of the in-memory FRU blob — useful for
     asserting bounds-check behaviour. Real-bus path raises
     ``NotImplementedError`` until libmctp + a request encoder are wired up.
+    With ``mock=False`` and no transport this raises rather than returning
+    fabricated FRU data (never fake a PASS on missing hardware).
     """
-    if mock or transport is None:
+    if not mock and transport is None:
+        raise ValueError(
+            "vpd_read(mock=False) needs an open MctpTransport; refusing to return "
+            "fabricated mock FRU data. Pass mock=True for unit tests, or wire a "
+            "transport for the real read.")
+    if mock:
         # The mock blob is bounded by len(_MOCK_VPD); slice safely.
         end = min(request.offset + request.length, len(_MOCK_VPD))
         data = _MOCK_VPD[request.offset:end]

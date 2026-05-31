@@ -82,7 +82,7 @@ class Subscription:
     request: EventSubscription
     sent: list[AsyncEventMessage] = field(default_factory=list)
     next_sequence: int = 0
-    _last_emit_ms: int = 0
+    _last_emit_by_type: dict[AsyncEventType, int] = field(default_factory=dict)
     _emitted_this_second: int = 0
     _window_start_ms: int = 0
 
@@ -98,12 +98,13 @@ class Subscription:
             self._emitted_this_second = 0
         if self._emitted_this_second >= self.request.rate_limit_per_s:
             return False
-        # Coalesce: skip if the same event type was emitted within the window.
+        # Coalesce per event TYPE: skip if THIS type was emitted within its window.
+        # Keying on the type (not just sent[-1]) means an interleaved A,B,A burst
+        # still coalesces the second A, matching the per-event AEM throttling model.
+        last = self._last_emit_by_type.get(event_type)
         if (self.request.coalesce_window_ms > 0
-                and self.sent
-                and self.sent[-1].event_type == event_type
-                and timestamp_ms - self._last_emit_ms
-                    < self.request.coalesce_window_ms):
+                and last is not None
+                and timestamp_ms - last < self.request.coalesce_window_ms):
             return False
         seq = self.next_sequence
         self.next_sequence += 1
@@ -112,6 +113,6 @@ class Subscription:
             timestamp_ms=timestamp_ms, payload=payload or {},
             sequence=seq,
         ))
-        self._last_emit_ms = timestamp_ms
+        self._last_emit_by_type[event_type] = timestamp_ms
         self._emitted_this_second += 1
         return True

@@ -54,6 +54,22 @@ def test_margin_link_explicit_lane_count():
     assert len(m.lanes) == 4                              # override the device width
 
 
+def test_marginal_narrow_link_can_fail_within_width():
+    # Regression: the seeded worst lane must land WITHIN the configured width, so a
+    # marginal x4/x8 link can drop a lane below the limit (it used to mod-16 and so a
+    # narrow link never saw the penalised lane -> false PASS). Scan widths; at least
+    # one narrow width must produce a sub-limit lane on a marginal link, and every
+    # reported lane index must be < the width.
+    found_fail = False
+    for w in (1, 2, 4, 8):
+        be = MockBackend([MockDevice("0000:05:00.0", 0x10DE, 0x2204, 0x030000,
+                                     link_speed=4, link_width=w, injected_ber=1e-9)])
+        m = margining.margin_link(be, "0000:05:00.0", lanes=w)
+        assert all(lm.lane < w for lm in m.lanes)         # never index past the width
+        found_fail = found_fail or not m.ok
+    assert found_fail, "no narrow width surfaced a sub-limit lane (worst-lane mask bug)"
+
+
 # --- EqSweep summary -------------------------------------------------------- #
 def test_eq_sweep_summary_marks_best_preset():
     be = MockBackend([MockDevice("0000:09:00.0", 0x1B36, 0x10, 0x088000, 4, 8, 4, 8,

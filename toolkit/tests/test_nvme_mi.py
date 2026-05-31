@@ -274,6 +274,31 @@ class TestAemSubscription:
                             timestamp_ms=1500)
         assert len(sub.sent) == 2
 
+    def test_coalesce_is_per_type_on_interleaved_stream(self):
+        """UNH-IOL v25 test 9.2 (interleaved): coalescing is keyed per event type, so
+        an A,B,A burst inside one window drops the second A (a single scalar last-emit
+        clock would wrongly let it through because sent[-1] was B)."""
+        sub = Subscription(request=EventSubscription(
+            event_types=frozenset({AsyncEventType.HEALTH,
+                                    AsyncEventType.TEMPERATURE_THRESHOLD}),
+            coalesce_window_ms=1000, rate_limit_per_s=100))
+        assert sub.deliver(AsyncEventType.HEALTH,
+                           EventSeverity.INFORMATIONAL, timestamp_ms=0)
+        assert sub.deliver(AsyncEventType.TEMPERATURE_THRESHOLD,
+                           EventSeverity.WARNING, timestamp_ms=100)
+        # Second HEALTH is only 200ms after the first HEALTH -> coalesced away.
+        assert not sub.deliver(AsyncEventType.HEALTH,
+                               EventSeverity.INFORMATIONAL, timestamp_ms=200)
+        # A different type still within ITS own window is likewise coalesced.
+        assert not sub.deliver(AsyncEventType.TEMPERATURE_THRESHOLD,
+                               EventSeverity.WARNING, timestamp_ms=300)
+        # Past HEALTH's window -> emitted again.
+        assert sub.deliver(AsyncEventType.HEALTH,
+                           EventSeverity.INFORMATIONAL, timestamp_ms=1100)
+        assert [e.event_type for e in sub.sent] == [
+            AsyncEventType.HEALTH, AsyncEventType.TEMPERATURE_THRESHOLD,
+            AsyncEventType.HEALTH]
+
     def test_rate_limit_per_second(self):
         """UNH-IOL v25 test 9.3 — AEM delivery rate limiting."""
         sub = Subscription(request=EventSubscription(

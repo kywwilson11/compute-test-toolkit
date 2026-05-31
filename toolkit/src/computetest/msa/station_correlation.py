@@ -25,10 +25,70 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 
-# Two-sided 1.96σ — exact value of the 0.975 normal quantile (standard SciPy
-# returns 1.959964; pinning the truncated 1.96 used by the original Bland-Altman
-# paper so the limits-of-agreement report matches every textbook reference).
+# Two-sided 1.96σ — the 0.975 normal quantile used for the LIMITS OF AGREEMENT
+# (a reference-interval construct; the original Bland-Altman paper uses the
+# truncated 1.96, which every textbook reference matches). The CI for the bias,
+# by contrast, is a mean estimate and uses a Student t_{0.975, n-1} quantile
+# (see _student_t_0975 below).
 _LOA_Z = 1.96
+
+
+def _student_t_0975(df: int) -> float:
+    """Two-sided 95% Student-t quantile ``t_{0.975, df}``, dependency-free.
+
+    Bisects the Student-t CDF, expressed via the regularized incomplete beta
+    ``I_x(df/2, 1/2)`` (Numerical Recipes betacf continued fraction). Matches the
+    standard t-table (df=1->12.706, df=5->2.571, df=10->2.228, df->inf->1.960)
+    without SciPy. Used only for the bias CI; the limits of agreement keep 1.96.
+    """
+    def _betacf(a: float, b: float, x: float) -> float:
+        eps, fpmin = 3.0e-12, 1.0e-300
+        qab, qap, qam = a + b, a + 1.0, a - 1.0
+        c, d = 1.0, 1.0 - qab * x / qap
+        d = 1.0 / (fpmin if abs(d) < fpmin else d)
+        h = d
+        for m in range(1, 201):
+            m2 = 2 * m
+            aa = m * (b - m) * x / ((qam + m2) * (a + m2))
+            d = 1.0 + aa * d
+            d = 1.0 / (fpmin if abs(d) < fpmin else d)
+            c = 1.0 + aa / c
+            c = fpmin if abs(c) < fpmin else c
+            h *= d * c
+            aa = -(a + m) * (qab + m) * x / ((a + m2) * (qap + m2))
+            d = 1.0 + aa * d
+            d = 1.0 / (fpmin if abs(d) < fpmin else d)
+            c = 1.0 + aa / c
+            c = fpmin if abs(c) < fpmin else c
+            delta = d * c
+            h *= delta
+            if abs(delta - 1.0) < eps:
+                break
+        return h
+
+    def _ibeta(a: float, b: float, x: float) -> float:
+        if x <= 0.0:
+            return 0.0
+        if x >= 1.0:
+            return 1.0
+        lbeta = math.lgamma(a + b) - math.lgamma(a) - math.lgamma(b)
+        front = math.exp(lbeta + a * math.log(x) + b * math.log(1.0 - x))
+        if x < (a + 1.0) / (a + b + 2.0):
+            return front * _betacf(a, b, x) / a
+        return 1.0 - front * _betacf(b, a, 1.0 - x) / b
+
+    def _cdf(t: float) -> float:
+        ib = _ibeta(df / 2.0, 0.5, df / (df + t * t))
+        return 1.0 - 0.5 * ib if t >= 0 else 0.5 * ib
+
+    lo, hi = 0.0, 1000.0
+    for _ in range(200):
+        mid = 0.5 * (lo + hi)
+        if _cdf(mid) < 0.975:
+            lo = mid
+        else:
+            hi = mid
+    return 0.5 * (lo + hi)
 
 
 @dataclass
@@ -134,10 +194,11 @@ def bland_altman(a: list[float], b: list[float]) -> BlandAltman:
     var = sum((d - bias) ** 2 for d in diffs) / (n - 1)         # sample variance
     sd = math.sqrt(var)
     se_bias = sd / math.sqrt(n)
-    # Paired-t 95% CI for the bias. We approximate t_{0.975, n-1} via the normal
-    # for simplicity (the toolkit's other math uses the same chi-squared/normal
-    # approximations); for small n add a t-table lookup later.
-    ci_lo, ci_hi = bias - _LOA_Z * se_bias, bias + _LOA_Z * se_bias
+    # Paired 95% CI for the bias (a mean estimate): bias ± t_{0.975, n-1} · SE.
+    # The limits of agreement below keep the 1.96 normal quantile (a reference
+    # interval), per Bland & Altman 1986; only the bias CI uses Student-t.
+    t = _student_t_0975(n - 1)
+    ci_lo, ci_hi = bias - t * se_bias, bias + t * se_bias
     return BlandAltman(
         n=n,
         mean_a=sum(a) / n, mean_b=sum(b) / n,

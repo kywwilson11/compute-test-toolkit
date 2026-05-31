@@ -19,6 +19,20 @@ class TestEcs:
         assert not h.ok and h.checks["scrub_time_within_24h"] is False
         assert "FAIL(" in h.summary()
 
+    def test_disabled_background_scrub_fails(self):
+        ras = MockDdr5Ras()
+        ras.set_scrub(enable_background=False)                 # patrol scrub off
+        h = check_ecs(ras)
+        assert not h.ok and h.checks["background_scrub_enabled"] is False
+
+    def test_zero_duration_scrub_fails(self):
+        # cycle_duration_s == 0 (never runs / instantaneous) must not pass the
+        # budget check just because 0 <= 86400.
+        ras = MockDdr5Ras()
+        ras.set_scrub(cycle_duration_s=0)
+        h = check_ecs(ras)
+        assert not h.ok and h.checks["scrub_time_within_24h"] is False
+
     def test_summary_and_to_dict(self):
         h = check_ecs(MockDdr5Ras())
         assert "DDR5 ECS" in h.summary()

@@ -56,10 +56,15 @@ class MemoryHealth:
 def _limits(total_ce: int, total_ue: int, per_dimm: dict,
             max_ce_total: int, max_ce_per_dimm: int) -> dict[str, bool]:
     worst = max(per_dimm.values()) if per_dimm else 0
+    # If the controller reports corrected errors but no per-DIMM attribution was
+    # available (e.g. a legacy-EDAC driver exposing only csrow/channel counters we
+    # could not map to a DIMM), the concentration check would silently pass. Fail it
+    # instead so a hot stick can't hide behind missing per-DIMM data.
+    concentration_ok = worst <= max_ce_per_dimm and not (total_ce > 0 and not per_dimm)
     return {
         "no_uncorrectable": total_ue == 0,
         f"ce_total<={max_ce_total}": total_ce <= max_ce_total,
-        f"no_ce_concentration(<={max_ce_per_dimm}/dimm)": worst <= max_ce_per_dimm,
+        f"no_ce_concentration(<={max_ce_per_dimm}/dimm)": concentration_ok,
     }
 
 
@@ -73,6 +78,15 @@ def _read_edac() -> tuple[int, int, int, dict]:  # pragma: no cover - real-hw pa
         for dimm in sorted(glob.glob(f"{mc}/dimm[0-9]*") + glob.glob(f"{mc}/rank[0-9]*")):
             label = _read_str(f"{dimm}/dimm_label") or os.path.basename(dimm)
             per_dimm[label] = per_dimm.get(label, 0) + _read_int(f"{dimm}/dimm_ce_count")
+        # Legacy EDAC ABI: drivers that predate the dimm* devices expose per-channel
+        # counters under csrowY/ (chZ_ce_count + chZ_dimm_label). Fall back to those so
+        # per-DIMM attribution still works (Linux Documentation/admin-guide/ras.rst).
+        for csrow in sorted(glob.glob(f"{mc}/csrow[0-9]*")):
+            for ce in sorted(glob.glob(f"{csrow}/ch[0-9]*_ce_count")):
+                ch = os.path.basename(ce)[: -len("_ce_count")]
+                label = (_read_str(f"{csrow}/{ch}_dimm_label")
+                         or f"{os.path.basename(csrow)}/{ch}")
+                per_dimm[label] = per_dimm.get(label, 0) + _read_int(ce)
     return len(mcs), total_ce, total_ue, per_dimm
 
 

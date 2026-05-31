@@ -258,6 +258,34 @@ class TestFixtureMap:
         for inst in opened.values():
             inst.close()
 
+    def test_open_all_closes_already_opened_on_failure(self):
+        # First role opens fine; second fails its IDN assertion. open_all must close
+        # the first before re-raising so no session leaks on a partial failure.
+        fm = FixtureMap(instruments=[
+            InstrumentSpec(role="good", kind="Scope", resource="MOCK::INSTR"),
+            InstrumentSpec(role="bad", kind="Scope", resource="MOCK::INSTR",
+                           idn="Keysight Technologies,MSO-X"),
+        ])
+        built: list = []
+        real_open = fm.open
+
+        def _tracking_open(role, *, mock=None):
+            inst = real_open(role, mock=mock)
+            built.append(inst)
+            return inst
+
+        fm.open = _tracking_open  # type: ignore[method-assign]
+        with pytest.raises(InstrumentError, match="does not match"):
+            fm.open_all(mock=True)
+        # The good instrument was opened then closed before the error propagated.
+        assert built and built[0].transport.closed   # _MockSCPI sets closed=True on close()
+
+    def test_blank_idn_prefix_rejected(self):
+        with pytest.raises(InstrumentError, match="non-blank prefix"):
+            FixtureMap(instruments=[
+                InstrumentSpec(role="x", kind="Scope", resource="MOCK::INSTR",
+                               idn="   ")])
+
 
 # ----------------------------------------------------------------------------
 # load_fixture_map (YAML/JSON)
@@ -269,6 +297,23 @@ class TestLoadFixtureMap:
         assert "power_smu" in fm.roles
         assert "external_bert" in fm.roles
         assert fm.station == "bay-3"
+
+    def test_yaml_file_without_pyyaml_raises_actionable_error(self, tmp_path, monkeypatch):
+        # When PyYAML is missing and the file is real YAML, load_fixture_map must
+        # raise an actionable 'install pyyaml' error, not an opaque JSONDecodeError.
+        import builtins
+        p = tmp_path / "fm.yaml"
+        p.write_text("station: bay-9\ninstruments: []\n")
+        real_import = builtins.__import__
+
+        def _no_yaml(name, *a, **k):
+            if name == "yaml":
+                raise ImportError("no yaml")
+            return real_import(name, *a, **k)
+
+        monkeypatch.setattr(builtins, "__import__", _no_yaml)
+        with pytest.raises(InstrumentError, match="install pyyaml"):
+            load_fixture_map(str(p))
 
     def test_json_loads_when_yaml_extension_holds_json(self, tmp_path):
         p = tmp_path / "fm.json"

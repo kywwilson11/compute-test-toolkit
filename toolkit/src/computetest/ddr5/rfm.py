@@ -15,8 +15,17 @@ from dataclasses import dataclass, field
 
 @dataclass
 class RfmPracHealth:
-    """DDR5 RFM/PRAC enablement + alert-path verdict."""
+    """DDR5 RFM/PRAC enablement + alert-path verdict.
+
+    ``rfm_enabled`` / ``prac_enabled`` carry the RAW observed state, even when
+    OEM policy / the part's capability make enablement not-required (in which
+    case the corresponding ``checks`` entry still passes). Keeping the observed
+    value distinct from the verdict means a not-required-but-off feature is
+    reported truthfully instead of being whitewashed to True.
+    """
     capability_supported: bool
+    rfm_enabled: bool = False
+    prac_enabled: bool = False
     checks: dict[str, bool] = field(default_factory=dict)
 
     @property
@@ -31,6 +40,7 @@ class RfmPracHealth:
 
     def to_dict(self) -> dict:
         return {"capability_supported": self.capability_supported,
+                "rfm_enabled": self.rfm_enabled, "prac_enabled": self.prac_enabled,
                 "checks": self.checks, "ok": self.ok}
 
 
@@ -41,9 +51,14 @@ def check_rfm_prac(*, capability_supported: bool, rfm_enabled: bool,
     requires — and that the activation-count alert path is wired. Enablement +
     alert only; no activation-pattern or disturbance stress is performed."""
     required = capability_supported and oem_policy_requires
+    # The check is a VERDICT (passes when enablement is not required); the raw
+    # observed rfm_enabled/prac_enabled are stored separately so a not-required
+    # feature that is actually off is still reported truthfully.
     checks = {
         "rfm_enabled": rfm_enabled if required else True,
         "prac_enabled": prac_enabled if required else True,
         "alert_path_wired": alert_path_wired,
     }
-    return RfmPracHealth(capability_supported=capability_supported, checks=checks)
+    return RfmPracHealth(capability_supported=capability_supported,
+                         rfm_enabled=rfm_enabled, prac_enabled=prac_enabled,
+                         checks=checks)

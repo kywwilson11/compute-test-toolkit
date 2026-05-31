@@ -111,6 +111,10 @@ class FixtureMap:
                 raise InstrumentError(
                     f"unknown instrument kind {inst.kind!r} (role {inst.role!r}); "
                     f"known: {sorted(_KIND_REGISTRY)}")
+            if inst.idn and not inst.idn.strip():
+                raise InstrumentError(
+                    f"role {inst.role!r}: idn must be a non-blank prefix or omitted "
+                    f"entirely; got {inst.idn!r}")
 
     @property
     def roles(self) -> list[str]:
@@ -147,9 +151,24 @@ class FixtureMap:
         return inst
 
     def open_all(self, *, mock: bool | None = None) -> dict[str, SCPIInstrument]:
-        """Open every instrument in the map. Returns a dict ``role -> instrument``."""
-        return {spec.role: self.open(spec.role, mock=mock)
-                for spec in self.instruments}
+        """Open every instrument in the map. Returns a dict ``role -> instrument``.
+
+        Atomic: if any instrument fails to open, the already-opened ones are
+        closed before the error propagates, so a partial failure never leaks
+        live VISA sessions.
+        """
+        opened: dict[str, SCPIInstrument] = {}
+        try:
+            for spec in self.instruments:
+                opened[spec.role] = self.open(spec.role, mock=mock)
+        except Exception:
+            for inst in opened.values():
+                try:
+                    inst.close()
+                except Exception:
+                    pass
+            raise
+        return opened
 
     def to_dict(self) -> dict:
         return {"station": self.station,
@@ -163,13 +182,16 @@ def load_fixture_map(path: str) -> FixtureMap:
     works without it (and YAML 1.2 is a strict JSON superset, so plain-JSON
     YAML files load via the JSON path).
     """
-    text = open(path).read()
+    with open(path, encoding="utf-8") as fh:
+        text = fh.read()
     if path.endswith((".yaml", ".yml")):
         try:
             import yaml
-            data = yaml.safe_load(text)
-        except ImportError:
-            data = json.loads(text)
+        except ImportError as exc:
+            raise InstrumentError(
+                f"{path} is YAML but PyYAML is not installed; install pyyaml "
+                f"(pip install pyyaml) or provide the map as JSON") from exc
+        data = yaml.safe_load(text)
     else:
         data = json.loads(text)
     return FixtureMap(

@@ -49,10 +49,14 @@ def check_ecs(ras: MockDdr5Ras, *, threshold: int = 1024,
     ras.set_ecs(threshold=threshold, enabled=True)
     ecs = ras.read_ecs()
     corrected, max_row = ras.trigger_scrub_cycle()
-    scrub_time_s = ras.read_scrub().cycle_duration_s
+    scrub = ras.read_scrub()
+    scrub_time_s = scrub.cycle_duration_s
     checks = {
         "ecs_settings_stick": ecs.threshold == threshold and ecs.enabled,
-        "scrub_time_within_24h": scrub_time_s <= max_scrub_time_s,
+        "background_scrub_enabled": scrub.enable_background,
+        # A disabled or zero-duration scrub never actually scrubs the array, so a
+        # bare `<= max` would false-pass it; require a real, in-budget cycle time.
+        "scrub_time_within_24h": 0 < scrub_time_s <= max_scrub_time_s,
     }
     return EcsHealth(threshold=ecs.threshold, corrected_count=corrected,
                      max_error_row=max_row, scrub_time_s=scrub_time_s, checks=checks)

@@ -152,6 +152,13 @@ class TestVpdRead:
         result = vpd_read(req, mock=True)
         assert result.data[0] == 0x01                        # IPMI FRU header byte 0
 
+    def test_explicit_real_with_no_transport_raises_not_fakes(self):
+        # mock=False + no transport must raise, not silently return the canned blob
+        # (the toolkit never fakes a PASS on missing hardware).
+        req = VpdReadRequest(offset=0, length=8)
+        with pytest.raises(ValueError, match="fabricated mock FRU data"):
+            vpd_read(req, transport=None, mock=False)
+
     def test_mock_read_zero_pads_past_eeprom_end(self):
         # Request a slice that runs past the mock EEPROM; the mock pads with
         # zeros so the response length matches the request length.

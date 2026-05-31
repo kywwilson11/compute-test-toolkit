@@ -126,12 +126,35 @@ class TestBlandAltman:
         assert r.sd_diff == pytest.approx(0.0, abs=1e-9)
 
     def test_loa_width_is_2_x_1_96_x_sd(self):
-        # By definition: limits of agreement span 2 * 1.96 * SD.
+        # By definition: limits of agreement span 2 * 1.96 * SD (unchanged: LoA keeps
+        # the normal quantile even though the bias CI now uses Student-t).
         a = [1.0, 3.0, 5.0, 7.0, 9.0]
         b = [1.1, 2.9, 5.2, 6.7, 9.4]
         r = bland_altman(a, b)
         width = r.loa_upper - r.loa_lower
         assert width == pytest.approx(2 * 1.96 * r.sd_diff)
+
+    def test_ci95_bias_uses_student_t_not_normal(self):
+        # The bias CI is a paired-mean estimate -> Student t_{0.975, n-1}, NOT 1.96.
+        # n=6 -> df=5 -> t=2.571; the half-width must be t*SE, provably wider than
+        # the old normal (1.96*SE).
+        a = [1.0, 3.0, 5.0, 7.0, 9.0, 11.0]
+        b = [1.1, 2.9, 5.2, 6.7, 9.4, 10.6]
+        r = bland_altman(a, b)
+        half = (r.ci95_bias[1] - r.ci95_bias[0]) / 2
+        assert half == pytest.approx(2.5705818 * r.se_bias, rel=1e-6)
+        assert half > 1.96 * r.se_bias                       # wider than the normal
+        # The CI is symmetric about the bias.
+        assert (r.ci95_bias[0] + r.ci95_bias[1]) / 2 == pytest.approx(r.bias)
+
+    def test_student_t_quantile_matches_textbook_table(self):
+        # Validate the dependency-free t_{0.975, df} against standard t-table values.
+        from computetest.msa.station_correlation import _student_t_0975
+        assert _student_t_0975(1) == pytest.approx(12.706, abs=1e-3)
+        assert _student_t_0975(5) == pytest.approx(2.571, abs=1e-3)
+        assert _student_t_0975(10) == pytest.approx(2.228, abs=1e-3)
+        # df -> inf converges to the normal 0.975 quantile, 1.960.
+        assert _student_t_0975(1_000_000) == pytest.approx(1.960, abs=1e-3)
 
     def test_length_mismatch_raises(self):
         with pytest.raises(ValueError, match="length mismatch"):
@@ -280,6 +303,42 @@ class TestCalibrationRegistry:
             "configs/calibration_registry.example.yaml")
         assert reg.by_role("rx_eye_scope") is not None
         assert reg.by_role("power_smu") is not None
+
+    def test_to_date_normalizes_datetime_to_date(self):
+        from datetime import datetime
+
+        from computetest.msa.calibration_registry import _to_date
+        # A YAML 1.2 timestamp parses to datetime; it must come back as a plain date
+        # so is_expired/days_until_due don't mix date and datetime (TypeError).
+        d = _to_date(datetime(2027, 1, 15, 9, 30, 0))
+        assert type(d) is date and d == date(2027, 1, 15)
+        # An entry built from such a value supports date-only comparison.
+        e = CalibrationEntry(role="r", manufacturer="M", model="Mo", serial="S",
+                             last_calibrated=_to_date(datetime(2026, 1, 15, 0, 0)),
+                             next_due=_to_date(datetime(2027, 1, 15, 0, 0)))
+        assert e.is_expired(date(2027, 6, 1)) is True
+        assert e.days_until_due(date(2027, 1, 5)) == 10
+
+    def test_to_date_accepts_date_and_iso_string(self):
+        from computetest.msa.calibration_registry import _to_date
+        assert _to_date(date(2027, 1, 15)) == date(2027, 1, 15)
+        assert _to_date("2027-01-15") == date(2027, 1, 15)
+
+    def test_load_registry_yaml_without_pyyaml_raises_actionable(self, tmp_path,
+                                                                  monkeypatch):
+        import builtins
+        p = tmp_path / "reg.yaml"
+        p.write_text("entries: []\n")
+        real_import = builtins.__import__
+
+        def _no_yaml(name, *a, **k):
+            if name == "yaml":
+                raise ImportError("no yaml")
+            return real_import(name, *a, **k)
+
+        monkeypatch.setattr(builtins, "__import__", _no_yaml)
+        with pytest.raises(ValueError, match="install pyyaml"):
+            load_registry(str(p))
 
     def test_load_registry_from_json_fallback(self, tmp_path):
         # JSON is a strict subset of YAML 1.2; load_registry must accept it

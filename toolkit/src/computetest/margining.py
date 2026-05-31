@@ -84,14 +84,16 @@ class MarginResult:
                 "lanes": {lm.lane: round(lm.timing_ui, 4) for lm in self.lanes}}
 
 
-def _mock_lane_margin(bdf: str, lane: int, injected_ber: float) -> float:
+def _mock_lane_margin(bdf: str, lane: int, injected_ber: float, width: int) -> float:
     """A deterministic, believable per-lane timing margin for simulation."""
     # Base margin shrinks with injected BER; per-lane jitter is seeded by bdf+lane.
     h = hashlib.sha256(f"{bdf}:{lane}".encode()).digest()
     jitter = (h[0] / 255.0) * 0.12               # 0..0.12 UI of lane-to-lane spread
     base = 0.45 if injected_ber <= 1e-15 else max(0.05, 0.45 - 6e7 * injected_ber)
     # Make one lane clearly worst on a marginal link (the realistic failure shape).
-    worst_lane = h[1] % 16
+    # Confine the worst lane to the actual width (max(1,width) guards width==0) so a
+    # marginal narrow link (x4/x8) can still surface a sub-limit lane.
+    worst_lane = h[1] % max(1, width)
     penalty = 0.18 if (injected_ber > 1e-12 and lane == worst_lane) else 0.0
     return round(max(0.02, base - jitter * 0.5 - penalty), 4)
 
@@ -108,7 +110,7 @@ def margin_link(backend: Backend, bdf: str, lanes: int | None = None,
     if isinstance(backend, MockBackend):
         ber = backend._dev(bdf).injected_ber
         for lane in range(n):
-            results.append(LaneMargin(lane, _mock_lane_margin(bdf, lane, ber)))
+            results.append(LaneMargin(lane, _mock_lane_margin(bdf, lane, ber, n)))
     else:  # pragma: no cover - real-hw path
         for lane in range(n):
             results.append(_real_margin_lane(backend, bdf, lane))
