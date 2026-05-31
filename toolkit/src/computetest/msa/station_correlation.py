@@ -163,7 +163,11 @@ def deming_regression(x: list[float], y: list[float],
     if len(x) < 3:
         raise ValueError("Deming regression needs >=3 paired observations")
 
-    slope, intercept = _deming_point(x, y, lambda_ratio)
+    try:
+        slope, intercept = _deming_point(x, y, lambda_ratio)
+    except ZeroDivisionError:
+        raise ValueError("Deming fit undefined: x and y have zero covariance "
+                         "(degenerate input)") from None
 
     # Bootstrap 95% CI on slope and intercept. Resample paired (x, y) WITH
     # replacement N_BOOT times; report 2.5/97.5 percentiles.
@@ -224,10 +228,11 @@ def _deming_point(x: list[float], y: list[float],
     syy = sum((yi - my) ** 2 for yi in y) / (n - 1) if n > 1 else 0.0
     sxy = sum((x[i] - mx) * (y[i] - my) for i in range(n)) / (n - 1) \
         if n > 1 else 0.0
-    if sxy == 0:
-        # No covariance: slope undefined. Return a zero-slope flat line through
-        # the means (the conservative "we can't fit" answer).
-        return 0.0, my
+    # No guard for sxy == 0: a zero-covariance sample has no defined Deming slope,
+    # so 2*sxy == 0 raises ZeroDivisionError. The bootstrap skips that resample
+    # rather than counting a fake slope-0 fit (which would drag the slope CI down
+    # to 0 and false-pass a disagreeing pair); the point estimate maps it to a
+    # clear ValueError.
     radicand = (syy - lambda_ratio * sxx) ** 2 + 4 * lambda_ratio * sxy * sxy
     slope = (syy - lambda_ratio * sxx + math.sqrt(radicand)) / (2 * sxy)
     intercept = my - slope * mx

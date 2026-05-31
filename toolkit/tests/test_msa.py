@@ -181,6 +181,19 @@ class TestDemingRegression:
         with pytest.raises(ValueError, match=">=3"):
             deming_regression([1.0, 2.0], [1.0, 2.0])
 
+    def test_pure_scale_factor_at_min_n_not_false_agree(self):
+        # n=3 (the documented minimum): ~1/9 of bootstrap resamples are degenerate
+        # (all-same-index, sxy=0). Those must be SKIPPED, not counted as slope-0
+        # fits that drag the slope CI down to include 1.0 (a false "agree").
+        r = deming_regression([1.0, 2.0, 3.0], [1.5, 3.0, 4.5])   # y = 1.5x
+        assert r.slope == pytest.approx(1.5, abs=1e-9)
+        assert not r.agrees                       # false-PASSes under the spurious-zero bug
+        assert r.ci95_slope[0] > 1.0              # CI must not collapse toward 0
+
+    def test_zero_covariance_raises(self):
+        with pytest.raises(ValueError, match="zero covariance"):
+            deming_regression([5.0, 5.0, 5.0], [1.0, 2.0, 3.0])   # x constant
+
 
 # ----------------------------------------------------------------------------
 # Station correlation
