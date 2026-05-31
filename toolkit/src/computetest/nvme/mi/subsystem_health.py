@@ -24,11 +24,21 @@ SMART_WARNING_VOLATILE_MEMORY_BACKUP_FAILED = 1 << 4
 SMART_WARNING_PMR_RELIABILITY_DEGRADED = 1 << 5
 
 
-# NSS (NVM Subsystem Status) bits per NVMe-MI §5.1.
-NSS_DRIVE_FUNCTIONING = 1 << 0       # 1 = controller is responding
-NSS_RESET_NOT_REQUIRED = 1 << 1
-NSS_PORT_0_PCI_FUNCTIONING = 1 << 2
-NSS_PORT_1_PCI_FUNCTIONING = 1 << 3
+# NSS (NVM Subsystem Status) byte from the NSHSP response.
+#
+# TODO(spec): the exact NSS bit indices below are UNVERIFIED and almost
+# certainly wrong. The ratified NVMe-MI spec (NSHDS, NVM Subsystem Status
+# byte) places Drive Functional at bit 5 (NOT bit 0); Reset Not Required and
+# the per-port PCIe-link-active bits also need confirming. The ratified PDF
+# returned HTTP 403 during this fix, so the exact byte map could not be
+# transcribed. Do NOT trust these masks on real hardware until each bit is
+# reconciled cell-by-cell against the targeted NVMe-MI revision's NSS table
+# and a decode test is fed a real captured byte. (The real decode path is
+# unimplemented, so no live verdict depends on these today.)
+NSS_DRIVE_FUNCTIONING = 1 << 0       # UNVERIFIED placeholder (spec: bit 5)
+NSS_RESET_NOT_REQUIRED = 1 << 1      # UNVERIFIED placeholder
+NSS_PORT_0_PCI_FUNCTIONING = 1 << 2  # UNVERIFIED placeholder
+NSS_PORT_1_PCI_FUNCTIONING = 1 << 3  # UNVERIFIED placeholder
 
 
 @dataclass
@@ -36,7 +46,7 @@ class NvmSubsystemHealth:
     """Parsed NSHSP response."""
     nss: int                          # NVM Subsystem Status byte
     smart_warnings: int               # Critical Warning bitmask
-    composite_temperature_k: int      # Kelvin (the spec's native unit)
+    composite_temperature_c: int      # raw on-wire byte: signed int8 Celsius
     percentage_drive_life_used: int   # 0..255 % (>100 = past designed life)
     available_spare: int              # 0..100 %
     spare_below_threshold: bool
@@ -45,11 +55,21 @@ class NvmSubsystemHealth:
 
     @property
     def temperature_c(self) -> float:
-        return float(self.composite_temperature_k) - 273.0
+        """Decode the NSHSP Composite Temperature byte (signed int8 Celsius,
+        two's-complement) per NVMe-MI NSHDS (libnvme ``__u8 ctemp``). The
+        Kelvin 2-byte form belongs to the *in-band* SMART Log 02h, not here."""
+        byte = self.composite_temperature_c & 0xFF
+        return float(byte - 256 if byte >= 128 else byte)
 
     @property
     def drive_functioning(self) -> bool:
-        """True iff the NSS bit indicates the controller is responding."""
+        """True iff the NSS Drive Functional bit is set.
+
+        WARNING: keys off NSS_DRIVE_FUNCTIONING, whose index is UNVERIFIED
+        (see the TODO on the NSS_* constants; spec puts Drive Functional at
+        bit 5, not bit 0). Reconcile against the ratified NSS table before
+        trusting ``healthy`` on real hardware.
+        """
         return bool(self.nss & NSS_DRIVE_FUNCTIONING)
 
     @property
@@ -82,7 +102,7 @@ class NvmSubsystemHealth:
                 "drive_functioning": self.drive_functioning,
                 "smart_warnings": self.smart_warnings,
                 "smart_warning_names": self.warnings(),
-                "composite_temperature_k": self.composite_temperature_k,
+                "composite_temperature_c": self.composite_temperature_c,
                 "temperature_c": self.temperature_c,
                 "percentage_drive_life_used": self.percentage_drive_life_used,
                 "available_spare": self.available_spare,
@@ -96,7 +116,7 @@ _MOCK_NSHSP: dict = {
     "nss": NSS_DRIVE_FUNCTIONING | NSS_RESET_NOT_REQUIRED
             | NSS_PORT_0_PCI_FUNCTIONING,
     "smart_warnings": 0,
-    "composite_temperature_k": 314,            # 41 °C
+    "composite_temperature_c": 41,             # raw signed-int8 byte = 41 °C
     "percentage_drive_life_used": 1,
     "available_spare": 100,
     "spare_below_threshold": False,
@@ -117,7 +137,7 @@ def poll_nvm_subsystem_health(transport=None, *,
         return NvmSubsystemHealth(
             nss=raw["nss"],
             smart_warnings=raw["smart_warnings"],
-            composite_temperature_k=raw["composite_temperature_k"],
+            composite_temperature_c=raw["composite_temperature_c"],
             percentage_drive_life_used=raw["percentage_drive_life_used"],
             available_spare=raw["available_spare"],
             spare_below_threshold=raw["spare_below_threshold"],

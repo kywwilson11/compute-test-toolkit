@@ -41,14 +41,14 @@ class TestNvmSubsystemHealth:
         assert s.healthy
         assert s.drive_functioning
         assert s.smart_warnings == 0
-        assert s.temperature_c == 41.0
+        assert s.temperature_c == 41.0          # raw byte 41 -> +41 C (signed int8 Celsius)
         assert s.warnings() == []
 
     def test_drive_not_functioning_breaks_healthy(self):
         s = NvmSubsystemHealth(
             nss=0,                                            # NSS_DRIVE_FUNCTIONING clear
             smart_warnings=0,
-            composite_temperature_k=314,
+            composite_temperature_c=41,
             percentage_drive_life_used=1,
             available_spare=100,
             spare_below_threshold=False,
@@ -63,7 +63,7 @@ class TestNvmSubsystemHealth:
             smart_warnings=(SMART_WARNING_AVAILABLE_SPARE_BELOW_THRESHOLD
                             | SMART_WARNING_TEMPERATURE_THRESHOLD
                             | SMART_WARNING_READ_ONLY),
-            composite_temperature_k=350,
+            composite_temperature_c=77,
             percentage_drive_life_used=80,
             available_spare=5,
             spare_below_threshold=True,
@@ -80,7 +80,7 @@ class TestNvmSubsystemHealth:
         s = NvmSubsystemHealth(
             nss=NSS_DRIVE_FUNCTIONING,
             smart_warnings=0,
-            composite_temperature_k=314,
+            composite_temperature_c=41,
             percentage_drive_life_used=1,
             available_spare=2,
             spare_below_threshold=True,
@@ -92,7 +92,7 @@ class TestNvmSubsystemHealth:
         s = NvmSubsystemHealth(
             nss=NSS_DRIVE_FUNCTIONING,
             smart_warnings=0,
-            composite_temperature_k=314,
+            composite_temperature_c=41,
             percentage_drive_life_used=50,
             available_spare=100,
             spare_below_threshold=False,
@@ -100,11 +100,28 @@ class TestNvmSubsystemHealth:
         )
         assert not s.healthy
 
+    def test_negative_composite_temperature_decodes_signed(self):
+        """A captured ctemp byte >= 0x80 is a NEGATIVE Celsius (two's-complement),
+        per NVMe-MI NSHDS / libnvme ``__u8 ctemp`` printed as %d°C — NOT Kelvin.
+        Byte 0xC4 (196) -> 196-256 = -60 C (the spec's documented cold extreme),
+        which the old `byte - 273.0` Kelvin math would have mis-decoded as -77 C."""
+        s = NvmSubsystemHealth(
+            nss=NSS_DRIVE_FUNCTIONING,
+            smart_warnings=0,
+            composite_temperature_c=0xC4,
+            percentage_drive_life_used=1,
+            available_spare=100,
+            spare_below_threshold=False,
+            capacity_below_threshold=False,
+        )
+        assert s.temperature_c == -60.0
+
     def test_to_dict_round_trip(self):
         s = poll_nvm_subsystem_health(mock=True)
         d = s.to_dict()
         assert d["healthy"] is True
         assert d["temperature_c"] == 41.0
+        assert d["composite_temperature_c"] == 41     # Celsius byte surfaced (no Kelvin key)
         assert d["drive_functioning"] is True
         assert d["smart_warning_names"] == []
 
@@ -180,16 +197,13 @@ class TestManagementEndpointReset:
         assert result.accepted
         assert result.function == ResetFunction.NVM_SUBSYSTEM_RESET
 
-    def test_mock_reset_inhibit_function(self):
-        result = reset_management_endpoint(
-            function=ResetFunction.SUBSYSTEM_RESET_INHIBIT, mock=True)
-        assert result.function == ResetFunction.SUBSYSTEM_RESET_INHIBIT
-        assert result.accepted
-
-    def test_reset_function_enum_values(self):
-        # The spec's RSF field codes.
+    def test_reset_type_enum_only_defines_00h(self):
+        # NVMe-MI Reset (Fig 104/§8.3): the Reset Type field defines ONLY 00h =
+        # Reset NVM Subsystem; 01h-FFh are Reserved. The fabricated
+        # SUBSYSTEM_RESET_INHIBIT (01h) must NOT exist on the enum.
         assert int(ResetFunction.NVM_SUBSYSTEM_RESET) == 0
-        assert int(ResetFunction.SUBSYSTEM_RESET_INHIBIT) == 1
+        assert [m.value for m in ResetFunction] == [0]
+        assert not hasattr(ResetFunction, "SUBSYSTEM_RESET_INHIBIT")
 
     def test_request_dataclass_default(self):
         req = ResetRequest()

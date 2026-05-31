@@ -1,20 +1,21 @@
 """
-NVMe-MI Management Endpoint Reset.
+NVMe-MI Reset command (opcode 0x07).
 
-NVMe-MI §5.7 defines the Reset command (opcode 0x07). Unlike a controller
-reset (which the in-band path issues via CC.EN), the management endpoint
-reset re-initializes ONLY the MI endpoint state — useful for clearing a
-stuck MCTP transaction without disturbing the data path the host kernel is
-driving.
+NVMe-MI Reset (Figure 104; §8.3) takes a single 1-byte **Reset Type** field
+in NVMe Management Dword0 bits 31:24. The spec defines exactly ONE value:
 
-Two operations the spec allows:
+* ``00h`` — **Reset NVM Subsystem**. ``01h``–``FFh`` are Reserved.
 
-* **NVM Subsystem Reset** (RSF = 0): resets every controller in the
-  subsystem.
-* **NVM Subsystem Reset Inhibit** (RSF = 1): suppress the next NSS reset.
+Blast radius (operator-critical): value 00h initiates a full **NVM Subsystem
+Reset** — it resets the *entire* subsystem (all controllers, all ports), so
+the host kernel ``nvme`` driver loses its controllers and must re-enable
+them via CC.EN. This is NOT a quiet MI-endpoint-only reset and it DOES
+disrupt host I/O. (The transport-triggered "Management Endpoint Reset" of
+§8.3.3 — a PCIe/SMBus reset — is a different mechanism, not this command.)
 
-The toolkit exposes both behind a small enum so callers can't pass a
-magic number.
+The toolkit exposes the single defined Reset Type behind an enum so callers
+can't pass a magic number; the Reserved 01h–FFh values are intentionally
+absent so a future encoder can never put a Reserved byte on the wire.
 """
 from __future__ import annotations
 
@@ -23,9 +24,12 @@ from enum import IntEnum
 
 
 class ResetFunction(IntEnum):
-    """RSF field per NVMe-MI §5.7 Table 95."""
-    NVM_SUBSYSTEM_RESET = 0
-    SUBSYSTEM_RESET_INHIBIT = 1
+    """Reset Type field per NVMe-MI Reset command (Figure 104; §8.3).
+
+    Only ``00h`` is defined; ``01h``–``FFh`` are Reserved, so this enum has a
+    single member by design (a Reserved value must never reach the wire).
+    """
+    NVM_SUBSYSTEM_RESET = 0   # 00h = Reset NVM Subsystem (resets all controllers)
 
 
 @dataclass
@@ -50,10 +54,11 @@ def reset_management_endpoint(transport=None, *,
     Mock path returns an accepted response. Real-bus path raises
     ``NotImplementedError`` until libmctp + a request encoder are wired up.
 
-    **Operator note:** on a real station, issuing this command stops
-    in-flight MI transactions on the management endpoint. The data-plane
-    NVMe traffic (the kernel `nvme` driver) is unaffected, but a BMC
-    polling SMART via MI will see one round of timeouts.
+    **Operator note (DISRUPTIVE):** on a real station this issues a full NVM
+    Subsystem Reset (Reset Type 00h). It resets *every* controller in the
+    subsystem, so the host kernel ``nvme`` driver loses its controllers and
+    must re-enable them (CC.EN) — host I/O IS interrupted, not just MI
+    traffic. Quiesce the data plane before calling on a live system.
     """
     if mock or transport is None:
         return ResetResult(function=function, accepted=True)
