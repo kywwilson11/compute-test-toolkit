@@ -53,6 +53,23 @@ class GclSchedule:
         i, _, _ = self.window_at(t_ns)
         return bool(self.entries[i].gate_states & (1 << tc))
 
+    def gate_close_after(self, t_ns: float, tc: int) -> float:
+        """Absolute time >= ``t_ns`` at which ``tc``'s gate next closes, assuming
+        it is open at ``t_ns``. Walks the contiguous run of consecutive entries
+        whose ``tc`` gate stays open (across the cycle boundary), so a gate held
+        open over several GCL entries is one open interval — not one per entry.
+        Returns a full cycle ahead if ``tc`` is open for the entire cycle."""
+        i, _, w_end = self.window_at(t_ns)              # raises on zero cycle
+        cycle = self.cycle_ns
+        close = t_ns - (t_ns % cycle) + w_end           # absolute end of entry i
+        n = len(self.entries)
+        for step in range(1, n):
+            nxt = (i + step) % n
+            if not (self.entries[nxt].gate_states & (1 << tc)):
+                return close                            # gate closes at this boundary
+            close += self.entries[nxt].duration_ns
+        return close                                    # tc open across the whole cycle
+
 
 @dataclass
 class QbvHealth:
@@ -105,10 +122,14 @@ def check_qbv_gate_timing(schedule: GclSchedule,
             gate_violations.append((tc, start))
             continue
         tx_ns = length_bits / link_rate_bps * 1e9
-        _, _, w_end = schedule.window_at(start)
-        if start + tx_ns > w_end:
+        # Compare against when the gate actually closes for this TC — the end of
+        # the contiguous open run, not just the entry covering ``start`` (a gate
+        # held open across adjacent GCL entries is one window).
+        if start + tx_ns > schedule.gate_close_after(start, tc):
             guard_violations.append((tc, start))
-    max_jitter = max(edge_jitter_ns) if edge_jitter_ns else 0.0
+    # Bound BOTH early (negative) and late (positive) window-edge excursions; a
+    # raw max() of signed samples lets a large early transition slip through.
+    max_jitter = max((abs(j) for j in edge_jitter_ns), default=0.0)
     checks = {
         "frames_in_open_window": not gate_violations,
         "guard_band_respected": not guard_violations,

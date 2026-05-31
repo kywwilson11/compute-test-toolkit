@@ -57,6 +57,21 @@ class TestQbvCheck:
         h = check_qbv_gate_timing(_sched(), [(6, 99_500, 1000)], link_rate_bps=GBPS)
         assert not h.ok and h.checks["guard_band_respected"] is False
 
+    def test_gate_open_across_consecutive_entries_no_guard_violation(self):
+        # TC6 gate open across entries 0 AND 1 (0..100us), closed in entry 2.
+        sched = GclSchedule([GclEntry(1 << 6, 50_000), GclEntry(1 << 6, 50_000),
+                             GclEntry(0b0011_1111, 100_000)])
+        # 20_000 bits @ 1 Gbps = 20_000 ns: 40_000 -> 60_000 spans the entry0/1
+        # boundary where the gate stays open. Legal (FAILs under the old per-entry check).
+        h = check_qbv_gate_timing(sched, [(6, 40_000, 20_000)], link_rate_bps=GBPS)
+        assert h.ok and h.checks["guard_band_respected"] is True
+
+    def test_always_open_gate_no_guard_violation(self):
+        # TC6 open in every entry -> the gate never closes within a cycle.
+        sched = GclSchedule([GclEntry(1 << 6, 100_000), GclEntry(1 << 6, 100_000)])
+        h = check_qbv_gate_timing(sched, [(6, 150_000, 50_000)], link_rate_bps=GBPS)
+        assert h.ok and h.checks["guard_band_respected"] is True
+
     def test_edge_jitter_budget(self):
         ok = check_qbv_gate_timing(_sched(), [], link_rate_bps=GBPS,
                                    edge_jitter_ns=[10.0, 20.0])
@@ -64,6 +79,12 @@ class TestQbvCheck:
         bad = check_qbv_gate_timing(_sched(), [], link_rate_bps=GBPS,
                                     edge_jitter_ns=[10.0, 90.0])
         assert bad.checks["edge_jitter_ok"] is False
+
+    def test_edge_jitter_bounds_negative_excursions(self):
+        # A large EARLY (negative) gate transition must fail, not slip through max().
+        h = check_qbv_gate_timing(_sched(), [], link_rate_bps=GBPS,
+                                  edge_jitter_ns=[10.0, -90.0])
+        assert h.checks["edge_jitter_ok"] is False
 
     def test_summary_and_to_dict(self):
         h = check_qbv_gate_timing(_sched(), [(0, 10_000, 1000)], link_rate_bps=GBPS)
