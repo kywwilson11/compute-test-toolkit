@@ -20,13 +20,19 @@ class TestDecode:
         names = [n for _, n, _ in decode_ce(1 << 6)]
         assert names == ["PhysicalLayerError"]
 
+    def test_ue_high_bits_and_reserved(self):
+        # CXL spec UE Status: Internal=14, IDE Tx=15, IDE Rx=16; bits 12-13 reserved.
+        names = [n for _, n, _ in decode_ue((1 << 14) | (1 << 15) | (1 << 16))]
+        assert names == ["InternalError", "IDETxError", "IDERxError"]
+        assert decode_ue((1 << 12) | (1 << 13)) == []     # reserved bits -> nothing
+
     def test_no_bits(self):
         assert decode_ue(0) == [] and decode_ce(0) == []
 
 
 class TestSnapshot:
     def test_snapshot_decodes(self):
-        regs = CxlRasRegisters(ue_status=(1 << 12), ce_status=(1 << 2))
+        regs = CxlRasRegisters(ue_status=(1 << 14), ce_status=(1 << 2))   # bit 14 = InternalError
         snap = snapshot(regs)
         assert isinstance(snap, CxlRasSnapshot)
         assert snap.has_uncorrectable and snap.has_correctable
@@ -36,19 +42,19 @@ class TestSnapshot:
 
 class TestW1C:
     def test_clear_clears_set_bits(self):
-        regs = CxlRasRegisters(ue_status=(1 << 12) | (1 << 10), ce_status=(1 << 0))
+        regs = CxlRasRegisters(ue_status=(1 << 14) | (1 << 10), ce_status=(1 << 0))
         res = clear_ras(regs)
         assert res["uncorrectable"].ok and res["correctable"].ok
-        assert res["uncorrectable"].cleared == (1 << 12) | (1 << 10)
+        assert res["uncorrectable"].cleared == (1 << 14) | (1 << 10)
         # after clearing, the registers read clean
         assert not snapshot(regs).has_uncorrectable
 
     def test_stuck_bit_reported(self):
-        regs = CxlRasRegisters(ue_status=(1 << 12) | (1 << 13))
-        regs.set_sticky(CxlRasRegisters.UE_STATUS, 1 << 13)   # IDETxError won't clear
+        regs = CxlRasRegisters(ue_status=(1 << 14) | (1 << 15))
+        regs.set_sticky(CxlRasRegisters.UE_STATUS, 1 << 15)   # IDETxError (bit 15) won't clear
         res = clear_ras(regs)
         assert not res["uncorrectable"].ok
-        assert res["uncorrectable"].stuck == (1 << 13)
+        assert res["uncorrectable"].stuck == (1 << 15)
 
     def test_clear_clean_register_is_noop(self):
         res = clear_ras(CxlRasRegisters())

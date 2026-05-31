@@ -23,6 +23,13 @@ class TestContract:
         assert CciOpcode.IDENTIFY == 0x0001
         assert CciOpcode.PERFORM_MAINTENANCE == 0x0600
         assert CciOpcode.GET_HEALTH_INFO == 0x4200
+        # Memory Device command set: Identify Memory Device 4000h, Get Partition Info 4100h.
+        assert CciOpcode.IDENTIFY_MEMORY_DEVICE == 0x4000
+        assert CciOpcode.GET_PARTITION_INFO == 0x4100
+
+    def test_busy_return_code(self):
+        # CXL command return codes: Busy = 0006h (0009h is FW Transfer Out of Order).
+        assert CciReturnCode.BUSY == 0x0006
 
     def test_response_ok_and_background(self):
         assert CxlResponse(CciReturnCode.SUCCESS).ok

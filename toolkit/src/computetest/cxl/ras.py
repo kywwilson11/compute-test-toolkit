@@ -11,7 +11,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-# Uncorrectable error bits — CXL RAS UE Status (rasdaemon ras-cxl-handler.c).
+# Uncorrectable error bits — CXL RAS UE Status. Names from rasdaemon
+# ras-cxl-handler.c; bit POSITIONS per the CXL spec UE Status register (kernel
+# CXL_RAS_UC_* in drivers/cxl/core/trace.h): bits 12-13 are reserved, and
+# Internal Error / IDE Tx / IDE Rx are bits 14/15/16 (not 12/13/14).
 CXL_UE_BITS: dict[int, tuple[str, str]] = {
     0: ("CacheDataParity", "CXL.cache data parity error"),
     1: ("CacheAddressParity", "CXL.cache address parity error"),
@@ -25,9 +28,10 @@ CXL_UE_BITS: dict[int, tuple[str, str]] = {
     9: ("RsvdEncoding", "received unrecognized encoding"),
     10: ("PoisonReceived", "poison received"),
     11: ("ReceiverOverflow", "receiver overflow"),
-    12: ("InternalError", "device internal error"),
-    13: ("IDETxError", "CXL IDE Tx error"),
-    14: ("IDERxError", "CXL IDE Rx error"),
+    # bits 12-13 reserved
+    14: ("InternalError", "device internal error"),
+    15: ("IDETxError", "CXL IDE Tx error"),
+    16: ("IDERxError", "CXL IDE Rx error"),
 }
 
 # Correctable error bits — CXL RAS CE Status.

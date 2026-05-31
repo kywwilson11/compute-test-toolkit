@@ -44,7 +44,7 @@ class TestEmitLink:
 
 class TestEmitRas:
     def test_uncorrectable_fails(self):
-        snap = snapshot(CxlRasRegisters(ue_status=(1 << 12)))
+        snap = snapshot(CxlRasRegisters(ue_status=(1 << 14)))   # bit 14 = InternalError
         arts = _arts(emit_cxl_ras, snap)
         names = [a["measurement"]["name"] for a in arts if "measurement" in a]
         assert "cxl.ue.InternalError" in names

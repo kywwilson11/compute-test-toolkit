@@ -32,7 +32,8 @@ class CciOpcode(IntEnum):
     GET_FEATURES = 0x0501
     SET_FEATURES = 0x0502
     PERFORM_MAINTENANCE = 0x0600
-    GET_PARTITION_INFO = 0x4000
+    IDENTIFY_MEMORY_DEVICE = 0x4000
+    GET_PARTITION_INFO = 0x4100
     GET_HEALTH_INFO = 0x4200
     GET_POISON_LIST = 0x4300
     SANITIZE = 0x4400
@@ -44,7 +45,7 @@ class CciReturnCode(IntEnum):
     BACKGROUND_STARTED = 0x0001
     INVALID_INPUT = 0x0002
     UNSUPPORTED = 0x0003
-    BUSY = 0x0009
+    BUSY = 0x0006                        # 0x0009 is FW Transfer Out of Order, not Busy
 
 
 @dataclass
