@@ -32,14 +32,19 @@ class SpdInfo:
 
 
 def parse_spd(data: bytes) -> SpdInfo:
-    """Parse the key DDR5 SPD identity/RAS fields (JESD400-5 bytes 2/3/4/13)."""
-    if len(data) < 14:
-        raise ValueError(f"SPD too short: {len(data)} bytes (need >= 14)")
+    """Parse the key DDR5 SPD identity/RAS fields (JESD400-5 bytes 2/3/4/235)."""
+    if len(data) < 236:
+        raise ValueError(f"SPD too short: {len(data)} bytes "
+                         "(need >= 236; DDR5 ECC/bus-width is at byte 235)")
     return SpdInfo(
         memory_type=data[2],
         module_type=MODULE_TYPES.get(data[3] & 0x0F, "unknown"),
         density_gbit=DENSITY_GBIT.get(data[4] & 0x1F, 0),
-        ecc=bool(data[13] & 0x08),
+        # JESD400-5 §11.11 "Memory Channel Bus Width" byte 235: bits[4:3] are the
+        # bus-width extension per sub-channel (00=none, 01=4-bit ECC) -> nonzero
+        # means ECC. DDR4 carried this at byte 13; on DDR5 byte 13 is thermal/
+        # refresh options, so reading it would decode an unrelated field.
+        ecc=bool((data[235] >> 3) & 0x03),
     )
 
 
