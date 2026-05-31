@@ -24,7 +24,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from . import aer, ber
-from .backend import Backend, link_bits_per_second
+from .backend import Backend, FecStats, link_bits_per_second
 
 # Generation caveat: Gen1-Gen5 are NRZ with 128b/130b (Gen3-5) or 8b/10b (Gen1-2) encoding
 # and report bit errors as Bad TLP / Replay timer events the AER bit-counting model captures
@@ -47,6 +47,32 @@ _GEN6_FEC_EXPLANATION = (
     "  * Report (pre_fec_symbol_errors, post_fec_flit_errors, fber_estimate) for the\n"
     "    real reliability picture; AER stays as a secondary fault signal.\n"
     "Sources: Synopsys PCIe 6 Verification: FEC and CRC; PCIe 6.0 base spec §3.5.")
+
+
+# PCIe 6.0 FBER (First Bit Error Rate) compliance target: the post-FEC FLIT error
+# rate the link must stay at or below. The PCIe 6.0 PHY-logical FEC is engineered
+# around an FBER of 1e-6 (Synopsys, "PCIe 6 Verification: FEC and CRC"; PCIe 6.0
+# base spec §3.5), and the toolkit surfaces the same bound in the OCP stream
+# (io/ocpdiag.py fber_target) and in docs/explanation/gen6-fec.md.
+_GEN6_FBER_TARGET = 1e-6
+
+
+def _fber_gate(verdict: ber.BertVerdict, fec: FecStats | None, note: str) -> str:
+    """Feed the Gen6+ post-FEC FBER into the verdict. Per _GEN6_FEC_EXPLANATION the
+    post-FEC FLIT error rate is the *actual* reliability signal on a Gen6 link; the
+    AER sequential decision only latches the rare FEC-uncorrectable FLIT, so it can
+    read PASS while FEC is silently failing thousands of FLITs. An FBER over the
+    1e-6 target therefore turns a PASS into a FAIL. This only ever downgrades a PASS
+    — it never resurrects a skip or overrides an existing fail. Returns ``note``,
+    annotated with the over-target FBER when the gate fires."""
+    if fec is None or verdict.status != "pass":
+        return note
+    if fec.fber_estimate > _GEN6_FBER_TARGET:
+        verdict.status = "fail"
+        return ((note + "; ") if note else "") + (
+            f"post-FEC FBER {fec.fber_estimate:.2e} > target {_GEN6_FBER_TARGET:.0e} "
+            f"(post_fec_flit_errors={fec.post_fec_flit_errors}); Gen6 FEC failing")
+    return note
 
 
 def _gen_note(link_speed: int) -> str:
@@ -300,7 +326,7 @@ def run_bert(backend: Backend, bdf: str, *, target_ber: float = 1e-12,
     return BertResult(bdf, elapsed, verdict.bits, cor_total, unc_total, per,
                       dev.current_link_speed, dev.current_link_width, verdict,
                       stuck=idle_fault, uncorrectable_decode=unc_decode,
-                      aer_source=source, note=note,
+                      aer_source=source, note=_fber_gate(verdict, fec, note),
                       pre_fec_symbol_errors=fec.pre_fec_symbol_errors if fec else None,
                       post_fec_flit_errors=fec.post_fec_flit_errors if fec else None,
                       fber_estimate=fec.fber_estimate if fec else None,
@@ -461,7 +487,7 @@ def run_conductor(backend: Backend, bdf: str, *, target_ber: float = 1e-12,
                       out.get("link_speed_code", dev.current_link_speed),
                       out.get("link_width", dev.current_link_width), verdict,
                       stuck=idle_fault, uncorrectable_decode=unc_decode,
-                      aer_source=source, note=note,
+                      aer_source=source, note=_fber_gate(verdict, fec, note),
                       pre_fec_symbol_errors=fec.pre_fec_symbol_errors if fec else None,
                       post_fec_flit_errors=fec.post_fec_flit_errors if fec else None,
                       fber_estimate=fec.fber_estimate if fec else None,

@@ -63,6 +63,9 @@ class TestGen6FecFields:
         assert r.pre_fec_symbol_errors > 0
         assert r.post_fec_flit_errors == 0                  # FEC corrects everything
         assert r.fber_estimate == 0.0
+        # FEC corrects everything (FBER 0 <= 1e-6 target): the FBER gate must NOT
+        # fail a healthy Gen6 link with a noisy-but-corrected pre-FEC rate.
+        assert r.status == "pass" and r.ok
 
     def test_gen6_post_fec_flits_drive_fber(self):
         # Push post-FEC rate high enough that we'll see at least one FLIT error.
@@ -71,6 +74,29 @@ class TestGen6FecFields:
         r = bert.run_bert(be, "0000:08:00.0", target_ber=1e-6, max_seconds=1.0)
         assert r.post_fec_flit_errors > 0
         assert r.fber_estimate > 0.0
+        # FBER ~1e-3 is ~1000x the 1e-6 PCIe-6.0 FBER target and zero AER errors were
+        # injected, so the OLD code reported PASS. The post-FEC FBER is the primary
+        # Gen6 reliability signal, so it must drive the VERDICT, not just be reported.
+        assert r.fber_estimate > 1e-6
+        assert r.status == "fail" and not r.ok           # over-target FBER => FAIL
+        assert "FBER" in r.note                           # and is explained
+
+    def test_gen6_over_target_fber_fails_conductor(self):
+        # Same FBER gate must apply on the conductor (engine='c') path. A clean C
+        # runner reports zero AER errors on a Gen6 link; the mock's read_fec_stats
+        # synthesizes an over-target FBER from injected_post_fec_flit_rate.
+        def clean_gen6_runner(bdf, secs):
+            from computetest.backend import link_bits_per_second
+            return {"source": "aer", "link_speed_code": 6, "link_width": 8,
+                    "link_unknown": False, "bits": link_bits_per_second(6, 8) * secs,
+                    "correctable": 0, "uncorrectable": 0, "uncorrectable_bits": 0,
+                    "per_correctable": {}}
+        be = _gen6_be(injected_pre_fec_symbol_rate=0.0,
+                      injected_post_fec_flit_rate=1e-3)
+        r = bert.run_bert(be, "0000:08:00.0", engine="c", c_runner=clean_gen6_runner,
+                          target_ber=1e-6, max_seconds=1.0)
+        assert r.fber_estimate is not None and r.fber_estimate > 1e-6
+        assert r.status == "fail" and not r.ok
 
     def test_gen6_burst_histogram_is_length_keyed(self):
         be = _gen6_be(injected_pre_fec_symbol_rate=1e-5)
