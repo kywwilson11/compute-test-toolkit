@@ -33,7 +33,11 @@ class PdelayExchange:
 
     @property
     def mean_link_delay_ns(self) -> float:
-        """((t4 - t1) - rateRatio*(t3 - t2)) / 2 — the 802.1AS mean link delay."""
+        """((t4 - t1) - rateRatio*(t3 - t2)) / 2 — the 802.1AS mean link delay.
+
+        neighborRateRatio scales the responder turnaround (t3 - t2) into the
+        requestor's timebase; it is NOT applied to the (t4 - t1) round-trip. This
+        matches linuxptp tsproc: delay = ((t2 - t3)*rr + (t4 - t1)) / 2."""
         return ((self.t4 - self.t1) - self.rate_ratio * (self.t3 - self.t2)) / 2.0
 
     @property
@@ -56,7 +60,12 @@ class AnnounceMsg:
 def bmca_elect(announces: Sequence[AnnounceMsg]) -> AnnounceMsg | None:
     """IEEE 1588 dataset comparison: the best master is the lexicographically
     smallest (priority1, clockClass, clockAccuracy, priority2, clockIdentity).
-    Returns ``None`` for an empty set (no master visible)."""
+    Returns ``None`` for an empty set (no master visible).
+
+    Simplification: the full 1588/802.1AS comparison also includes
+    offsetScaledLogVariance (between clockAccuracy and priority2); it is omitted
+    here, so two clocks differing only in variance fall through to priority2 /
+    clockIdentity. clockIdentity is unique, so the election stays deterministic."""
     if not announces:
         return None
     return min(announces, key=lambda a: (a.priority1, a.clock_class,

@@ -1,6 +1,8 @@
 """Sprint 4.2.4: 802.1AS gPTP protocol conformance."""
 from __future__ import annotations
 
+import pytest
+
 from computetest.tsn import (
     AnnounceMsg,
     GptpProtocolHealth,
@@ -24,6 +26,13 @@ class TestPdelay:
         pd = PdelayExchange(t1=0, t2=500, t3=600, t4=1100)
         assert pd.mean_link_delay_ns == 500.0
         assert pd.turnaround_ns == 100.0
+
+    def test_rate_ratio_scales_responder_turnaround(self):
+        # 802.1AS / linuxptp: neighborRateRatio scales (t3 - t2), NOT (t4 - t1):
+        # ((3000-0) - 1.0002*(2000-1000)) / 2 = (3000 - 1000.2)/2 = 999.9 ns.
+        # The (rr*(t4-t1) - (t3-t2))/2 arrangement would give 1000.3 -- guard against it.
+        pd = PdelayExchange(t1=0.0, t2=1000.0, t3=2000.0, t4=3000.0, rate_ratio=1.0002)
+        assert pd.mean_link_delay_ns == pytest.approx(999.9, abs=1e-9)
 
 
 class TestBmca:
