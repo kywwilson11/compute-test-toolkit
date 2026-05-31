@@ -96,8 +96,8 @@ DEVSTA_UR = 1 << 3        # Unsupported Request Detected
 # Link Status bits.
 LNKSTA_TRAINING = 1 << 11  # link is retraining (entered Recovery)
 LNKSTA_DLLLA = 1 << 13     # Data Link Layer Link Active
-LNKSTA_LBMS = 1 << 14      # Link Bandwidth Management Status (W1C) — a speed/width change
-LNKSTA_LABS = 1 << 15      # Link Autonomous Bandwidth Status (W1C) — reliability downgrade
+LNKSTA_LBMS = 1 << 14      # Bandwidth Mgmt Status (W1C): SW retrain, or HW fixing unreliable link
+LNKSTA_LABS = 1 << 15      # Autonomous Bandwidth Status (W1C): change NOT for reliability (power)
 
 
 @dataclass
@@ -108,8 +108,8 @@ class LinkStatus:
     speed: int
     width: int
     training: bool = False        # bit 11 — entered Recovery
-    bw_changed: bool = False      # bit 14 LBMS — bandwidth (speed/width) changed
-    autonomous_bw: bool = False   # bit 15 LABS — link downgraded itself for reliability
+    bw_changed: bool = False      # bit 14 LBMS — reliability downgrade or SW retrain
+    autonomous_bw: bool = False   # bit 15 LABS — autonomous BW change, NOT for reliability
     dl_active: bool = True        # bit 13 DLLLA
 
 
