@@ -87,6 +87,27 @@ The shape of the platform:
 - **Linux, everywhere.** The platform runs Linux and your test stations run Linux. Your
  command-line debugging fluency is load-bearing, not incidental.
 
+> **Don't assume x86 + a discrete GPU — the ARM64/Tegra reality.** The "server-grade
+> compute" framing above can read as "an x86 host with a discrete datacenter GPU," and some
+> of the fleet is exactly that. But NVIDIA's automotive compute (Jetson **Orin / Thor**
+> class) is an **ARM64 (Tegra) SoC** — an *integrated* GPU, LPDDR shared with the CPU, no
+> PCIe link to the GPU — and a **Jetson dev kit is the cheap bring-up stand-in** you'll
+> actually have on the bench. The practical point for *your tooling*: assumptions baked into
+> an x86-plus-discrete-GPU test program quietly break on a Tegra. What flips —
+>
+> - **GPU telemetry:** `nvidia-smi`/NVML → `tegrastats`/`jtop` (there is no `nvidia-smi` on
+> L4T); the iGPU has no GPU-ECC, no row-remapping, no PCIe replay counter to read (**GPU
+> chapter**).
+> - **Memory RAS:** x86 EDAC/MCA + ACPI-**EINJ** error injection assume an x86/ACPI platform;
+> a device-tree ARM SoC like Tegra has no ACPI-EINJ and the LPDDR controller exposes RAS
+> differently (**Memory chapter**).
+> - **What's even present:** no CXL; no discrete-GPU ECC; GMSL only with a camera carrier;
+> PCIe is there, but a Tegra's lane count and generation differ from a server's.
+>
+> A check that "passes" only because the registers it reads **don't exist** on the SoC is a
+> silent escape. Know the ISA and the GPU class of the unit in front of you before you trust
+> a number — the lesson the toolkit hit standing up its Tegra/`tegrastats` path.
+
 ### The autonomy data path (what you are protecting) {.unnumbered}
 
 ```text
@@ -8258,6 +8279,21 @@ The two facts to carry: **XID errors come from the kernel driver into `dmesg`** 
 health check scrapes the kernel log), and **`nvidia-smi`/DCGM both sit on NVML** (so the
 fields you query are NVML fields — which is why scripting against `--query-gpu` is stable
 and parsing free-text `-q` output is fragile; ).
+
+> **Discrete GPU vs Tegra iGPU — almost none of applies to a Jetson.** Everything below
+> (ECC, the volatile/aggregate counters, row remapping) and the `nvidia-smi`/NVML tooling
+> above assume a **discrete datacenter GPU** on a PCIe link with its own HBM/GDDR. NVIDIA's
+> automotive parts — Jetson **Orin/Thor**, and the Jetson dev kit you'll bring up on — are a
+> different animal: an **integrated GPU on an SoC**, sharing **LPDDR** with the CPU, over no
+> PCIe link. Concretely, on a Tegra: **`nvidia-smi` does not exist** (L4T ships `tegrastats`
+> / `jtop`, and only a partial NVML); the iGPU has **no GPU-ECC, no row-remapping, and no
+> PCIe replay counter** to read (those are HBM/GDDR and PCIe-link concepts); and it is
+> **ARM64**, not x86. So a "GPU health" check written against `nvidia-smi -q -d ECC` or
+> `-d ROW_REMAPPER` returns *nothing* on a Jetson — you read die temperatures, power rails,
+> and the GR3D (GPU) / EMC (memory-controller) load from `tegrastats` instead, and you keep
+> the one signal both worlds share: kernel **XID** faults from `dmesg`. Know which class of
+> part is in front of you before you trust a GPU script; on the SoC the fields simply aren't
+> there, and "clean because absent" is a silent escape.
 
 ---
 

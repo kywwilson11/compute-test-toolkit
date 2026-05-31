@@ -110,6 +110,21 @@ health check scrapes the kernel log), and **`nvidia-smi`/DCGM both sit on NVML**
 fields you query are NVML fields — which is why scripting against `--query-gpu` is stable
 and parsing free-text `-q` output is fragile; §6.1).
 
+> **Discrete GPU vs Tegra iGPU — almost none of §2 applies to a Jetson.** Everything below
+> (ECC, the volatile/aggregate counters, row remapping) and the `nvidia-smi`/NVML tooling
+> above assume a **discrete datacenter GPU** on a PCIe link with its own HBM/GDDR. NVIDIA's
+> automotive parts — Jetson **Orin/Thor**, and the Jetson dev kit you'll bring up on — are a
+> different animal: an **integrated GPU on an SoC**, sharing **LPDDR** with the CPU, over no
+> PCIe link. Concretely, on a Tegra: **`nvidia-smi` does not exist** (L4T ships `tegrastats`
+> / `jtop`, and only a partial NVML); the iGPU has **no GPU-ECC, no row-remapping, and no
+> PCIe replay counter** to read (those are HBM/GDDR and PCIe-link concepts); and it is
+> **ARM64**, not x86. So a "GPU health" check written against `nvidia-smi -q -d ECC` or
+> `-d ROW_REMAPPER` returns *nothing* on a Jetson — you read die temperatures, power rails,
+> and the GR3D (GPU) / EMC (memory-controller) load from `tegrastats` instead, and you keep
+> the one signal both worlds share: kernel **XID** faults from `dmesg`. Know which class of
+> part is in front of you before you trust a GPU script; on the SoC the fields simply aren't
+> there, and "clean because absent" is a silent escape.
+
 ---
 
 ## 2. The ECC Model in Depth

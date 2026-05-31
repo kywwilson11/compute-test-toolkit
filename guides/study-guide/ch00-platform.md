@@ -57,6 +57,27 @@ The shape of the platform:
 - **Linux, everywhere.** The platform runs Linux and your test stations run Linux. Your
   command-line debugging fluency is load-bearing, not incidental.
 
+> **Don't assume x86 + a discrete GPU — the ARM64/Tegra reality.** The "server-grade
+> compute" framing above can read as "an x86 host with a discrete datacenter GPU," and some
+> of the fleet is exactly that. But NVIDIA's automotive compute (Jetson **Orin / Thor**
+> class) is an **ARM64 (Tegra) SoC** — an *integrated* GPU, LPDDR shared with the CPU, no
+> PCIe link to the GPU — and a **Jetson dev kit is the cheap bring-up stand-in** you'll
+> actually have on the bench. The practical point for *your tooling*: assumptions baked into
+> an x86-plus-discrete-GPU test program quietly break on a Tegra. What flips —
+>
+> - **GPU telemetry:** `nvidia-smi`/NVML → `tegrastats`/`jtop` (there is no `nvidia-smi` on
+>   L4T); the iGPU has no GPU-ECC, no row-remapping, no PCIe replay counter to read (**GPU
+>   chapter**).
+> - **Memory RAS:** x86 EDAC/MCA + ACPI-**EINJ** error injection assume an x86/ACPI platform;
+>   a device-tree ARM SoC like Tegra has no ACPI-EINJ and the LPDDR controller exposes RAS
+>   differently (**Memory chapter**).
+> - **What's even present:** no CXL; no discrete-GPU ECC; GMSL only with a camera carrier;
+>   PCIe is there, but a Tegra's lane count and generation differ from a server's.
+>
+> A check that "passes" only because the registers it reads **don't exist** on the SoC is a
+> silent escape. Know the ISA and the GPU class of the unit in front of you before you trust
+> a number — the lesson the toolkit hit standing up its Tegra/`tegrastats` path.
+
 ### 1.1 The autonomy data path (what you are protecting)
 
 ```text
