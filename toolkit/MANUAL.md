@@ -405,7 +405,7 @@ CI boots a QEMU guest (`.github/workflows/qemu.yml`), drives QMP from the host, 
 asserts on what the toolkit's real backend reports inside the guest. See
 `sim/qemu/README.md` for the lane.
 
-Nightly mutation testing (mutmut) runs at 07:00 UTC on the six logic modules:
+Mutation testing (mutmut) runs every ~3 days at 07:00 UTC on the six logic modules:
 `.github/workflows/mutmut.yml`. Survivor count is the signal for "where to add tests."
 
 ---

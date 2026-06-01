@@ -1,4 +1,4 @@
-# Nightly mutation-testing run, SHARDED across the six scoped logic modules
+# Mutation-testing run (every ~3 days), SHARDED across the six scoped logic modules
 # (ber / bert / aer / linkstate / topology / diagnostics). Each module is its own
 # parallel job, so wall-clock = max(per-module): bert.py is the long pole at
 # ~120 min (498 mutants, ~61% survival), the other five finish in 20-47 min.
@@ -14,12 +14,15 @@
 # independent SQLite databases — mutmut tracks "which mutations of WHICH file"
 # inside, so each shard's cache is the authoritative record for its module.
 #
-# Triggered nightly (07:00 UTC, off-peak) and on workflow_dispatch.
+# Triggered every ~3 days (07:00 UTC, off-peak) and on workflow_dispatch.
 name: mutmut
 
 on:
   schedule:
-    - cron: '0 7 * * *'
+    # Day-of-month step: runs on the 1st, 4th, 7th ... 28th, 31st at 07:00 UTC
+    # (~every 3 days). The gap resets at month boundaries -- standard cron has no
+    # true rolling interval -- which is fine for a weekly-triaged report lane.
+    - cron: '0 7 */3 * *'
   workflow_dispatch:
 
 defaults:
