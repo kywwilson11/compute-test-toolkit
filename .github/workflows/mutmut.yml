@@ -1,7 +1,8 @@
 # Nightly mutation-testing run, SHARDED across the six scoped logic modules
 # (ber / bert / aer / linkstate / topology / diagnostics). Each module is its own
-# parallel job, so wall-clock = max(per-module) ≈ 30–45 min instead of the
-# ~3 h sum-of-modules that hit the timeout when this ran serially.
+# parallel job, so wall-clock = max(per-module): bert.py is the long pole at
+# ~120 min (498 mutants, ~61% survival), the other five finish in 20-47 min.
+# Sharding replaced a serial run that hit the ~3 h sum-of-modules runner cap.
 #
 # Why six jobs and not just one bigger timeout? The previous single-runner
 # layout hit the 2h30m runner cap before clearing ber.py, with the other five
@@ -33,11 +34,15 @@ jobs:
     # green (no failure email) whether mutants survive OR a shard hits its timeout.
     # The signal lives in the run Summary tab + the uploaded cache, triaged weekly.
     continue-on-error: true
-    # Per-shard budget. ~6 s/mutant avg (fast-killed + full-suite survivors) ×
-    # the largest module (bert.py ~347 mutants). bert can still brush 90 min when it
-    # has many survivors (each re-runs the full suite) -- tolerated via the above.
-    # fail-fast disabled so one shard's timeout doesn't cancel the others' signal.
-    timeout-minutes: 90
+    # Per-shard budget. Cost = (survivors × full-suite time), since each surviving
+    # mutant re-runs the whole suite. bert.py is the long pole: 498 mutants, ~61%
+    # survival, ~12 s/mutant -> ~120 min (measured: it reached only 403/498 at the
+    # old 90-min cap -- it was being KILLED mid-run, reporting a truncated result).
+    # 180 lets it FINISH and report completely. Minutes are free (public repo) and
+    # this is an off-peak nightly job, so we keep the full-suite runner for FIDELITY:
+    # scoping to per-module tests would manufacture false survivors via lost
+    # CLI/integration coverage. fail-fast disabled so one shard can't cancel others.
+    timeout-minutes: 180
     strategy:
       fail-fast: false
       matrix:
